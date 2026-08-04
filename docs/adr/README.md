@@ -1,0 +1,27 @@
+# Architecture Decision Records
+
+Journal des décisions d'architecture du projet. Une décision structurante se
+documente ici **au moment où elle est prise**, avec les options rejetées et
+leur raison de rejet — c'est ce qui évite de re-débattre le même point six mois
+plus tard.
+
+Le document de conception produit (`specs/initial.md`) décrit *quoi* construire
+et récapitule les décisions produit (§13). Les ADR documentent les décisions
+d'implémentation prises en cours de route.
+
+## Index
+
+| ADR | Titre | Statut |
+|---|---|---|
+| [0001](0001-go-pour-cli-et-serveur.md) | Go pour la CLI et le serveur | Accepted |
+| [0002](0002-go-git-plutot-que-binaire-git.md) | go-git plutôt que le binaire git système | Superseded par 0005 |
+| [0003](0003-commit-audit-chaine-sur-la-base.md) | Commit d'audit chaîné sur le commit de base | Accepted |
+| [0004](0004-maintenance-des-depots-par-le-binaire-git.md) | Maintenance des dépôts serveur par le binaire git | Accepted (amendé par 0005) |
+| [0005](0005-binaire-git-comme-moteur-unique.md) | Le binaire git comme moteur unique | Accepted |
+
+## Convention
+
+- Numérotation séquentielle : `NNNN-titre-court.md`
+- Langue : français
+- Statut : `Accepted` pour toute décision en vigueur
+- Au moins deux options envisagées, avec la raison de rejet explicite
