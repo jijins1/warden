@@ -178,8 +178,12 @@ Cas à gérer : le commit de base n'existe pas côté serveur (commits locaux no
 poussés) → il faut pousser le pack manquant.
 
 **Limite connue à documenter :** les collections/rôles Galaxy ne sont pas dans
-le diff. Sans miroir interne avec versions figées, le run n'est pas rejouable à
-l'identique. Prévoir un miroir et un `requirements.yml` pinné.
+le diff. ~~Sans miroir interne avec versions figées, le run n'est pas rejouable
+à l'identique. Prévoir un miroir et un `requirements.yml` pinné.~~ → Levée par
+l'[ADR-0014](../docs/adr/0014-image-du-runner-declaree-par-le-projet.md) : les
+collections viennent de l'image déclarée par le projet, qui épingle du même coup
+`ansible-core`, l'interpréteur Python et le système. La rejouabilité dépend donc
+de la précision de la référence d'image, choix laissé au projet.
 
 ### 5.4 Fichier de configuration projet
 
@@ -194,6 +198,9 @@ transmettre :
 server: https://ansible-proxy.example.com
 default_env: staging
 inventory: inventories/staging
+# Image du pod runner (ADR-0014). Omise, l'image par défaut du produit est
+# utilisée. Un projet ayant besoin de collections particulières publie la sienne.
+runner_image: registry.example.com/mon-equipe/runner:2.3.1
 forward_env:
   - VAULT_ADDR
   - MY_APP_VERSION
@@ -749,7 +756,11 @@ zéro pod orphelin après un crash du server.
 
 - ~~Choix du bus d'events~~ → tranché : pas de bus, PostgreSQL
   ([ADR-0008](../docs/adr/0008-postgresql-comme-journal-et-transport-devents.md))
-- Stratégie de miroir Galaxy et de pinning des collections
+- ~~Stratégie de miroir Galaxy et de pinning des collections~~ → tranché : pas
+  de miroir, les collections viennent de l'image déclarée par le projet
+  ([ADR-0014](../docs/adr/0014-image-du-runner-declaree-par-le-projet.md))
+- Allowlist des registres d'images — différé, à traiter avec la politique
+  serveur (ADR-0014)
 - ~~Politique de rétention et GC des refs d'audit~~ → tranché : aucune purge
   avant mesure, à rouvrir en fin de phase 1
   ([ADR-0013](../docs/adr/0013-retention-differee-des-refs-daudit.md)). **Écart

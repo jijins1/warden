@@ -26,6 +26,7 @@ d'implémentation prises en cours de route.
 | [0011](0011-un-binaire-par-domaine-de-confiance.md) | Un binaire par domaine de confiance, frontières imposées par le compilateur | Accepted |
 | [0012](0012-migrations-sql-avec-goose.md) | Migrations SQL embarquées avec goose, appliquées par un Job dédié | Accepted |
 | [0013](0013-retention-differee-des-refs-daudit.md) | Aucune purge avant mesure : la rétention des refs d'audit est différée | Accepted |
+| [0014](0014-image-du-runner-declaree-par-le-projet.md) | L'image du runner est déclarée par le projet | Accepted |
 
 ## Convention
 
