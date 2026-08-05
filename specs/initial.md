@@ -430,7 +430,7 @@ arbitraire (§2).
 | Volumes | Aucun `hostPath` |
 | **ServiceAccount** | **`automountServiceAccountToken: false`** — sinon le playbook parle à l'API Kubernetes. Erreur classique |
 | **Réseau** | **NetworkPolicy deny-all par défaut**, egress ouvert uniquement vers le scope de l'utilisateur. C'est le vrai contrôle d'autorisation, celui qui rattrape les `delegate_to` |
-| Aucun accès au control-plane | Le runner ne doit pas pouvoir joindre le server autrement que par le bus d'events |
+| Aucun accès au control-plane | Le runner ne joint jamais l'API. Son egress est limité au rôle `git`, à l'endpoint d'ingestion des events et au scope d'hôtes de l'utilisateur. Voir [ADR-0007](../docs/adr/0007-acces-du-runner-au-code.md) : le code arrive par un `git fetch` réduit à une seule ref via `GIT_NAMESPACE` |
 | Cache Ansible | **Jamais partagé entre utilisateurs** (`~/.ansible`) → empoisonnement de collections |
 | Nœuds | Node pool dédié + taints |
 | Sandbox renforcée | **gVisor ou Kata** — coût de démarrage modeste au regard du reste |
@@ -575,13 +575,20 @@ Le morceau le plus risqué de l'architecture. **À prototyper en premier.**
 meurt.
 
 ```
-runner ──push events──► bus persistant ──read(offset)──► server ──WS──► CLI
-                    (NATS JetStream / Redis Streams)
+runner ──POST events──► ingestion ──INSERT──► PostgreSQL ──read(seq)──► server ──WS──► CLI
 ```
 
 Ce pattern résout d'un coup le detach/reattach, le rolling update et le
 multi-réplica. Chaque event porte un offset monotone ; la reconnexion rejoue
 depuis le dernier offset acquitté.
+
+**Écart assumé — pas de bus.** Cette section prescrivait à l'origine un bus
+persistant (NATS JetStream ou Redis Streams). L'[ADR-0008](../docs/adr/0008-postgresql-comme-journal-et-transport-devents.md)
+retient PostgreSQL comme journal **et** comme transport : un bus rend un event
+durable sans le rendre journalisé, ce qui rouvre exactement la fenêtre que le
+§6.3 cherche à fermer. Le motif de la section — jamais de connexion directe
+pod ↔ client — reste respecté. L'offset est assigné par le runner, le replay se
+sert depuis la table et le direct par `LISTEN` / `NOTIFY`.
 
 ### 9.3 Entrée interactive
 
@@ -740,8 +747,8 @@ zéro pod orphelin après un crash du server.
 
 ## 14. Questions ouvertes
 
-- Choix du bus d'events : NATS JetStream vs Redis Streams (rétention, ordering,
-  coût opérationnel)
+- ~~Choix du bus d'events~~ → tranché : pas de bus, PostgreSQL
+  ([ADR-0008](../docs/adr/0008-postgresql-comme-journal-et-transport-devents.md))
 - Stratégie de miroir Galaxy et de pinning des collections
 - Politique de rétention et GC des refs d'audit
 - Redaction des diffs `--diff` : automatique, ou chiffrement + accès séparé ?

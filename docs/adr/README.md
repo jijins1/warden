@@ -18,6 +18,10 @@ d'implémentation prises en cours de route.
 | [0003](0003-commit-audit-chaine-sur-la-base.md) | Commit d'audit chaîné sur le commit de base | Accepted |
 | [0004](0004-maintenance-des-depots-par-le-binaire-git.md) | Maintenance des dépôts serveur par le binaire git | Accepted (amendé par 0005) |
 | [0005](0005-binaire-git-comme-moteur-unique.md) | Le binaire git comme moteur unique | Accepted |
+| [0006](0006-un-binaire-trois-roles.md) | Un binaire, trois rôles déployés séparément | Accepted |
+| [0007](0007-acces-du-runner-au-code.md) | Accès du runner au code par fetch scopé à un SHA | Accepted |
+| [0008](0008-postgresql-comme-journal-et-transport-devents.md) | PostgreSQL comme journal et comme transport des events | Accepted |
+| [0009](0009-configuration-resolue-depuis-le-commit.md) | La configuration effective est résolue depuis le commit | Accepted |
 
 ## Convention
 
