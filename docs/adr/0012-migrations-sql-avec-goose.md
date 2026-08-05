@@ -96,8 +96,9 @@ porteur de tâches périodiques. Deux exigences non négociables :
   - `pg_partman` couvrirait la gestion des partitions sans code de notre part.
     Écarté pour l'instant — c'est une extension à installer sur le cluster
     CloudNativePG, et la logique à écrire est courte. À reconsidérer si la
-    politique de rétention devient non triviale, ce qui dépend de la question
-    §14 encore ouverte sur la rétention des refs d'audit.
+    politique de rétention devient non triviale. L'[ADR-0013](0013-retention-differee-des-refs-daudit.md)
+    a depuis tranché : la rétention est nulle jusqu'à mesure, donc la réserve ne
+    s'applique pas et la logique courte suffit. À rouvrir avec elle.
   - Aucune stratégie de restauration n'est définie à ce jour, ni pour la base ni
     pour le PVC du rôle `git` (déjà signalé par l'ADR-0006). Les deux devront
     être restaurés à un état cohérent l'un avec l'autre.

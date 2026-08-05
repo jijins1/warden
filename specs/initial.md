@@ -750,7 +750,12 @@ zéro pod orphelin après un crash du server.
 - ~~Choix du bus d'events~~ → tranché : pas de bus, PostgreSQL
   ([ADR-0008](../docs/adr/0008-postgresql-comme-journal-et-transport-devents.md))
 - Stratégie de miroir Galaxy et de pinning des collections
-- Politique de rétention et GC des refs d'audit
+- ~~Politique de rétention et GC des refs d'audit~~ → tranché : aucune purge
+  avant mesure, à rouvrir en fin de phase 1
+  ([ADR-0013](../docs/adr/0013-retention-differee-des-refs-daudit.md)). **Écart
+  assumé à la lettre du §6.2**, qui demandait la politique dès le début.
+- Rétention du journal d'events et des payloads `--diff` — c'est là qu'est le
+  volume, pas dans les refs d'audit (ADR-0013)
 - Redaction des diffs `--diff` : automatique, ou chiffrement + accès séparé ?
 - Granularité du verrou de concurrence : inventaire ou hôte ?
 - Format exact du protocole WS (framing, ack, resize si PTY réintroduit)
