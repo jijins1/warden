@@ -27,6 +27,10 @@ doctor: ## Vérifie que l'environnement de développement est complet
 	  else echo "ABSENT — go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest"; fail=1; fi; \
 	exit $$fail
 
+.PHONY: lint
+lint: ## Lance golangci-lint (arêtes entre rôles serveur, ADR-0006)
+	golangci-lint run ./...
+
 .PHONY: help
 help: ## Liste les cibles disponibles
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \

@@ -66,6 +66,28 @@ jobs:
             GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./cmd/warden
           done
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Ce job tient les arêtes entre rôles serveur de l'ADR-0006, que le
+      # compilateur ne couvre PAS : `api`, `gitd`, `controller` et `ingest` sont
+      # frères sous le même `internal/`, donc mutuellement visibles. Voir
+      # l'en-tête de .golangci.yml.
+      #
+      # La version est figée : `latest` ferait apparaître des erreurs sur des
+      # branches qui n'ont pas bougé, à chaque publication d'un linter.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
   test:
     name: Tests — étage 1 (unitaire)
     runs-on: ubuntu-latest

@@ -1,0 +1,188 @@
+# Configuration golangci-lint.
+#
+# Sa raison d'être principale est `depguard`, qui tient la moitié de l'ADR-0011
+# que le compilateur ne couvre PAS : les rôles serveur sont des paquets frères
+# sous le même `internal/`, donc Go les laisse s'importer librement.
+#
+# Répartition à garder en tête :
+#   - frontière de sécurité (runner ↛ control plane) → compilateur, échec de
+#     `go build`. Rien ici ne la garde, et rien ici ne peut l'affaiblir.
+#   - frontière de conception (arêtes entre rôles, ADR-0006) → ce fichier.
+#     Moins solide : ça se contourne avec un `//nolint`. C'est le meilleur cran
+#     disponible pour des paquets frères, pas un équivalent du compilateur.
+version: "2"
+
+linters:
+  enable:
+    - depguard
+    # Le produit manipule des jetons de run et exécute du code arbitraire :
+    # les chemins non nettoyés et les exec mal formés doivent se voir tôt.
+    - gosec
+    - errorlint
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - noctx
+
+  settings:
+    depguard:
+      rules:
+        # ------------------------------------------------------------------
+        # Arêtes entre rôles serveur (ADR-0006).
+        #
+        # Chaque règle est en `lax` : tout est permis sauf ce qui est refusé,
+        # et une entrée `allow` plus spécifique l'emporte sur le refus. D'où la
+        # forme retenue — refuser TOUT `internal/server/internal`, puis
+        # ré-autoriser les seules arêtes de l'ADR-0006.
+        #
+        # Conséquence voulue : un NOUVEAU paquet ajouté sous
+        # `internal/server/internal/` est refusé partout par défaut. Il faut
+        # déclarer qui a le droit de l'atteindre, ce qui est précisément la
+        # décision qu'on ne veut pas voir prise en silence.
+        # ------------------------------------------------------------------
+        serveur-api:
+          list-mode: lax
+          files:
+            - "**/internal/server/internal/api/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server/internal
+              desc: "ADR-0006 : arêtes de `api` limitées à store, policy, gitclient. Le rôle git se joint par HTTP via gitclient, jamais par import."
+          allow:
+            - github.com/jijins1/warden/internal/server/internal/store
+            - github.com/jijins1/warden/internal/server/internal/policy
+            - github.com/jijins1/warden/internal/server/internal/gitclient
+
+        serveur-gitd:
+          list-mode: lax
+          files:
+            - "**/internal/server/internal/gitd/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server/internal
+              desc: "ADR-0006 : arêtes de `gitd` limitées à store (et internal/git, hors de ce périmètre)."
+          allow:
+            - github.com/jijins1/warden/internal/server/internal/store
+
+        serveur-controller:
+          list-mode: lax
+          files:
+            - "**/internal/server/internal/controller/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server/internal
+              desc: "ADR-0006 : arête de `controller` limitée à store. Le pool de pods se pilote par la base, pas par appel à un autre rôle."
+          allow:
+            - github.com/jijins1/warden/internal/server/internal/store
+
+        serveur-ingest:
+          list-mode: lax
+          files:
+            - "**/internal/server/internal/ingest/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server/internal
+              desc: "ADR-0008 : `ingest` n'écrit que des events, par store.OpenIngest. Il ne connaît ni l'API, ni la politique, ni le contrôleur."
+          allow:
+            - github.com/jijins1/warden/internal/server/internal/store
+
+        # Paquets feuilles : ils sont importés, ils n'importent pas leurs pairs.
+        serveur-feuilles:
+          list-mode: lax
+          files:
+            - "**/internal/server/internal/store/**"
+            - "**/internal/server/internal/policy/**"
+            - "**/internal/server/internal/gitclient/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server/internal
+              desc: "Paquet feuille : il ne doit dépendre d'aucun autre paquet du domaine serveur, sous peine de cycle ou d'inversion de responsabilité."
+
+        # ------------------------------------------------------------------
+        # Domaine hostile (ADR-0011).
+        #
+        # Le compilateur interdit déjà `internal/server/internal/...`. Ce qu'il
+        # laisse passer et qui compte quand même :
+        #   - le paquet `internal/server` LUI-MÊME, qui n'est pas sous un
+        #     `internal/` imbriqué (dette explicitement notée à l'ADR-0011) ;
+        #   - `wire/ws`, dont la scission d'avec `wire/ingest` n'a de sens que
+        #     si le pod hostile ne lie effectivement jamais le protocole WS.
+        # ------------------------------------------------------------------
+        domaine-runner:
+          list-mode: lax
+          files:
+            - "**/internal/runner/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server
+              desc: "ADR-0011 : le binaire du pod runner est lisible par un adversaire (§2). Il ne lie aucun code du control plane, y compris le paquet `server` racine."
+            - pkg: github.com/jijins1/warden/internal/cli
+              desc: "ADR-0011 : domaines de confiance distincts."
+            - pkg: github.com/jijins1/warden/internal/wire/ws
+              desc: "ADR-0011 : `wire` est scindé pour que le pod hostile ne lie pas le protocole WS du control plane. Le runner ne parle qu'à l'ingestion (wire/ingest)."
+
+        domaine-cli:
+          list-mode: lax
+          files:
+            - "**/internal/cli/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server
+              desc: "ADR-0011 : la CLI ne lie pas le control plane, y compris le paquet `server` racine."
+            - pkg: github.com/jijins1/warden/internal/runner
+              desc: "ADR-0011 : domaines de confiance distincts."
+            - pkg: github.com/jijins1/warden/internal/wire/ingest
+              desc: "ADR-0008 : l'ingestion est un contrat runner → serveur. La CLI n'y a rien à faire."
+
+        # ------------------------------------------------------------------
+        # Socle partagé (ADR-0011).
+        #
+        # Il est lié par les TROIS binaires : ce qui entre ici entre dans
+        # l'image du pod hostile.
+        # ------------------------------------------------------------------
+        socle-git:
+          list-mode: lax
+          files:
+            - "**/internal/git/**"
+          deny:
+            # Refus total, sans `allow` : `internal/git` est l'enveloppe du
+            # binaire git et RIEN d'autre (ADR-0011). Ni quarantaine, ni
+            # promotion, ni ancestry, ni scan de secrets. La première ligne de
+            # règle métier qui apparaît ici commence par un import — et c'est
+            # celui-là qu'on veut voir échouer.
+            - pkg: github.com/jijins1/warden/internal
+              desc: "ADR-0011 : `internal/git` ne contient aucune règle métier et ne dépend d'aucun paquet du produit. Enveloppe du binaire git, rien d'autre."
+
+        socle-autres:
+          list-mode: lax
+          files:
+            - "**/internal/config/**"
+            - "**/internal/events/**"
+            - "**/internal/wire/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/server
+              desc: "ADR-0011 : le socle est lié par les trois binaires. Il ne peut pas dépendre d'un domaine, sinon la scission ne vaut plus rien."
+            - pkg: github.com/jijins1/warden/internal/cli
+              desc: "ADR-0011 : le socle ne dépend d'aucun domaine."
+            - pkg: github.com/jijins1/warden/internal/runner
+              desc: "ADR-0011 : le socle ne dépend d'aucun domaine."
+            - pkg: github.com/jijins1/warden/internal/server/internal/policy
+              desc: "ADR-0009 : `config` ANALYSE, il ne DÉCIDE pas. La composition politique serveur → configuration du commit → flags appartient à policy, jamais l'inverse."
+
+        # ------------------------------------------------------------------
+        # Mains minces (ADR-0011). Le compilateur les empêche déjà d'atteindre
+        # les internes de leur domaine ; cette règle vise l'autre dérive, celle
+        # d'un `main` qui se met à assembler le produit lui-même.
+        # ------------------------------------------------------------------
+        mains:
+          list-mode: lax
+          files:
+            - "**/cmd/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal/git
+              desc: "ADR-0011 : les `main` restent minces. Le socle s'atteint depuis le domaine, pas depuis cmd/."
+            - pkg: github.com/jijins1/warden/internal/config
+              desc: "ADR-0009 : un `main` qui lit la configuration est le premier pas vers une configuration résolue ailleurs que depuis l'arbre du commit."
+            - pkg: github.com/jijins1/warden/internal/wire
+              desc: "ADR-0011 : les `main` restent minces."
+
+  exclusions:
+    rules:
+      # Les tests ont le droit de contourner ce que gosec surveille en
+      # production : fichiers temporaires, permissions larges, exec de fixtures.
+      - path: _test\.go
+        linters:
+          - gosec
