@@ -774,10 +774,11 @@ zéro pod orphelin après un crash du server.
 - ~~Rétention du journal d'events et des payloads `--diff`~~ → tranché dans le
   même sens que les refs : aucune purge avant mesure ([ADR-0013](../docs/adr/0013-retention-differee-des-refs-daudit.md),
   section « Extension au journal »)
-- **Redaction des diffs `--diff` : automatique, ou chiffrement + accès séparé ?**
-  → devenue la question ouverte prioritaire. Sans purge, ce qui entre dans cette
-  table y reste : la redaction à l'écriture est le seul contrôle porteur sur la
-  donnée la plus sensible du produit (ADR-0013).
+- ~~Redaction des diffs `--diff` : automatique, ou chiffrement + accès séparé ?~~
+  → tranché : substitution exacte des valeurs injectées et de leurs dérivations
+  calculables, faite dans le runner
+  ([ADR-0017](../docs/adr/0017-redaction-des-diffs-par-substitution-exacte.md)).
+  Deux exceptions en fail-open y sont assumées et signalées.
 - ~~Granularité du verrou de concurrence : inventaire ou hôte ?~~ → tranché :
   aucun verrou, mais un signalement des runs en vol
   ([ADR-0016](../docs/adr/0016-pas-de-verrou-de-concurrence.md))
