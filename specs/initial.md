@@ -673,6 +673,12 @@ Ordre choisi pour tuer les risques d'abord.
 **Critère de sortie :** connaître le surcoût réel. Si le pré-chauffage seul ne
 descend pas sous ~3 s, le zygote (§8.5) devient obligatoire et non optionnel.
 
+> **Fait.** Mesures et conclusion dans
+> l'[ADR-0015](../docs/adr/0015-prechauffage-obligatoire-zygote-optionnel.md) :
+> le pré-chauffage seul descend à ~1,1 s, donc le zygote reste optionnel. Le
+> pré-chauffage, lui, devient obligatoire. Réserve : le poste « chargement
+> collections » n'a pas pu être mesuré.
+
 ### Phase 1 — Streaming reconnectable ⚠️ risque principal
 
 **Objectif :** valider le morceau qui invaliderait tout le reste.
