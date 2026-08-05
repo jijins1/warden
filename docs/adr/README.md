@@ -22,6 +22,9 @@ d'implémentation prises en cours de route.
 | [0007](0007-acces-du-runner-au-code.md) | Accès du runner au code par fetch scopé à un SHA | Accepted |
 | [0008](0008-postgresql-comme-journal-et-transport-devents.md) | PostgreSQL comme journal et comme transport des events | Accepted |
 | [0009](0009-configuration-resolue-depuis-le-commit.md) | La configuration effective est résolue depuis le commit | Accepted |
+| [0010](0010-strategie-de-test-en-trois-etages.md) | Stratégie de test en trois étages, sans cluster jetable | Accepted |
+| [0011](0011-un-binaire-par-domaine-de-confiance.md) | Un binaire par domaine de confiance, frontières imposées par le compilateur | Accepted |
+| [0012](0012-migrations-sql-avec-goose.md) | Migrations SQL embarquées avec goose, appliquées par un Job dédié | Accepted |
 
 ## Convention
 
