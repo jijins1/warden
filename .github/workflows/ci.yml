@@ -1,0 +1,106 @@
+# Intégration continue — étages 1 et 2 de l'ADR-0010.
+#
+# L'étage 3 (bout en bout : cold start §12 phase 0, egress du runner ADR-0007,
+# run tué brutalement §6.4) est DÉLIBÉRÉMENT ABSENT de ce workflow : il exige le
+# cluster k3s réel, qui n'est pas joignable depuis un runner GitHub hébergé. Il
+# fera l'objet d'un workflow distinct sur runner self-hosted. Le remplacer ici
+# par un cluster jetable donnerait des résultats faux — voir l'ADR-0010.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # La version vient de go.mod : une seule source de vérité.
+          go-version-file: go.mod
+
+      - name: Formatage
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Fichiers non formatés :"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go.mod à jour
+        run: |
+          go mod tidy
+          if ! git diff --quiet; then
+            echo "go mod tidy produit un diff — committer le résultat :"
+            git diff --stat
+            exit 1
+          fi
+
+      # `go build` est aussi ce qui applique les frontières entre domaines de
+      # confiance : un import de `internal/server/internal/...` depuis
+      # `internal/runner` est une erreur de compilation (ADR-0011).
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Compilation croisée de la CLI
+        # La CLI s'exécute sur la machine de l'utilisateur : elle doit rester
+        # portable, et une régression de portabilité doit se voir tout de suite.
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            echo "→ $target"
+            GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./cmd/warden
+          done
+
+  test:
+    name: Tests — étage 1 (unitaire)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Propriété à tenir (ADR-0011) : cet étage ne réclame ni Docker ni
+      # cluster. S'il se met à en avoir besoin, c'est qu'un test a glissé
+      # d'étage.
+      - name: go test
+        run: go test -race ./...
+
+  integration:
+    name: Tests — étage 2 (intégration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # PostgreSQL vient de testcontainers, pas d'un service déclaré ici : le
+      # même chemin de code sert en local et en CI (ADR-0010). Le démon Docker
+      # des runners hébergés suffit.
+      - name: Binaires envtest
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+          echo "KUBEBUILDER_ASSETS=$(setup-envtest use -p path)" >> "$GITHUB_ENV"
+
+      - name: go test -tags=integration
+        run: go test -race -tags=integration ./...

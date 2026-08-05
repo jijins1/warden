@@ -1,0 +1,57 @@
+{
+  "name": "warden",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  "features": {
+    // Socket Docker de l'hôte, pas de démon imbriqué : testcontainers en a
+    // besoin (PostgreSQL, étage 2 des tests). Pas de DinD, pas de kind — voir
+    // docs/adr/0010-strategie-de-test.md.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "moby": false,
+      "installDockerBuildx": true
+    },
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "latest",
+      "minikube": "none"
+    }
+  },
+
+  // Les conteneurs lancés par testcontainers sont des *frères* du devcontainer,
+  // pas des enfants : ils s'exposent sur l'hôte. Sans cette redirection, le code
+  // de test cherche ses ports sur 127.0.0.1 à l'intérieur du conteneur et ne
+  // trouve rien.
+  "runArgs": ["--add-host=host.docker.internal:host-gateway"],
+  "containerEnv": {
+    "TESTCONTAINERS_HOST_OVERRIDE": "host.docker.internal",
+    "CGO_ENABLED": "0"
+  },
+
+  "mounts": [
+    // Accès au cluster k3s existant (étage 3 des tests). En lecture seule : le
+    // devcontainer ne doit pas pouvoir réécrire le kubeconfig de l'hôte.
+    "source=${localEnv:HOME}/.kube,target=/home/vscode/.kube-host,type=bind,readonly",
+    // Cache des modules et du build Go, préservé entre les reconstructions.
+    "source=warden-go-mod,target=/go/pkg/mod,type=volume",
+    "source=warden-go-build,target=/home/vscode/.cache/go-build,type=volume"
+  ],
+
+  "remoteUser": "vscode",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "go.lintTool": "golangci-lint",
+        "go.testFlags": ["-v", "-race"]
+      }
+    }
+  }
+}
