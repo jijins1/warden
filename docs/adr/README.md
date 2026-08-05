@@ -28,6 +28,7 @@ d'implémentation prises en cours de route.
 | [0013](0013-retention-differee-des-refs-daudit.md) | Aucune purge avant mesure : la rétention des refs d'audit est différée | Accepted |
 | [0014](0014-image-du-runner-declaree-par-le-projet.md) | L'image du runner est déclarée par le projet | Accepted |
 | [0015](0015-prechauffage-obligatoire-zygote-optionnel.md) | Le pré-chauffage est obligatoire, le zygote reste optionnel | Accepted |
+| [0016](0016-pas-de-verrou-de-concurrence.md) | Pas de verrou de concurrence, mais une visibilité des runs en vol | Accepted |
 
 ## Convention
 

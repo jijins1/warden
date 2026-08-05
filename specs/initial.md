@@ -771,8 +771,14 @@ zéro pod orphelin après un crash du server.
   avant mesure, à rouvrir en fin de phase 1
   ([ADR-0013](../docs/adr/0013-retention-differee-des-refs-daudit.md)). **Écart
   assumé à la lettre du §6.2**, qui demandait la politique dès le début.
-- Rétention du journal d'events et des payloads `--diff` — c'est là qu'est le
-  volume, pas dans les refs d'audit (ADR-0013)
-- Redaction des diffs `--diff` : automatique, ou chiffrement + accès séparé ?
-- Granularité du verrou de concurrence : inventaire ou hôte ?
+- ~~Rétention du journal d'events et des payloads `--diff`~~ → tranché dans le
+  même sens que les refs : aucune purge avant mesure ([ADR-0013](../docs/adr/0013-retention-differee-des-refs-daudit.md),
+  section « Extension au journal »)
+- **Redaction des diffs `--diff` : automatique, ou chiffrement + accès séparé ?**
+  → devenue la question ouverte prioritaire. Sans purge, ce qui entre dans cette
+  table y reste : la redaction à l'écriture est le seul contrôle porteur sur la
+  donnée la plus sensible du produit (ADR-0013).
+- ~~Granularité du verrou de concurrence : inventaire ou hôte ?~~ → tranché :
+  aucun verrou, mais un signalement des runs en vol
+  ([ADR-0016](../docs/adr/0016-pas-de-verrou-de-concurrence.md))
 - Format exact du protocole WS (framing, ack, resize si PTY réintroduit)

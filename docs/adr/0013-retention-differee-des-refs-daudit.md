@@ -160,6 +160,27 @@ elle-même auditée — qui, quand, en application de quelle règle — le produ
 offre le déni parfait. Toute politique future doit donc journaliser ses propres
 suppressions dans le journal applicatif.
 
+## Extension au journal, même jour
+
+La décision ci-dessus ne portait que sur les refs d'audit, la dette ci-dessous
+renvoyant le journal à « le sujet suivant ». Ce sujet est tranché dans le même
+sens, et pour les mêmes raisons : **aucune rétention sur la table d'events ni
+sur celle des payloads `--diff`**, jusqu'à la même mesure.
+
+Le mécanisme de sortie est d'ailleurs déjà en place : la partition par date de
+l'ADR-0008 permettra de détacher une période en O(1) le jour où une politique
+existera. Rien n'est donc rendu plus coûteux par l'attente.
+
+**Mais une chose change de nature, et c'est le point important.** La table
+`--diff` contient les valeurs de secrets rendues (§6.5), pas seulement du code.
+Une rétention illimitée en fait un magasin de secrets permanent.
+
+Conséquence directe : **la question §14 sur la redaction des `--diff` cesse
+d'être une question parmi d'autres pour devenir le seul contrôle porteur.** Tant
+qu'on purgeait, une redaction imparfaite avait une date de péremption. Sans
+purge, ce qui entre dans cette table y reste, et la redaction à l'écriture est
+la seule barrière. Elle passe donc en tête des questions ouvertes du §14.
+
 ## Conséquences
 
 - **Avantages** :
@@ -189,7 +210,8 @@ suppressions dans le journal applicatif.
 - **Dette technique éventuelle** :
   - Les métriques du point 2 ne sont pas écrites. Tant qu'elles n'existent pas,
     la décision n'a pas ses contreparties : elle est conditionnelle, pas acquise.
-  - Rien n'est décidé pour la rétention du journal ni pour celle des payloads
-    `--diff`. C'est le sujet suivant, et c'est là que se trouve le volume — la
-    table `--diff` cumulant d'ailleurs le plus gros volume et la plus forte
-    sensibilité, puisqu'elle contient les secrets rendus (§6.5).
+  - ~~Rien n'est décidé pour la rétention du journal ni pour celle des payloads
+    `--diff`.~~ → tranché le même jour dans le même sens, voir la section
+    « Extension au journal » ci-dessus. Il en résulte une dette déplacée, pas
+    supprimée : la redaction des `--diff` devient le seul contrôle porteur sur
+    la donnée la plus sensible du produit.
