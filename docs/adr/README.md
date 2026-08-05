@@ -32,6 +32,7 @@ d'implémentation prises en cours de route.
 | [0017](0017-redaction-des-diffs-par-substitution-exacte.md) | Redaction des `--diff` par substitution exacte des valeurs injectées | Accepted |
 | [0018](0018-canal-de-dispatch-sse-vers-le-runner.md) | Canal de dispatch SSE du contrôle vers le runner | Accepted |
 | [0019](0019-decoupage-hexagonal-du-control-plane.md) | Découpage hexagonal du control plane | Accepted |
+| [0020](0020-key-inventory-credentials-dacces.md) | `key-inventory` : credentials d'accès, Secrets Kubernetes en v1 | Accepted |
 
 ## Convention
 

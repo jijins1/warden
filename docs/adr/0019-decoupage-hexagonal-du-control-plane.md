@@ -117,6 +117,12 @@ avant persistance) et l'**AuthN** (§10.1, « OIDC en priorité, LDAP en
 fallback » — deux implémentations écrites dans la spec). Seul `gitclient` n'était
 pas différable : l'ADR-0007 le place sur le chemin du claim.
 
+> La première a été nommée le même jour, et pas sous la forme attendue :
+> l'[ADR-0020](0020-key-inventory-credentials-dacces.md) crée un rôle
+> **`key-inventory`** — *avec quoi joindre ces hôtes en tant que cet
+> utilisateur* — dont Vault n'est qu'une implémentation future. La v1 répond
+> depuis un Secret Kubernetes.
+
 ### Renommage
 
 L'actuel `controller` disparaît en tant que rôle propre : informer, reaper et

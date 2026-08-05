@@ -454,7 +454,7 @@ arbitraire (§2).
 | Cache Ansible | **Jamais partagé entre utilisateurs** (`~/.ansible`) → empoisonnement de collections |
 | Nœuds | Node pool dédié + taints |
 | Sandbox renforcée | **gVisor ou Kata** — coût de démarrage modeste au regard du reste |
-| Secrets | Projected volume, token court. Idéalement Vault Agent injector avec un lease qui expire à la fin du run. **Pas de Secret Kubernetes long-vécu** |
+| Secrets | ~~Projected volume, token court. Idéalement Vault Agent injector avec un lease qui expire à la fin du run. **Pas de Secret Kubernetes long-vécu**~~ → [ADR-0020](../docs/adr/0020-key-inventory-credentials-dacces.md) : **cible sans implémentation, Vault n'existe pas dans l'environnement**. En v1, `wardend` lit un Secret Kubernetes au claim et le livre par le canal SSE de l'[ADR-0018](../docs/adr/0018-canal-de-dispatch-sse-vers-le-runner.md). Le Secret est long-vécu ; ce qui ne l'est pas, c'est sa présence **dans le pod** |
 
 ---
 
@@ -496,9 +496,10 @@ Conséquences, qui simplifient massivement l'architecture :
 - **TTL adaptatif** plutôt que fixe. Une boucle de dev Ansible = un run toutes
   les 2-5 minutes ; après ~15 min sans activité, la session est finie.
   Prolonger tant que le rythme se maintient.
-- **Aucun credential avant le claim.** Un lease Vault ouvert 45 minutes sur un
-  pod inactif est exactement ce qu'on cherche à éviter. Injection au moment où
-  le pod est réclamé.
+- **Aucun credential avant le claim.** ~~Un lease Vault ouvert 45 minutes sur un
+  pod inactif est exactement ce qu'on cherche à éviter.~~ Injection au moment où
+  le pod est réclamé. L'exigence tient, mais par le canal de l'[ADR-0018](../docs/adr/0018-canal-de-dispatch-sse-vers-le-runner.md)
+  et non par un lease — voir [ADR-0020](../docs/adr/0020-key-inventory-credentials-dacces.md).
 - **Métrique de hit rate.** Sous 50 %, on brûle des ressources pour rien →
   raccourcir le TTL.
 
@@ -654,7 +655,11 @@ Application réelle du contrôle, par ordre d'efficacité :
 1. **Certificats SSH éphémères** (Vault SSH CA / Teleport) dont les
    *principals* sont dérivés des droits de l'utilisateur. La cible refuse le
    cert si l'utilisateur n'a pas le droit. **C'est le contrôle qui compte.**
+   → **Non implémenté en v1** ([ADR-0020](../docs/adr/0020-key-inventory-credentials-dacces.md)) :
+   Vault n'existe pas dans l'environnement cible.
 2. **NetworkPolicy egress** scopée au périmètre de l'utilisateur
+   → **En v1, c'est donc le seul contrôle d'autorisation réel.** Le périmètre
+   d'un utilisateur est appliqué par le réseau ou il ne l'est pas.
 3. Filtrage d'inventaire côté serveur — confort, pas sécurité
 
 **Ne pas réimplémenter** l'émission de certificats. Intégrer Vault ou Teleport.
