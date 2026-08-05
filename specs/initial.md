@@ -132,6 +132,19 @@ par construction, cf. §8) et d'un checkout du commit de la branche protégée.
                                          └──────────────────┘
 ```
 
+> Ce schéma est daté sur deux points.
+>
+> **Le bus n'existe pas.** L'[ADR-0008](../docs/adr/0008-postgresql-comme-journal-et-transport-devents.md)
+> retient PostgreSQL comme journal *et* transport : le runner `POST` ses events
+> vers un endpoint d'ingestion, l'api sert l'historique depuis la table puis suit
+> le direct par `LISTEN`/`NOTIFY`.
+>
+> **Il manque la flèche descendante.** Le pod étant pré-chauffé, il existe avant
+> le run : ni la podspec ni un volume projeté ne peuvent porter l'ordre. Le
+> runner ouvre un canal SSE sortant par lequel descendent l'ordre de run, le
+> jeton git et les secrets du claim
+> ([ADR-0018](../docs/adr/0018-canal-de-dispatch-sse-vers-le-runner.md)).
+
 ---
 
 ## 5. La CLI
@@ -496,8 +509,13 @@ faut un reaper, sinon on découvre 300 pods idle un lundi matin.
 
 **Course.** Deux commandes lancées en parallèle par le même utilisateur : la
 seconde doit tomber en cold start proprement, ni attendre ni recevoir le même
-pod. → **claim atomique** (annotation avec compare-and-swap, ou file côté
-server).
+pod. → **claim atomique** ~~(annotation avec compare-and-swap, ou file côté
+server)~~.
+
+> Simplifié par l'[ADR-0018](../docs/adr/0018-canal-de-dispatch-sse-vers-le-runner.md) :
+> les pods chauds étant connectés au serveur par un canal SSE sortant, réclamer
+> revient à choisir une connexion oisive dans une structure que le serveur
+> détient déjà. Plus de compare-and-swap sur un objet Kubernetes.
 
 ### 8.5 Optimisation zygote (phase ultérieure)
 
@@ -606,9 +624,17 @@ côté CLI si un playbook en contient.
 
 ### 9.4 Verrou de concurrence
 
-Verrou par (inventaire, environnement), ou plus finement par hôte. Deux
+~~Verrou par (inventaire, environnement), ou plus finement par hôte. Deux
 utilisateurs sur les mêmes machines simultanément est un bug qu'AWX gère mal —
-**bon différenciateur**.
+**bon différenciateur**.~~
+
+> Écarté par l'[ADR-0016](../docs/adr/0016-pas-de-verrou-de-concurrence.md) :
+> **aucun verrou, à aucune granularité**. Un verrou par inventaire transforme le
+> surcoût du produit en attente non bornée (§3.1) et le bastion du §5.7 le rend
+> contournable ; un verrou par hôte donnerait une garantie fausse, puisque le §2
+> pose que `--limit` n'est jamais un contrôle de sécurité. En contrepartie, le
+> §6.6 est étendu aux runs **en cours** : l'information est donnée avant de
+> partir, sans blocage ni confirmation.
 
 ---
 
