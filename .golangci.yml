@@ -152,6 +152,8 @@ linters:
               desc: "ADR-0011 : domaines de confiance distincts."
             - pkg: github.com/jijins1/warden/internal/wire/ingest
               desc: "ADR-0008 : l'ingestion est un contrat runner → serveur. La CLI n'y a rien à faire."
+            - pkg: github.com/jijins1/warden/internal/wire/dispatch
+              desc: "ADR-0018 : le dispatch est un contrat serveur → runner, et le seul qui transporte des credentials. La CLI n'y a rien à faire."
 
         # ------------------------------------------------------------------
         # Socle partagé (ADR-0011).

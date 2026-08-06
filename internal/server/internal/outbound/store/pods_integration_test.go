@@ -423,6 +423,86 @@ func TestNotificationDeDispatchPorteUnPointeur(t *testing.T) {
 	}
 }
 
+// WatchPodDispatch est ce qui relie la notification au réplica qui tient la
+// connexion. Le nom du canal y est DUPLIQUÉ depuis la migration — deux
+// adaptateurs sortants n'ayant pas le droit de se connaître (ADR-0019) — et un
+// renommage casserait le routage EN SILENCE, puisque le poll du dispatcher
+// continuerait de tout servir. C'est ce test qui tient cette arête, pas le
+// compilateur.
+func TestWatchPodDispatchReveilleSurLeClaim(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	uid := seedUser(t, s, "alice")
+	pool := core.PodPool{UserID: uid, Repo: "infra", Environment: "staging"}
+	podID, _ := seedPod(t, s, "warden-runner-aaaa", pool, true)
+	runID := seedRunFor(t, s, uid, testULID)
+
+	reveils := make(chan int64, 4)
+	ecoute, arreter := context.WithCancel(ctx)
+	defer arreter()
+	go func() { _ = s.WatchPodDispatch(ecoute, func(id int64) { reveils <- id }) }()
+
+	// Attendre que le LISTEN soit effectivement posé : la connexion d'écoute
+	// est hors du pool, donc invisible dans ses métriques — c'est à cela que
+	// sert son `application_name`.
+	attendreEcoute(t, dsn)
+
+	if _, err := s.ClaimPod(ctx, pool, runID); err != nil {
+		t.Fatalf("ClaimPod: %v", err)
+	}
+	select {
+	case id := <-reveils:
+		if id != podID {
+			t.Errorf("réveil sur le pod %d, attendu %d", id, podID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("aucun réveil après le claim")
+	}
+
+	if err := s.RequestPodCancel(ctx, runID); err != nil {
+		t.Fatalf("RequestPodCancel: %v", err)
+	}
+	select {
+	case id := <-reveils:
+		if id != podID {
+			t.Errorf("réveil d'annulation sur le pod %d, attendu %d", id, podID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("aucun réveil après la demande d'annulation")
+	}
+}
+
+// attendreEcoute bloque jusqu'à ce que la connexion d'écoute du dispatch soit
+// posée et oisive, c'est-à-dire en attente de notifications.
+func attendreEcoute(t *testing.T, dsn string) {
+	t.Helper()
+	ctx := context.Background()
+	c := connect(t, dsn)
+	defer c.Close(ctx)
+
+	fin := time.Now().Add(10 * time.Second)
+	for time.Now().Before(fin) {
+		var n int
+		if err := c.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE application_name = 'warden-dispatch-listen' AND state = 'idle'`).Scan(&n); err != nil {
+			t.Fatalf("pg_stat_activity: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("la connexion d'écoute du dispatch ne s'est pas établie")
+}
+
 // Le pendant, pour les pods, du test négatif de l'ADR-0008 : le rôle
 // d'ingestion résout `pod -> run` et rien d'autre. En particulier il ne peut pas
 // s'attribuer un run — sans quoi le domaine hostile choisirait lui-même le run

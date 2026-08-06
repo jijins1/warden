@@ -22,6 +22,10 @@ var ErrNotFound = errors.New("introuvable")
 // propre rôle PostgreSQL (voir Ingest).
 type Store struct {
 	pool *pgxpool.Pool
+	// dsn est conservé pour WatchPodDispatch, qui a besoin d'une connexion HORS
+	// du pool : `LISTEN` n'est pas une requête mais une session, et rendue au
+	// pool elle cesserait de recevoir sans qu'aucune erreur ne le signale.
+	dsn string
 }
 
 // Open ouvre le pool applicatif complet.
@@ -35,7 +39,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, dsn: dsn}, nil
 }
 
 // Close relâche les connexions. Idempotent.

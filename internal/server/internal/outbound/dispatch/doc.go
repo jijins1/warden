@@ -21,12 +21,30 @@
 //
 // # Routage entre réplicas
 //
-// Le claim est un UPDATE conditionnel en base (ADR-0006), mais la connexion SSE
-// du pod réclamé est tenue par UN réplica, pas nécessairement celui qui a gagné
-// le claim. L'ordre doit donc être routé jusqu'au bon réplica — par le même
-// LISTEN / NOTIFY que le flux d'events, en sens inverse. L'ADR-0018 décrit le
-// claim comme « choisir une connexion oisive », ce qui n'est vrai qu'à un seul
-// réplica.
+// Le claim est un UPDATE conditionnel en base, mais la connexion SSE du pod
+// réclamé est tenue par UN réplica, pas nécessairement celui qui a gagné le
+// claim. L'ordre est donc routé par le même LISTEN / NOTIFY que le flux
+// d'events, en sens inverse (ADR-0018 amendée le 2026-08-06).
+//
+// La notification porte un POINTEUR — l'id du pod — et jamais la charge : le
+// réplica qui détient la connexion va chercher l'ordre et les credentials
+// lui-même, au moment de livrer. Les faire transiter par NOTIFY les écrirait
+// dans le WAL de PostgreSQL, et ferait du journal d'audit un magasin de
+// secrets.
+//
+// # Deux ports, aucune base
+//
+// Ce paquet ne connaît pas PostgreSQL : il déclare `Pods` et `Orders`, que
+// `outbound/store` et l'assemblage implémentent. C'est ce qui le rend testable
+// sans base (ADR-0010, étage 1), et l'écoute des notifications vit donc dans
+// `store`, pas ici.
+//
+// # Identité d'amorçage
+//
+// Le pod s'authentifie par un jeton porteur émis par le contrôleur, dont seule
+// l'empreinte est conservée (ADR-0023). Sa capacité unique est « je suis le pod
+// chaud N » : il ne nomme aucun run, et le serveur résout `pod -> run` depuis sa
+// propre base.
 //
 // # Interdictions
 //
