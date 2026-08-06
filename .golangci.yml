@@ -67,10 +67,17 @@ linters:
             - pkg: github.com/jijins1/warden/internal/server/internal
               desc: "ADR-0019 : le cœur ne dépend d'aucun adaptateur. L'assemblage a lieu dans cmd/wardend, nulle part ailleurs."
 
+        # `!$test` sur les deux règles frères : un test d'intégration câble
+        # légitimement deux adaptateurs — écrire avec `store` pour relire avec
+        # `flux` est précisément ce qu'il doit faire, et c'est ce que fait
+        # `cmd/wardend`. Ce que la règle interdit, c'est ce couplage dans le
+        # code livré. Les règles de domaine de confiance ci-dessous, elles, ne
+        # sont PAS relâchées sur les tests.
         serveur-entrants:
           list-mode: lax
           files:
             - "**/internal/server/internal/inbound/**"
+            - "!$test"
           deny:
             - pkg: github.com/jijins1/warden/internal/server/internal
               desc: "ADR-0019 : un adaptateur entrant appelle le cœur et rien d'autre. En particulier `ingest` ne touche pas `outbound/store` directement — sinon la table d'events redevient une dépendance publique."
@@ -81,6 +88,7 @@ linters:
           list-mode: lax
           files:
             - "**/internal/server/internal/outbound/**"
+            - "!$test"
           deny:
             - pkg: github.com/jijins1/warden/internal/server/internal
               desc: "ADR-0019 : un adaptateur sortant n'importe que le cœur, pour ses types de domaine. Deux adaptateurs qui se parlent recréent le couplage que la décomposition supprime — y compris store et flux, séparés exprès (ADR-0008)."
