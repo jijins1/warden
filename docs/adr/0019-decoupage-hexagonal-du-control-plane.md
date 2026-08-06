@@ -75,8 +75,15 @@ pour `wardend` uniquement.
 | `dispatch` | Canal vers le runner (ADR-0018) | SSE |
 | `gitclient` | Ref de namespace, résolution de la config depuis le commit | binaire git (ADR-0005) |
 
-Côté entrant, `api` (HTTP + WS vers la CLI), `ingest` (`POST` du runner) et
-`gitd` (protocole git) **appellent** le cœur. Ils ne sont pas ses dépendances.
+Côté entrant, `api` (HTTP + WS vers la CLI) et `ingest` (`POST` du runner)
+**appellent** le cœur. Ils ne sont pas ses dépendances.
+
+> **Correction, à la restructuration.** `gitd` figurait ici côté entrant : c'est
+> faux. Le rôle `git` sert le protocole git aux runners et à la CLI **sans passer
+> par le cœur**, et le cœur l'atteint dans l'autre sens par `outbound/gitclient`.
+> C'est un service distinct, qui vit à côté de la décomposition hexagonale et non
+> dedans. Il reste donc à `internal/server/internal/gitd/`, frère de `core`,
+> `inbound` et `outbound`.
 
 Il en résulte une asymétrie voulue : **le runner est joint par `dispatch` et
 joint le cœur par `ingest`**. Deux adaptateurs, deux directions — c'est

@@ -6,6 +6,19 @@
 // le statut d'un run et ses events dans la même transaction, ce que l'ADR-0008
 // exige (ADR-0011).
 //
+// Adaptateur SORTANT du cœur (ADR-0019). Le suivi temps réel d'un run n'est PAS
+// ici : c'est `outbound/flux`, séparé bien que reposant sur la même base, pour
+// que le repli de l'ADR-0008 vers un store d'events dédié ne traverse pas le
+// cœur.
+//
+// Les events sont stockés sous forme NORMALISÉE — enveloppe à colonnes (run_id,
+// seq, hôte, tâche, statut, changed, horodatage) plus payload de module opaque.
+// Le brut d'ansible-runner n'est pas la forme de stockage : l'ADR-0014 laissant
+// chaque projet épingler son image, plusieurs versions d'ansible-core coexistent,
+// et une requête « tout ce qui s'est passé sur cette machine » ne peut pas
+// dépendre de l'union de tous les formats jamais émis. L'index (hôte, date) de
+// l'ADR-0008 le supposait déjà.
+//
 // Deux constructeurs, pour les deux identités de connexion :
 //   - Open, accès complet, utilisé par api, gitd et controller ;
 //   - OpenIngest, qui ne rend qu'un type limité à l'ajout d'events. La

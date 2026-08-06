@@ -11,4 +11,13 @@
 //
 // L'insertion est idempotente sur (run_id, seq) : les réémissions du runner sont
 // sans danger et l'ingestion se parallélise sans contrainte d'ordre.
+//
+// Adaptateur ENTRANT (ADR-0019) : il n'atteint que `core`. C'est le sens
+// MONTANT du dialogue avec le pod ; le sens descendant passe par
+// `outbound/dispatch`, et cette séparation est délibérée (ADR-0018).
+//
+// Le lien entre run_id et pod est établi côté serveur, jamais accepté depuis le
+// corps de la requête : un runner hostile peut mentir sur ses propres events —
+// c'est irréductible, il est seul à observer l'exécution — mais il ne doit pas
+// pouvoir toucher à ceux d'un autre run.
 package ingest

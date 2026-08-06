@@ -13,6 +13,12 @@
 // surface exposée doit rester minimale et son autorisation couverte par un test
 // négatif — un run qui tente de lire la ref d'un autre run doit échouer.
 //
-// Arêtes autorisées (ADR-0006) : store, git. Ce paquet n'importe ni api, ni
-// controller.
+// Ce paquet n'est ni un adaptateur entrant ni un adaptateur sortant du cœur : le
+// rôle `git` est un SERVICE DISTINCT, qui sert le protocole git aux runners et à
+// la CLI sans passer par le cœur, et que le cœur atteint par
+// `outbound/gitclient`. Il vit donc à côté de la décomposition hexagonale de
+// l'ADR-0019, pas dedans — l'ADR le rangeait à tort côté entrant.
+//
+// Arêtes autorisées : `outbound/store` et le socle `internal/git`. Ce paquet
+// n'importe ni `core`, ni `inbound`, ni les autres adaptateurs.
 package gitd

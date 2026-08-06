@@ -6,6 +6,6 @@
 //
 // Ce paquet ANALYSE, il ne DÉCIDE pas. La composition — politique serveur, puis
 // configuration lue depuis le commit, puis flags explicites — appartient à
-// `internal/server/internal/policy` (ADR-0009). Le contenu du commit est une
-// entrée non fiable.
+// `internal/server/internal/core` (ADR-0009, ADR-0019). Le contenu du commit est
+// une entrée non fiable.
 package config
