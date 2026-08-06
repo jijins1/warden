@@ -30,11 +30,12 @@ d'implémentation prises en cours de route.
 | [0015](0015-prechauffage-obligatoire-zygote-optionnel.md) | Le pré-chauffage est obligatoire, le zygote reste optionnel | Accepted |
 | [0016](0016-pas-de-verrou-de-concurrence.md) | Pas de verrou de concurrence, mais une visibilité des runs en vol | Accepted |
 | [0017](0017-redaction-des-diffs-par-substitution-exacte.md) | Redaction des `--diff` par substitution exacte des valeurs injectées | Accepted |
-| [0018](0018-canal-de-dispatch-sse-vers-le-runner.md) | Canal de dispatch SSE du contrôle vers le runner | Accepted |
+| [0018](0018-canal-de-dispatch-sse-vers-le-runner.md) | Canal de dispatch SSE du contrôle vers le runner | Accepted (amendé le 2026-08-06) |
 | [0019](0019-decoupage-hexagonal-du-control-plane.md) | Découpage hexagonal du control plane | Accepted |
 | [0020](0020-key-inventory-credentials-dacces.md) | `key-inventory` : credentials d'accès, Secrets Kubernetes en v1 | Accepted |
 | [0021](0021-modele-devent-normalise.md) | Modèle d'event normalisé, identifiants et métadonnées de run | Accepted (amendé le 2026-08-06) |
 | [0022](0022-pgx-comme-pilote-postgresql.md) | pgx en accès natif, `database/sql` réservé aux migrations | Accepted |
+| [0023](0023-identite-damorcage-du-pod-runner.md) | Identité d'amorçage du pod runner : jeton porteur émis par le contrôleur | Accepted |
 
 ## Convention
 

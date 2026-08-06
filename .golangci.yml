@@ -66,6 +66,17 @@ linters:
             # l'intérieur, jamais l'inverse.
             - pkg: github.com/jijins1/warden/internal/server/internal
               desc: "ADR-0019 : le cœur ne dépend d'aucun adaptateur. L'assemblage a lieu dans cmd/wardend, nulle part ailleurs."
+          allow:
+            # `core` lui-même, pour le seul cas où ce chemin est atteignable :
+            # le paquet de test externe `core_test`, qui doit importer ce qu'il
+            # teste. Un fichier de `core` ne peut pas s'importer lui-même.
+            #
+            # Cette forme plutôt qu'un `!$test` sur la règle : les refus
+            # ci-dessus — base de données, client Kubernetes, net/http — doivent
+            # rester actifs DANS les tests. Un test du cœur qui a besoin d'une
+            # base a cessé d'être un test d'étage 1 (ADR-0010), et c'est
+            # exactement ce que cette règle doit continuer de dire.
+            - github.com/jijins1/warden/internal/server/internal/core
 
         # `!$test` sur les deux règles frères : un test d'intégration câble
         # légitimement deux adaptateurs — écrire avec `store` pour relire avec

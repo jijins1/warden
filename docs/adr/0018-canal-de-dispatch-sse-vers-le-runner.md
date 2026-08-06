@@ -170,3 +170,33 @@ jeton git — celui-ci arrive par le canal, après le claim.
   - SSE ne transporte que du texte. L'encodage des secrets dans le flux est un
     détail d'implémentation, mais un détail qui touche des valeurs sensibles :
     il doit être fixé explicitement, pas hérité d'un défaut de bibliothèque.
+
+---
+
+## Amendement du 2026-08-06 — routage entre réplicas
+
+Deux points de cette ADR sont corrigés à l'implémentation.
+
+**« Réclamer, c'est choisir une connexion oisive dans une structure que le
+serveur détient déjà » n'est vrai qu'à un seul réplica.** À N réplicas, celui qui
+gagne le claim n'est pas nécessairement celui qui tient la connexion SSE du pod
+réclamé. La structure des connexions est locale à un processus ; la structure des
+pods réclamables ne peut donc pas l'être.
+
+Correction : **la table des pods est en base, et l'ordre est routé par
+`NOTIFY`** — le même mécanisme que le flux d'events, en sens inverse. Le claim
+reste ce que le §8.4 demandait, mais sous la forme d'un `UPDATE ... FOR UPDATE
+SKIP LOCKED` ; voir l'[ADR-0023](0023-identite-damorcage-du-pod-runner.md).
+
+**La notification porte un pointeur, jamais la charge.** Elle dit « le pod P a
+été réclamé » ; le réplica qui détient la connexion va chercher l'ordre et les
+credentials lui-même, au moment de livrer.
+
+C'est une propriété de sécurité, pas une commodité. Cette ADR liste le jeton git
+et les secrets du claim parmi ce que le canal transporte : les faire transiter
+par `NOTIFY` les écrirait dans le WAL de PostgreSQL, et ferait du journal
+d'audit un magasin de secrets. Avec un pointeur, **aucun credential n'est
+persisté à aucun moment**.
+
+L'identité d'amorçage, laissée en dette centrale par cette ADR, est décidée par
+l'[ADR-0023](0023-identite-damorcage-du-pod-runner.md).
