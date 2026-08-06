@@ -24,7 +24,6 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const testULID = "01JZQ00000000000000000ABCD"
@@ -34,12 +33,17 @@ func startPostgres(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
 
+	// BasicWaitStrategies, et surtout PAS une attente sur le port ouvert :
+	// l'entrypoint de l'image démarre un serveur temporaire pour initdb, puis
+	// l'arrête et redémarre le vrai. Le port est donc ouvert pendant
+	// l'initialisation, et s'y connecter donne un « connection reset by peer »
+	// au moment où le serveur temporaire s'arrête. La stratégie du module
+	// attend le message de démarrage DEUX fois, pour cette raison précise.
 	c, err := tcpostgres.Run(ctx, "postgres:17-alpine",
 		tcpostgres.WithDatabase("warden"),
 		tcpostgres.WithUsername("postgres"),
 		tcpostgres.WithPassword("postgres"),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("5432/tcp").WithStartupTimeout(60*time.Second)),
+		tcpostgres.BasicWaitStrategies(),
 	)
 	if err != nil {
 		t.Fatalf("démarrage de PostgreSQL: %v", err)

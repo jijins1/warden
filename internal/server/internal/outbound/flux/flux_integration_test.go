@@ -20,7 +20,6 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const testULID = "01JZQ00000000000000000ABCD"
@@ -47,12 +46,13 @@ func setup(t *testing.T) *harnais {
 	t.Helper()
 	ctx := context.Background()
 
+	// Voir store_integration_test.go : une attente sur le port ouvert se
+	// connecte au serveur temporaire d'initdb, qui coupe ensuite la connexion.
 	c, err := tcpostgres.Run(ctx, "postgres:17-alpine",
 		tcpostgres.WithDatabase("warden"),
 		tcpostgres.WithUsername("postgres"),
 		tcpostgres.WithPassword("postgres"),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("5432/tcp").WithStartupTimeout(60*time.Second)),
+		tcpostgres.BasicWaitStrategies(),
 	)
 	if err != nil {
 		t.Fatalf("démarrage de PostgreSQL: %v", err)
@@ -136,8 +136,10 @@ func (h *harnais) listen(t *testing.T) {
 	t.Fatal("la connexion d'écoute ne s'est pas établie")
 }
 
-func (h *harnais) push(t *testing.T, from int64, n int) {
-	t.Helper()
+// push rend son erreur au lieu d'appeler t.Fatalf : il est utilisé depuis une
+// goroutine, où Fatalf termine la MAUVAISE goroutine et laisse le test pendre
+// au lieu d'échouer.
+func (h *harnais) push(from int64, n int) error {
 	now := time.Now().UTC()
 	evs := make([]events.Event, n)
 	for i := range evs {
@@ -151,7 +153,12 @@ func (h *harnais) push(t *testing.T, from int64, n int) {
 			Payload: json.RawMessage(`{"changed":true}`),
 		}
 	}
-	if err := h.in.AppendEvents(context.Background(), h.runID, evs); err != nil {
+	return h.in.AppendEvents(context.Background(), h.runID, evs)
+}
+
+func (h *harnais) mustPush(t *testing.T, from int64, n int) {
+	t.Helper()
+	if err := h.push(from, n); err != nil {
 		t.Fatalf("AppendEvents: %v", err)
 	}
 }
@@ -188,7 +195,7 @@ func TestSuiviCorrectSansConnexionDEcoute(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	h.push(t, 0, 5)
+	h.mustPush(t, 0, 5)
 
 	s, err := h.flux.Follow(ctx, h.runID, 0)
 	if err != nil {
@@ -199,7 +206,10 @@ func TestSuiviCorrectSansConnexionDEcoute(t *testing.T) {
 	// poll.
 	go func() {
 		time.Sleep(200 * time.Millisecond)
-		h.push(t, 5, 5)
+		if err := h.push(5, 5); err != nil {
+			t.Errorf("AppendEvents: %v", err)
+			return
+		}
 		time.Sleep(200 * time.Millisecond)
 		if err := h.store.CloseRun(ctx, h.runID, core.RunSucceeded, ""); err != nil {
 			t.Errorf("CloseRun: %v", err)
@@ -231,7 +241,7 @@ func TestNotifyDevanceLePoll(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	debut := time.Now()
-	h.push(t, 0, 1)
+	h.mustPush(t, 0, 1)
 
 	select {
 	case e, ok := <-s.Events():
@@ -259,7 +269,7 @@ func TestReplayDepuisUnOffset(t *testing.T) {
 	ctx := context.Background()
 	h.listen(t)
 
-	h.push(t, 0, 20)
+	h.mustPush(t, 0, 20)
 	if err := h.store.CloseRun(ctx, h.runID, core.RunSucceeded, ""); err != nil {
 		t.Fatalf("CloseRun: %v", err)
 	}
@@ -285,7 +295,7 @@ func TestFluxSeFermeALaFinDuRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Follow: %v", err)
 	}
-	h.push(t, 0, 3)
+	h.mustPush(t, 0, 3)
 
 	// Un run interrompu se clôt aussi : l'abandon est un statut de première
 	// classe, jamais un stream tronqué (§5.6).
@@ -304,7 +314,7 @@ func TestRunDejaTermine(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	h.push(t, 0, 4)
+	h.mustPush(t, 0, 4)
 	if err := h.store.CloseRun(ctx, h.runID, core.RunFailed, ""); err != nil {
 		t.Fatalf("CloseRun: %v", err)
 	}
@@ -325,7 +335,7 @@ func TestLotPlusGrandQueLaLimiteDeLecture(t *testing.T) {
 	ctx := context.Background()
 
 	const n = 1300
-	h.push(t, 0, n)
+	h.mustPush(t, 0, n)
 	if err := h.store.CloseRun(ctx, h.runID, core.RunSucceeded, ""); err != nil {
 		t.Fatalf("CloseRun: %v", err)
 	}
@@ -395,7 +405,7 @@ func TestHistory(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	h.push(t, 0, 6)
+	h.mustPush(t, 0, 6)
 	got, err := h.flux.History(ctx, h.runID, 2)
 	if err != nil {
 		t.Fatalf("History: %v", err)
@@ -421,7 +431,7 @@ func TestAnnulationDuContexte(t *testing.T) {
 	h := setup(t)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h.push(t, 0, 2)
+	h.mustPush(t, 0, 2)
 	s, err := h.flux.Follow(ctx, h.runID, 0)
 	if err != nil {
 		t.Fatalf("Follow: %v", err)
