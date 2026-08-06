@@ -249,6 +249,14 @@ ouvrir une PR. Correction : `allowed_overrides` explicites côté serveur.
 - **Le résultat effectif est journalisé dans l'audit**, pas seulement ce que le
   client a demandé
 
+> **Écart assumé en v1** ([ADR-0021](../docs/adr/0021-modele-devent-normalise.md)) :
+> la politique serveur est mise de côté. Sans elle il n'existe aucun écart entre
+> demandé et effectif, donc une seule série de colonnes de paramètres sur la
+> ligne de run. Cette section se rouvre le jour où la politique existe — il
+> faudra alors ajouter la trace de ce qui a été filtré, un refus étant lui-même
+> un signal d'audit. Voir aussi la dette du §5.4.1 : l'allowlist de variables
+> d'environnement est de la politique, et elle est écartée avec elle.
+
 ### 5.5 Flags Ansible
 
 **Ne pas faire de passthrough.** La compatibilité exhaustive des flags
