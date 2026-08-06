@@ -77,10 +77,19 @@ l'argument du §6.2, « seul le delta transite », qui justifie git.
 ### Tables
 
 ```
+users
+  id                bigint
+  type              oidc | ldap | local
+  subject           identifiant IMMUABLE du fournisseur
+  display_name, email    instantané, rafraîchi à la connexion
+  created_at, last_seen_at
+  disabled_at       nullable — jamais de DELETE
+  UNIQUE (type, subject)
+
 run
   id                bigint, clé technique — jointures, clé étrangère des events
   run_ref           ULID opaque — nom de ref git (ADR-0007) et identifiant exposé
-  user              §10.1
+  user_id           -> users.id
   environment, inventory, playbook
   audit_sha         le commit d'audit poussé par la CLI (§5.2)
   base_sha          son parent, déjà exigé par l'ADR-0003
@@ -128,6 +137,42 @@ auditeur.
 Le nom de la ref est stocké avec le SHA : la branche de référence est une
 configuration par environnement (§3.2), et un SHA seul cesse d'être interprétable
 si elle change.
+
+### Les utilisateurs sont une table, provisionnée à la volée
+
+Ce point figurait en dette ci-dessous ; il a été tranché le même jour. Un
+utilisateur est créé à sa première arrivée, par OIDC ou par LDAP, avec son
+`type`. Le run porte une clé étrangère, pas une chaîne de sujet répétée sur
+chaque ligne.
+
+**La clé naturelle est l'identifiant immuable du fournisseur**, jamais le nom :
+le `sub` OIDC, stable et opaque par construction ; côté LDAP l'`entryUUID` ou
+l'`objectGUID` plutôt que le DN, qui change dès qu'on déplace quelqu'un d'unité
+organisationnelle. Ni l'email ni le login, qui changent. L'ADR-0013 ne purgeant
+rien, un run de 2026 doit encore se résoudre à la bonne personne en 2032.
+
+`display_name` et `email` sont un **instantané rafraîchi à la connexion** : le
+run pointant l'`id`, l'audit affiche l'identité *actuelle* d'un acteur passé.
+C'est le bon comportement pour un produit d'audit, mais c'est un choix.
+
+**Aucun `DELETE` sur cette table, jamais.** Les runs vivent indéfiniment ;
+supprimer un utilisateur ferait échouer la contrainte ou détruirait de l'audit
+en cascade. `disabled_at` est nullable, pour la même raison
+qu'`artifact_pruned_at`.
+
+**Deux fournisseurs pour un même humain font deux identités**, et elles ne sont
+pas fusionnées : un rapprochement erroné dans un journal d'audit est pire qu'une
+absence de rapprochement. Si le besoin apparaît, un `person_id` s'ajoutera
+par-dessus sans toucher aux runs.
+
+Le type `local` existe pour le POC, afin de ne pas exiger un IdP pour démarrer.
+Il est **désactivable par configuration et désactivé hors développement** : un
+backend d'authentification interne dans un produit d'audit est utile trois mois
+et gênant ensuite, et le borner maintenant ne coûte rien.
+
+Enfin, cette table **ne renforce pas la non-répudiation**. Le §6.2 pose que « le
+serveur affirme que c'était Bob » ne suffit pas ; une clé étrangère n'y change
+rien. C'est la signature du commit qui répond.
 
 ### Deux identifiants, deux rôles
 
@@ -195,9 +240,11 @@ existera, et il faudra alors ajouter la trace de ce qui a été filtré.
     assumé, pas un oubli, et il doit être reporté dans la spec.
 
 - **Dette technique éventuelle** :
-  - La **clé d'identité** de `run.user` n'est pas tranchée : le §10.1 prévoit OIDC
-    et LDAP, donc deux formes de sujet. À décider avant la première migration,
-    faute de quoi elle le sera par défaut.
+  - ~~La **clé d'identité** de `run.user` n'est pas tranchée.~~ → tranchée le
+    même jour, voir « Les utilisateurs sont une table » ci-dessus. Il en reste
+    une dette déplacée : le `type` `local` doit être effectivement borné par
+    configuration, faute de quoi il deviendra le chemin d'authentification par
+    défaut du produit.
   - Le mapping event `ansible-runner` → enveloppe n'est pas écrit. Il ne le sera
     correctement qu'au contact d'un vrai run : c'est un livrable de la phase 1,
     pas une conception préalable.
