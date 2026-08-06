@@ -12,6 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+
+	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
 // Role désigne le rôle sous lequel le binaire est lancé (ADR-0006).
@@ -56,4 +59,40 @@ func Run(ctx context.Context, r Role) error {
 		return err
 	}
 	return fmt.Errorf("rôle %q: pas encore implémenté", r)
+}
+
+// Variables d'environnement portant les chaînes de connexion.
+//
+// Deux identités de connexion, donc deux variables (ADR-0008, ADR-0012). Le
+// rôle d'ingestion est restreint à INSERT sur les tables d'events ; lui donner
+// le DSN applicatif annulerait la séparation sans qu'aucun test ne le voie.
+const (
+	EnvDatabaseURL       = "WARDEN_DATABASE_URL"
+	EnvIngestDatabaseURL = "WARDEN_INGEST_DATABASE_URL"
+)
+
+// Migrate applique les migrations de schéma en attente.
+//
+// Sous-commande dédiée, et non un traitement au démarrage d'un pod : le rôle
+// `api` tourne à N réplicas, migrer au démarrage ferait démarrer N migrateurs
+// concurrents (ADR-0012). Elle est lancée par un Job Helm en pre-upgrade.
+func Migrate(ctx context.Context) error {
+	dsn, err := databaseURL(EnvDatabaseURL)
+	if err != nil {
+		return err
+	}
+	return store.Migrate(ctx, dsn)
+}
+
+// databaseURL lit une chaîne de connexion et échoue tôt si elle manque.
+//
+// Un secret absent doit arrêter le démarrage, pas produire une erreur de
+// connexion trois couches plus bas au premier appel. La valeur n'est jamais
+// journalisée ni incluse dans un message d'erreur : elle porte le mot de passe.
+func databaseURL(name string) (string, error) {
+	dsn := os.Getenv(name)
+	if dsn == "" {
+		return "", fmt.Errorf("%s n'est pas définie", name)
+	}
+	return dsn, nil
 }

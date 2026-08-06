@@ -24,18 +24,27 @@ func main() {
 	}
 }
 
+// cmdMigrate applique les migrations puis rend la main. Ce n'est pas un rôle :
+// rien n'est déployé sous ce nom, c'est un Job qui s'exécute et se termine
+// (ADR-0012).
+const cmdMigrate = "migrate"
+
 func run() error {
 	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: wardend <%s>", joinRoles())
-	}
-
-	role, err := server.ParseRole(os.Args[1])
-	if err != nil {
-		return fmt.Errorf("%w (attendu : %s)", err, joinRoles())
+		return fmt.Errorf("usage: wardend <%s|%s>", joinRoles(), cmdMigrate)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if os.Args[1] == cmdMigrate {
+		return server.Migrate(ctx)
+	}
+
+	role, err := server.ParseRole(os.Args[1])
+	if err != nil {
+		return fmt.Errorf("%w (attendu : %s|%s)", err, joinRoles(), cmdMigrate)
+	}
 
 	if err := server.Run(ctx, role); err != nil && !errors.Is(err, context.Canceled) {
 		return err

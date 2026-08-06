@@ -33,7 +33,8 @@ d'implémentation prises en cours de route.
 | [0018](0018-canal-de-dispatch-sse-vers-le-runner.md) | Canal de dispatch SSE du contrôle vers le runner | Accepted |
 | [0019](0019-decoupage-hexagonal-du-control-plane.md) | Découpage hexagonal du control plane | Accepted |
 | [0020](0020-key-inventory-credentials-dacces.md) | `key-inventory` : credentials d'accès, Secrets Kubernetes en v1 | Accepted |
-| [0021](0021-modele-devent-normalise.md) | Modèle d'event normalisé, identifiants et métadonnées de run | Accepted |
+| [0021](0021-modele-devent-normalise.md) | Modèle d'event normalisé, identifiants et métadonnées de run | Accepted (amendé le 2026-08-06) |
+| [0022](0022-pgx-comme-pilote-postgresql.md) | pgx en accès natif, `database/sql` réservé aux migrations | Accepted |
 
 ## Convention
 

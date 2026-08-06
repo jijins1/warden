@@ -31,6 +31,54 @@ doctor: ## Vérifie que l'environnement de développement est complet
 lint: ## Lance golangci-lint (arêtes entre rôles serveur, ADR-0006)
 	golangci-lint run ./...
 
+# Les trois étages de l'ADR-0010. `test` ne réclame ni Docker ni cluster :
+# c'est la propriété qui le garde rapide, et un test qui se met à en avoir
+# besoin a glissé d'étage.
+.PHONY: test
+test: ## Étage 1 — tests unitaires, sans Docker ni cluster
+	go test -race ./...
+
+.PHONY: test-integration
+test-integration: ## Étage 2 — intégration, PostgreSQL via testcontainers
+	go test -race -tags=integration ./...
+
+# ---------------------------------------------------------------------------
+# Base de développement.
+#
+# Séparée des tests : ceux-ci démarrent leur propre PostgreSQL jetable par
+# testcontainers, pour que le même chemin de code serve en local et en CI
+# (ADR-0010). Cette base-ci sert à regarder le schéma et à essayer des
+# requêtes, pas à faire tourner la CI.
+# ---------------------------------------------------------------------------
+PG_CONTAINER := warden-dev-pg
+PG_PORT      := 5433
+PG_IMAGE     := postgres:17-alpine
+export WARDEN_DATABASE_URL ?= postgres://postgres:postgres@127.0.0.1:$(PG_PORT)/warden?sslmode=disable
+
+.PHONY: pg-up
+pg-up: ## Démarre le PostgreSQL de développement
+	@docker start $(PG_CONTAINER) 2>/dev/null || \
+	  docker run -d --name $(PG_CONTAINER) \
+	    -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=warden \
+	    -p 127.0.0.1:$(PG_PORT):5432 $(PG_IMAGE) >/dev/null
+	@printf 'attente de PostgreSQL'; \
+	for i in $$(seq 1 30); do \
+	  docker exec $(PG_CONTAINER) pg_isready -U postgres -q && break; \
+	  printf '.'; sleep 1; \
+	done; echo " prêt sur 127.0.0.1:$(PG_PORT)"
+
+.PHONY: pg-down
+pg-down: ## Arrête et supprime le PostgreSQL de développement
+	@docker rm -f $(PG_CONTAINER) >/dev/null 2>&1 || true
+
+.PHONY: pg-psql
+pg-psql: ## Ouvre un psql sur la base de développement
+	@docker exec -it $(PG_CONTAINER) psql -U postgres -d warden
+
+.PHONY: migrate
+migrate: ## Applique les migrations sur $$WARDEN_DATABASE_URL
+	go run ./cmd/wardend migrate
+
 .PHONY: help
 help: ## Liste les cibles disponibles
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \

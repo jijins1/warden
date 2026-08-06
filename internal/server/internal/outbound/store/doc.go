@@ -25,10 +25,22 @@
 //     restriction réelle est le rôle PostgreSQL restreint à INSERT ; le type la
 //     rend visible dans le code.
 //
-// Schéma dès la première version : table d'events partitionnée par date et clé
-// (run_id, seq) ; index (hôte, date) ; compteur `changed` dénormalisé sur la
-// ligne de run ; payloads `--diff` dans une table SÉPARÉE à contrôle d'accès
-// distinct, parce qu'ils contiennent les secrets rendus (§6.5).
+// Schéma dès la première version : table d'events partitionnée par date ;
+// index (hôte, date) ; compteur `changed` dénormalisé sur la ligne de run ;
+// payloads `--diff` dans une table SÉPARÉE à contrôle d'accès distinct, parce
+// qu'ils contiennent les secrets rendus (§6.5).
+//
+// La partition porte sur `run_day`, la date du RUN, et non sur celle de
+// l'event. PostgreSQL exige que la colonne de partitionnement fasse partie de
+// toute contrainte d'unicité : partitionner sur la date de l'event aurait rendu
+// la clé (run_id, seq, occurred_at), donc laissé passer deux insertions du même
+// (run_id, seq) portant des horodatages différents. `run_day` étant une
+// fonction de `run_id` — recopiée depuis la ligne de run, jamais fournie par le
+// runner — l'unicité obtenue équivaut à celle qu'annonce l'ADR-0008.
+//
+// Le compteur `changed` est tenu par un trigger STATEMENT à table de
+// transition, SECURITY DEFINER : il est donc exact SANS que le rôle
+// d'ingestion ait le droit d'écrire sur `run`.
 //
 // Les migrations sont appliquées par `wardend migrate`, jamais au démarrage d'un
 // pod (ADR-0012). Le partitionnement n'est pas une migration : une table sans

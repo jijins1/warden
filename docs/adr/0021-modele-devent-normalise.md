@@ -90,6 +90,7 @@ run
   id                bigint, clé technique — jointures, clé étrangère des events
   run_ref           ULID opaque — nom de ref git (ADR-0007) et identifiant exposé
   user_id           -> users.id
+  run_day           clé de partition des events du run — voir ci-dessous
   environment, inventory, playbook
   audit_sha         le commit d'audit poussé par la CLI (§5.2)
   base_sha          son parent, déjà exigé par l'ADR-0003
@@ -106,7 +107,7 @@ run
   artifact_pruned_at  ADR-0013, nullable, dès la première migration
 
 event               partitionnée par date (ADR-0008)
-  run_id, seq       clé ; idempotence de l'ingestion
+  run_id, run_day, seq   clé ; idempotence de l'ingestion
   host              index (hôte, date)
   task_number, task_name, role
   state             ok / changed / failed / skipped / unreachable / unknown
@@ -120,6 +121,34 @@ event_diff          table séparée, contrôle d'accès distinct (ADR-0008)
 table pleine coûte cher, et surtout sa présence force l'interface d'audit à
 traiter le cas « code purgé » tout de suite, au lieu de renvoyer un 404 le jour de
 la première purge.
+
+### Amendement — la clé de partition n'est pas la date de l'event
+
+*Ajouté le 2026-08-06, à l'écriture de la première migration.*
+
+Cet ADR annonçait une clé `(run_id, seq)`. **PostgreSQL ne le permet pas :** il
+exige que la colonne de partitionnement fasse partie de toute contrainte
+d'unicité. Partitionner sur `occurred_at` aurait donc donné une clé
+`(run_id, seq, occurred_at)` — et deux insertions du même `(run_id, seq)` avec
+un horodatage différent auraient **toutes deux été acceptées**, alors que
+l'idempotence de l'ADR-0008 est ce qui rend les réémissions du runner sans
+danger.
+
+La table est donc partitionnée sur **`run_day`, la date du run**, recopiée
+depuis la ligne de run et jamais fournie par le runner. `run_day` étant une
+fonction de `run_id`, l'unicité `(run_id, run_day, seq)` équivaut exactement à
+l'unicité `(run_id, seq)` : la propriété annoncée est tenue, par un autre
+chemin.
+
+Deux effets de bord, tous deux favorables : les events d'un run ne sont jamais
+à cheval sur deux partitions, donc lire un run touche une seule partition ; et
+la date de la vue par hôte du §6.5 — « tout ce qui a touché `db-prod-02` ce
+mois-ci » — est bien la date du *run*, pas celle de chaque event.
+
+Le prix est une ligne de `GRANT` : le rôle d'ingestion reçoit `SELECT` sur
+`run(id, run_day)`, deux colonnes, en plus de son `INSERT`. Sans lui, `run_day`
+viendrait du corps de la requête, donc d'un pod hostile, et une valeur choisie
+ferait écrire les events d'un run dans la partition d'un autre mois.
 
 ### `mainline_sha` corrige une promesse du §6.5
 
