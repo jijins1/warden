@@ -54,10 +54,10 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// L'abonnement est pris AVANT de se déclarer joignable : entre les deux, un
 	// claim notifierait dans le vide et le pod attendrait le poll pour rien.
-	reveil, premier := d.souscrire(identite.PodID)
+	reveil, premier := d.subscribe(identite.PodID)
 	defer func() {
-		if dernier := d.desouscrire(identite.PodID, reveil); dernier {
-			d.marquer(ctx, identite.PodID, false)
+		if dernier := d.unsubscribe(identite.PodID, reveil); dernier {
+			d.mark(ctx, identite.PodID, false)
 		}
 	}()
 
@@ -69,11 +69,11 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entetesSSE(w)
-	if !d.ecrire(w, flusher, wire.Message{Kind: wire.KindHello}) {
+	if !d.write(w, flusher, wire.Message{Kind: wire.KindHello}) {
 		return
 	}
 
-	d.boucle(ctx, w, flusher, identite.PodID, reveil)
+	d.loop(ctx, w, flusher, identite.PodID, reveil)
 }
 
 // boucle livre les messages jusqu'à la rupture du canal ou la libération du pod.
@@ -82,7 +82,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // qui relit l'état. La notification ne fait que dire quand relire — même
 // principe que le flux d'events (ADR-0008), et c'est ce qui rend le routage
 // entre réplicas correct sans coordination.
-func (d *Dispatcher) boucle(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, podID int64, reveil <-chan struct{}) {
+func (d *Dispatcher) loop(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, podID int64, reveil <-chan struct{}) {
 	poll := time.NewTicker(pollInterval)
 	defer poll.Stop()
 	maintien := time.NewTicker(keepAlive)
@@ -91,7 +91,7 @@ func (d *Dispatcher) boucle(ctx context.Context, w http.ResponseWriter, flusher 
 	var ordreLivre, annulationLivree bool
 
 	for {
-		etat, existe, err := d.etat(ctx, podID)
+		etat, existe, err := d.state(ctx, podID)
 		switch {
 		case err != nil:
 			// Panne de lecture : on ne ferme pas le canal, on réessaiera au
@@ -120,13 +120,13 @@ func (d *Dispatcher) boucle(ctx context.Context, w http.ResponseWriter, flusher 
 					}
 					break
 				}
-				if !d.ecrire(w, flusher, wire.Message{Kind: wire.KindOrder, Order: &ordre}) {
+				if !d.write(w, flusher, wire.Message{Kind: wire.KindOrder, Order: &ordre}) {
 					return
 				}
 				ordreLivre = true
 			}
 			if etat.CancelRequested() && !annulationLivree {
-				if !d.ecrire(w, flusher, wire.Message{
+				if !d.write(w, flusher, wire.Message{
 					Kind:   wire.KindCancel,
 					Reason: string(core.CauseUserInterrupt),
 				}) {
@@ -153,7 +153,7 @@ func (d *Dispatcher) boucle(ctx context.Context, w http.ResponseWriter, flusher 
 }
 
 // ecrire envoie un message et rend false si le canal est rompu.
-func (d *Dispatcher) ecrire(w http.ResponseWriter, flusher http.Flusher, m wire.Message) bool {
+func (d *Dispatcher) write(w http.ResponseWriter, flusher http.Flusher, m wire.Message) bool {
 	if err := wire.Encode(w, m); err != nil {
 		// Jamais le message dans un log : il porte des credentials (ADR-0018).
 		return false
@@ -163,7 +163,7 @@ func (d *Dispatcher) ecrire(w http.ResponseWriter, flusher http.Flusher, m wire.
 }
 
 // marquer met à jour la disponibilité avec un contexte détaché.
-func (d *Dispatcher) marquer(ctx context.Context, podID int64, ready bool) {
+func (d *Dispatcher) mark(ctx context.Context, podID int64, ready bool) {
 	fond, annule := context.WithTimeout(context.WithoutCancel(ctx), detachTimeout)
 	defer annule()
 	// L'erreur est sans recours ici : la connexion est déjà partie. Le filet
@@ -189,7 +189,7 @@ func refuser(w http.ResponseWriter) {
 	http.Error(w, "", http.StatusUnauthorized)
 }
 
-var errPasDeJeton = errors.New("jeton d'amorçage absent")
+var errMissingToken = errors.New("jeton d'amorçage absent")
 
 // jetonPorteur extrait le jeton d'amorçage de l'en-tête Authorization.
 //
@@ -200,7 +200,7 @@ func jetonPorteur(r *http.Request) (core.PodToken, error) {
 	brut := r.Header.Get("Authorization")
 	const prefixe = "Bearer "
 	if len(brut) <= len(prefixe) || !strings.EqualFold(brut[:len(prefixe)], prefixe) {
-		return core.PodToken{}, errPasDeJeton
+		return core.PodToken{}, errMissingToken
 	}
 	return core.ParsePodToken(strings.TrimSpace(brut[len(prefixe):]))
 }

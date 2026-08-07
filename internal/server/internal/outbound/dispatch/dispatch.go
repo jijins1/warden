@@ -110,7 +110,7 @@ func (d *Dispatcher) Connected() int {
 // l'en empêche, et ce n'est pas un problème de sécurité puisqu'il ne recevrait
 // que ce qu'il a déjà. Ce serait en revanche un problème si la fermeture de la
 // première marquait le pod injoignable alors que la seconde tient toujours.
-func (d *Dispatcher) souscrire(podID int64) (chan struct{}, bool) {
+func (d *Dispatcher) subscribe(podID int64) (chan struct{}, bool) {
 	reveil := make(chan struct{}, 1)
 
 	d.mu.Lock()
@@ -123,7 +123,7 @@ func (d *Dispatcher) souscrire(podID int64) (chan struct{}, bool) {
 }
 
 // desouscrire retire un canal et dit s'il était le dernier pour ce pod.
-func (d *Dispatcher) desouscrire(podID int64, reveil chan struct{}) bool {
+func (d *Dispatcher) unsubscribe(podID int64, reveil chan struct{}) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.canaux[podID], reveil)
@@ -135,7 +135,7 @@ func (d *Dispatcher) desouscrire(podID int64, reveil chan struct{}) bool {
 }
 
 // etat lit l'état d'un pod.
-func (d *Dispatcher) etat(ctx context.Context, podID int64) (core.PodState, bool, error) {
+func (d *Dispatcher) state(ctx context.Context, podID int64) (core.PodState, bool, error) {
 	etats, err := d.pods.PodStates(ctx, []int64{podID})
 	if err != nil {
 		return core.PodState{}, false, err

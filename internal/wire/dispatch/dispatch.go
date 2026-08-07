@@ -54,13 +54,13 @@ var ErrProtocol = errors.New("protocole de dispatch")
 // une trame SSE n'est pas une valeur corrompue : c'est une FIN DE MESSAGE.
 type Secret []byte
 
-const masqueDeLaValeur = "[valeur sensible supprimée]"
+const secretMask = "[valeur sensible supprimée]"
 
 // String masque la valeur.
-func (s Secret) String() string { return masqueDeLaValeur }
+func (s Secret) String() string { return secretMask }
 
 // GoString masque la valeur sous `%#v`, que String ne couvre pas.
-func (s Secret) GoString() string { return masqueDeLaValeur }
+func (s Secret) GoString() string { return secretMask }
 
 // Reveal rend la valeur en clair. Nom délibérément inconfortable : il doit se
 // voir en revue.

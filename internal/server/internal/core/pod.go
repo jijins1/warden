@@ -38,12 +38,12 @@ type PodToken struct {
 	v string
 }
 
-// masqueDuJeton remplace la valeur partout où elle pourrait être imprimée.
+// tokenMask remplace la valeur partout où elle pourrait être imprimée.
 //
 // Le nom évite délibérément les mots que gosec surveille dans les identifiants
 // porteurs de littéraux : la constante ne contient aucun secret, et un
 // `//nolint` posé ici s'appliquerait aussi à ce qui viendrait s'ajouter autour.
-const masqueDuJeton = "[jeton d'amorçage supprimé]"
+const tokenMask = "[jeton d'amorçage supprimé]"
 
 // NewPodToken tire un jeton d'amorçage.
 func NewPodToken() (PodToken, error) {
@@ -87,10 +87,10 @@ func (t PodToken) Hash() []byte {
 func (t PodToken) Zero() bool { return t.v == "" }
 
 // String masque la valeur. C'est ce qui protège des `%s` et `%v`.
-func (t PodToken) String() string { return masqueDuJeton }
+func (t PodToken) String() string { return tokenMask }
 
 // GoString masque la valeur sous `%#v`, que String ne couvre pas.
-func (t PodToken) GoString() string { return masqueDuJeton }
+func (t PodToken) GoString() string { return tokenMask }
 
 // MarshalJSON masque la valeur.
 //
@@ -99,7 +99,7 @@ func (t PodToken) GoString() string { return masqueDuJeton }
 // masquage couvre le cas où une structure englobante finirait par en contenir un
 // sans que personne l'ait voulu.
 func (t PodToken) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + masqueDuJeton + `"`), nil
+	return []byte(`"` + tokenMask + `"`), nil
 }
 
 // PodIdentity est ce qu'une authentification de pod établit.

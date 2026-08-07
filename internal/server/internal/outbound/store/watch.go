@@ -9,12 +9,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// canalDispatch est défini par la migration 00003. La duplication est voulue —
+// dispatchChannel est défini par la migration 00003. La duplication est voulue —
 // deux adaptateurs sortants n'ont pas le droit de se connaître (ADR-0019) — mais
 // elle n'est pas gratuite : un renommage côté migration casserait le routage EN
 // SILENCE, puisque le poll du dispatcher continuerait de tout servir. C'est le
 // test d'intégration qui tient cette arête, pas le compilateur.
-const canalDispatch = "warden_pod_dispatch"
+const dispatchChannel = "warden_pod_dispatch"
 
 // dispatchListenerAppName identifie la connexion d'écoute dans pg_stat_activity.
 //
@@ -78,8 +78,8 @@ func (s *Store) watchOnce(ctx context.Context, wake func(podID int64)) error {
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 
-	if _, err := conn.Exec(ctx, "LISTEN "+canalDispatch); err != nil {
-		return fmt.Errorf("LISTEN %s: %w", canalDispatch, err)
+	if _, err := conn.Exec(ctx, "LISTEN "+dispatchChannel); err != nil {
+		return fmt.Errorf("LISTEN %s: %w", dispatchChannel, err)
 	}
 
 	for {
