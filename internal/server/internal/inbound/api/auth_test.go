@@ -101,7 +101,7 @@ func TestListRunsIsScopedToCaller(t *testing.T) {
 	h.createRun(t, ctx)
 
 	// A second user owns another.
-	other, err := h.store.UpsertUser(ctx, store.Identity{
+	other, err := h.store.UpsertUser(ctx, core.Identity{
 		Type: core.UserLocal, Subject: "mallory", DisplayName: "Mallory",
 	})
 	if err != nil {
@@ -127,7 +127,7 @@ func TestListRunsIsScopedToCaller(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
-	var result store.RunListResult
+	var result core.RunListResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestStreamDeniesOtherUsersRun(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	other, err := h.store.UpsertUser(ctx, store.Identity{
+	other, err := h.store.UpsertUser(ctx, core.Identity{
 		Type: core.UserLocal, Subject: "mallory", DisplayName: "Mallory",
 	})
 	if err != nil {
@@ -188,7 +188,7 @@ func TestPolicyCanViewRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UserBySubject: %v", err)
 	}
-	stranger, err := h.store.UpsertUser(ctx, store.Identity{
+	stranger, err := h.store.UpsertUser(ctx, core.Identity{
 		Type: core.UserLocal, Subject: "stranger", DisplayName: "Stranger",
 	})
 	if err != nil {
@@ -201,7 +201,7 @@ func TestPolicyCanViewRun(t *testing.T) {
 		t.Fatalf("RunByRef: %v", err)
 	}
 
-	policy := api.NewPolicy(h.store)
+	policy := api.NewPolicy()
 	if !policy.CanViewRun(ctx, &owner, &run) {
 		t.Error("owner should be able to view their own run")
 	}

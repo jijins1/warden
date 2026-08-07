@@ -50,65 +50,39 @@ func DetermineScopeFromGit(ctx context.Context, repoDir string) (*Scope, error) 
 //	size 123
 func ValidateNoLFS(files []string, repoDir string) error {
 	for _, file := range files {
-		path := filepath.Join(repoDir, file)
-		f, err := os.Open(path)
+		lfs, err := isLFSPointer(filepath.Join(repoDir, file))
 		if err != nil {
-			continue // file may have been deleted since listing
+			return fmt.Errorf("inspecting %s: %w", file, err)
 		}
-		defer f.Close()
-
-		// Read first line
-		scanner := bufio.NewScanner(f)
-		if !scanner.Scan() {
-			continue // empty file is not an LFS pointer
-		}
-		firstLine := scanner.Text()
-
-		if strings.Contains(firstLine, "git-lfs") {
+		if lfs {
 			return fmt.Errorf("audit refuses git-lfs pointer files (%s): unshallow repo or exclude via .auditignore", file)
 		}
 	}
 	return nil
 }
 
-// Intersection returns files that appear in both lists.
-func intersection(a, b []string) []string {
-	if len(a) == 0 || len(b) == 0 {
-		return []string{}
-	}
-	m := make(map[string]bool)
-	for _, v := range b {
-		m[v] = true
-	}
-	var result []string
-	for _, v := range a {
-		if m[v] {
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
-// ReadLines reads lines from a file, trimming whitespace and skipping comments.
-func readLines(path string) ([]string, error) {
+// isLFSPointer reports whether the file starts with a git-lfs pointer header.
+//
+// Closing happens per file rather than through a deferred call in the caller's
+// loop: deferring inside the loop would hold every descriptor open until the
+// whole scope had been walked.
+func isLFSPointer(path string) (bool, error) {
+	// #nosec G304 -- the path is a repository-relative file listed by git
+	// ls-files, joined to the repository root; reading it is the point.
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []string{}, nil
+			return false, nil // listed then deleted: not our problem
 		}
-		return nil, err
+		return false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	var lines []string
 	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			lines = append(lines, line)
-		}
+	if !scanner.Scan() {
+		return false, scanner.Err() // empty file is not a pointer
 	}
-	return lines, scanner.Err()
+	return strings.Contains(scanner.Text(), "git-lfs"), nil
 }
 
 // DeriveMinimal returns a minimal set of files for testing.

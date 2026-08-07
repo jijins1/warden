@@ -12,7 +12,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jijins1/warden/internal/server/internal/core"
-	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	wire "github.com/jijins1/warden/internal/wire/ws"
 )
 
@@ -28,7 +27,7 @@ var upgrader = websocket.Upgrader{
 type streamHandler struct {
 	runID  int64
 	offset int64
-	flux   *flux.Flux
+	events core.EventFollower
 	ws     *websocket.Conn
 
 	mu           sync.Mutex
@@ -64,19 +63,19 @@ func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("WebSocket upgrade failed", "run_id", runID, "error", err)
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 
 	h := &streamHandler{
 		runID:  runID,
 		offset: fromOffset,
-		flux:   a.flux,
+		events: a.deps.Events,
 		ws:     ws,
 	}
 
 	// Set read/write deadlines to detect dead connections
-	ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
 	ws.SetPongHandler(func(string) error {
-		ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		_ = ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		return nil
 	})
 
@@ -86,13 +85,13 @@ func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Stream events
 	if err := h.streamEvents(r.Context(), a); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn("Stream error", "run_id", runID, "error", err)
-		h.sendError(fmt.Sprintf("stream error: %v", err))
+		_ = h.sendError(fmt.Sprintf("stream error: %v", err))
 	}
 }
 
 // streamEvents reads from flux and sends to the client.
 func (h *streamHandler) streamEvents(ctx context.Context, server *Server) error {
-	stream, err := h.flux.Follow(ctx, h.runID, h.offset)
+	stream, err := h.events.Follow(ctx, h.runID, h.offset)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
 	}

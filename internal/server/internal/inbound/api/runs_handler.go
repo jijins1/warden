@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jijins1/warden/internal/server/internal/outbound/store"
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
 // HandleListRuns lists runs with keyset pagination.
@@ -19,7 +19,7 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := store.RunFilter{
+	filter := core.RunFilter{
 		Environment: r.URL.Query().Get("env"),
 		Inventory:   r.URL.Query().Get("inventory"),
 		State:       r.URL.Query().Get("state"),
@@ -60,7 +60,7 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := a.store.ListRuns(r.Context(), filter)
+	result, err := a.deps.Runs.ListRuns(r.Context(), filter)
 	if err != nil {
 		// A bad cursor is the caller's mistake, and the message names it.
 		if strings.Contains(err.Error(), "invalid cursor") {
@@ -72,7 +72,7 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // HandleListByHost lists runs that touched a specific host.
@@ -103,14 +103,14 @@ func (a *Server) HandleListByHost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	runs, err := a.store.GetRunsByHost(r.Context(), host, since, until)
+	runs, err := a.deps.Runs.RunsByHost(r.Context(), host, since, until)
 	if err != nil {
 		http.Error(w, "listing runs by host failed", http.StatusInternalServerError)
 		return
 	}
 
 	// The host view crosses runs, so it is filtered here rather than in SQL.
-	visible := make([]store.RunListItem, 0, len(runs))
+	visible := make([]core.RunListItem, 0, len(runs))
 	for _, run := range runs {
 		if run.UserID == user.ID {
 			visible = append(visible, run)

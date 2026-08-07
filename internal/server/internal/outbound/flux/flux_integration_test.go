@@ -164,7 +164,7 @@ func (h *harnais) mustPush(t *testing.T, from int64, n int) {
 }
 
 // drain consomme le flux jusqu'à sa fermeture.
-func drain(t *testing.T, s *flux.Stream, timeout time.Duration) []events.Event {
+func drain(t *testing.T, s core.EventStream, timeout time.Duration) []events.Event {
 	t.Helper()
 	var got []events.Event
 	deadline := time.After(timeout)

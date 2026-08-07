@@ -15,6 +15,7 @@ import (
 	"os"
 
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
+	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
@@ -88,11 +89,49 @@ func runAPI(ctx context.Context) error {
 		cfg.Addr = ":8080"
 	}
 
-	server, err := api.New(cfg)
+	// Assemblage : c'est le SEUL endroit qui connaît à la fois les ports du
+	// cœur et les adaptateurs qui les satisfont (ADR-0019).
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer st.Close()
+
+	// Le lecteur de diffs a sa propre identité de connexion : les payloads
+	// --diff sont sous contrôle d'accès distinct (ADR-0008). À défaut de DSN
+	// dédié, on retombe sur le DSN applicatif — acceptable en développement,
+	// pas en production.
+	diffDSN := os.Getenv(EnvDiffDatabaseURL)
+	if diffDSN == "" {
+		diffDSN = dsn
+	}
+	dr, err := store.OpenDiffReader(ctx, diffDSN)
+	if err != nil {
+		return fmt.Errorf("opening diff reader: %w", err)
+	}
+	defer dr.Close()
+
+	f, err := flux.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("opening flux: %w", err)
+	}
+	defer f.Close()
+
+	// LISTEN/NOTIFY appartient à l'adaptateur, pas au serveur HTTP.
+	go func() { _ = f.Listen(context.WithoutCancel(ctx)) }()
+
+	server, err := api.New(cfg, api.Deps{
+		Runs:   st,
+		Users:  st,
+		Diffs:  dr,
+		Events: f,
+		// Repo reste nil : le client vers le rôle `git` n'existe pas encore
+		// (outbound/gitclient), et les diffs git répondent 501 en attendant.
+	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 
 	return server.Run(ctx)
 }
@@ -105,6 +144,7 @@ func runAPI(ctx context.Context) error {
 const (
 	EnvDatabaseURL       = "WARDEN_DATABASE_URL"
 	EnvIngestDatabaseURL = "WARDEN_INGEST_DATABASE_URL"
+	EnvDiffDatabaseURL   = "WARDEN_DIFF_DATABASE_URL"
 )
 
 // Migrate applique les migrations de schéma en attente.

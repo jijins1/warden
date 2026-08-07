@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -172,32 +171,8 @@ func (s *Store) MarkSecretsUnmasked(ctx context.Context, runID int64, reason str
 	return nil
 }
 
-// Run est une line de run telle que lue.
-type Run struct {
-	ID     int64
-	RunRef string
-	UserID int64
-
-	// RunDay est la clé de partition des events et des diffs du run. La lire
-	// avec le run évite de la rechercher par jointure au moment d'interroger
-	// une table partitionnée, ce qui empêcherait l'élagage des partitions.
-	RunDay time.Time
-
-	Environment string
-	Inventory   string
-	Playbook    string
-
-	AuditSHA    string
-	BaseSHA     string
-	MainlineRef string
-	MainlineSHA string
-
-	State            core.RunState
-	TerminationCause core.TerminationCause
-
-	ChangedCount    int
-	SecretsUnmasked bool
-}
+// Run est le type du cœur, réexporté par alias (voir users.go).
+type Run = core.Run
 
 // RunByRef lit un run par son identifiant public.
 func (s *Store) RunByRef(ctx context.Context, runRef string) (Run, error) {

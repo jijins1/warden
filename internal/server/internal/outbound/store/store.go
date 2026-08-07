@@ -2,18 +2,20 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
 // ErrNotFound est retournée quand une line attendue n'existe pas. Elle est
 // distinguée du reste parce que l'appelant en fait quelque chose de différent :
 // un run introuvable à l'ingestion est un défaut d'appariement, pas une panne
 // de base.
-var ErrNotFound = errors.New("introuvable")
+// ErrNotFound est celle du cœur : un adaptateur entrant doit pouvoir la
+// reconnaître sans importer cet adaptateur.
+var ErrNotFound = core.ErrNotFound
 
 // Store est l'accès complet à la base : runs, events en lecture, pool de pods.
 // Utilisé par les rôles `api`, `git` et `controller` (ADR-0006).

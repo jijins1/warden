@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-
-	"github.com/jijins1/warden/internal/server/internal/outbound/gitd"
 )
 
 // HandleGetDiff retrieves the diff for a specific event.
@@ -40,17 +38,21 @@ func (a *Server) HandleGetDiff(w http.ResponseWriter, r *http.Request) {
 
 	// Query the diff via the separate DiffReader role. The run carries its own
 	// partition key, so this stays a primary-key lookup.
-	diff, err := a.diffReader.DiffForRun(r.Context(), run, seq)
+	diff, err := a.deps.Diffs.DiffForRun(r.Context(), run, seq)
 	if err != nil {
 		http.Error(w, "querying diff failed", http.StatusInternalServerError)
 		return
 	}
 
-	// Return the diff (or null if none)
+	// Return the diff (or null if none). The payload is attacker-influenced —
+	// it is module output — so forbid content sniffing: a browser must not be
+	// talked into rendering it as HTML.
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if diff == nil {
 		_, _ = w.Write([]byte("null"))
 	} else {
+		// #nosec G705 -- servi en application/json avec nosniff, jamais en HTML.
 		_, _ = w.Write(diff)
 	}
 }
@@ -63,8 +65,11 @@ func (a *Server) HandleGetDiff(w http.ResponseWriter, r *http.Request) {
 //
 // Response: JSON with unified diff or null if states are identical.
 func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
-	if a.repoRoot == "" {
-		http.Error(w, "git diff retrieval requires WARDEN_REPO_ROOT configuration", http.StatusNotImplemented)
+	// Sans client vers le rôle `git`, l'endpoint refuse. Il ne se rabat PAS sur
+	// une lecture de dépôt local : le rôle `api` n'a jamais accès au filesystem
+	// git (ADR-0006), c'est `outbound/gitclient` qui porte cette arête.
+	if a.deps.Repo == nil {
+		http.Error(w, "git diffs unavailable: no client to the git role", http.StatusNotImplemented)
 		return
 	}
 
@@ -91,9 +96,9 @@ func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
 	)
 	switch vs {
 	case "mainline":
-		diff, err = gitd.DiffMainline(r.Context(), a.repoRoot, run.MainlineSHA, run.AuditSHA)
+		diff, err = a.deps.Repo.DiffMainline(r.Context(), run)
 	case "previous":
-		diff, err = gitd.DiffPrevious(r.Context(), a.repoRoot, run.BaseSHA, run.AuditSHA)
+		diff, err = a.deps.Repo.DiffPrevious(r.Context(), run)
 	}
 
 	if err != nil {
@@ -102,6 +107,9 @@ func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// #nosec G705 -- diff unifié servi en text/plain avec nosniff, jamais rendu
+	// comme du HTML. Le contenu vient du dépôt audité et n'est pas de confiance.
 	_, _ = w.Write([]byte(diff))
 }
 

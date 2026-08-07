@@ -1,0 +1,111 @@
+package core
+
+import (
+	"errors"
+	"time"
+)
+
+// ErrNotFound est renvoyée quand une entité nommée n'existe pas.
+//
+// Elle vit dans le cœur parce que les adaptateurs entrants doivent pouvoir la
+// reconnaître — traduire « absent » en 404 est une décision de transport — sans
+// importer l'adaptateur qui l'a produite.
+var ErrNotFound = errors.New("introuvable")
+
+// Identity est ce qu'un fournisseur d'identité affirme d'un utilisateur qui
+// arrive.
+type Identity struct {
+	Type UserType
+
+	// Subject est l'identifiant IMMUABLE du fournisseur : le `sub` OIDC,
+	// l'entryUUID ou l'objectGUID LDAP. Jamais le DN, qui change dès qu'on
+	// déplace quelqu'un d'unité organisationnelle ; jamais l'email ni le login,
+	// qui changent aussi. L'ADR-0013 ne purgeant rien, un run de 2026 doit
+	// encore se résoudre à la bonne personne en 2032.
+	Subject string
+
+	// DisplayName et Email sont un INSTANTANÉ rafraîchi à chaque connexion. Le
+	// run pointant l'id, l'audit affiche l'identité actuelle d'un acteur passé.
+	DisplayName string
+	Email       string
+}
+
+// User est un utilisateur tel que stocké.
+type User struct {
+	ID          int64
+	Type        UserType
+	Subject     string
+	DisplayName string
+	Email       string
+	// Disabled est rendu à l'appelant plutôt qu'appliqué au stockage : refuser
+	// ou non est une décision d'autorisation, elle appartient au cœur.
+	Disabled bool
+}
+
+// Run est un run tel que lu.
+type Run struct {
+	ID     int64
+	RunRef string
+	UserID int64
+
+	// RunDay est la clé de partition des events et des diffs du run.
+	RunDay time.Time
+
+	Environment string
+	Inventory   string
+	Playbook    string
+
+	AuditSHA    string
+	BaseSHA     string
+	MainlineRef string
+	MainlineSHA string
+
+	State            RunState
+	TerminationCause TerminationCause
+
+	ChangedCount    int
+	SecretsUnmasked bool
+}
+
+// RunFilter décrit une interrogation de la liste des runs.
+// La pagination est par keyset : la table ne se purge jamais (ADR-0013), et un
+// OFFSET y coûterait un parcours proportionnel au rang demandé.
+type RunFilter struct {
+	// Cursor est opaque pour l'appelant : il vient d'un RunListResult.
+	Cursor string
+
+	// Limit est la taille de page (50 par défaut, 500 au maximum).
+	Limit int
+
+	// Filtres, tous facultatifs et combinés par ET.
+	Environment string
+	Inventory   string
+	UserID      int64
+	State       string
+	Since       time.Time
+	Until       time.Time
+	ChangedMin  int
+}
+
+// RunListItem est un run dans la liste d'audit (sous-ensemble de Run).
+type RunListItem struct {
+	ID              int64
+	RunRef          string
+	UserID          int64
+	Environment     string
+	Inventory       string
+	Playbook        string
+	State           string
+	StartedAt       time.Time
+	EndedAt         *time.Time
+	ChangedCount    int
+	SecretsUnmasked bool
+}
+
+// RunListResult est une page de la liste des runs.
+type RunListResult struct {
+	Runs []RunListItem
+
+	// NextCursor est vide sur la dernière page.
+	NextCursor string
+}

@@ -1,8 +1,12 @@
 package redact
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
+	// md5 et sha1 ne servent PAS à protéger quoi que ce soit ici : l'ADR-0017
+	// exige de reconnaître un secret déjà haché apparaissant dans une sortie,
+	// et Ansible en produit avec ces algorithmes. Les omettre laisserait passer
+	// la dérivation qu'on cherche justement à masquer.
+	"crypto/md5"  // #nosec G501 -- reconnaissance de dérivation, pas de la cryptographie
+	"crypto/sha1" // #nosec G505 -- idem
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -179,8 +183,8 @@ func BuildDerivations(s Secret) []Derivation {
 	}
 
 	// 6. Unsalted hashes (rainbow table vulnerable but required per ADR-0017)
-	md5Sum := md5.Sum([]byte(s.Value))
-	sha1Sum := sha1.Sum([]byte(s.Value))
+	md5Sum := md5.Sum([]byte(s.Value))   // #nosec G401 -- voir l'import
+	sha1Sum := sha1.Sum([]byte(s.Value)) // #nosec G401 -- voir l'import
 	sha256Sum := sha256.Sum256([]byte(s.Value))
 	sha512Sum := sha512.Sum512([]byte(s.Value))
 
@@ -281,7 +285,7 @@ func (r *Redactor) RedactJSON(data interface{}) (interface{}, error) {
 
 	var result interface{}
 	if err := json.Unmarshal([]byte(redacted), &result); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRedactionUnverifiable, err)
+		return nil, fmt.Errorf("%w: %w", ErrRedactionUnverifiable, err)
 	}
 
 	return result, nil

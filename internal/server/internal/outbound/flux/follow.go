@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jijins1/warden/internal/events"
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
 // ErrNotFound est retournée quand le run demandé n'existe pas.
@@ -64,7 +65,7 @@ func (s *Stream) fail(err error) {
 // detach/reattach, le rolling update et le multi-réplica couverts par le même
 // mécanisme (ADR-0008), et c'est aussi ce qui garantit qu'on ne livre jamais ce
 // qui n'est pas journalisé (§6.3).
-func (f *Flux) Follow(ctx context.Context, runID, fromSeq int64) (*Stream, error) {
+func (f *Flux) Follow(ctx context.Context, runID, fromSeq int64) (core.EventStream, error) {
 	runDay, err := f.runDay(ctx, runID)
 	if err != nil {
 		return nil, err

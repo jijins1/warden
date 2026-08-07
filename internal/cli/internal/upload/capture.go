@@ -137,11 +137,12 @@ func NewTempObjWriter() (*TempObjWriter, error) {
 
 // Write copies data to a temp file.
 func (w *TempObjWriter) Write(name string, data io.Reader) error {
+	// #nosec G304 -- écriture dans le répertoire temporaire créé par ce writer.
 	f, err := os.Create(filepath.Join(w.tmpDir, name))
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = io.Copy(f, data)
 	return err
 }

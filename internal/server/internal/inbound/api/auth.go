@@ -6,22 +6,21 @@ import (
 	"net/http"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
-	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
 // ctxKeyAuthnUser is used to store the authenticated user in request context.
 type ctxKeyAuthnUser struct{}
 
 // ContextUser returns the authenticated user from request context, or nil if not authenticated.
-func ContextUser(ctx context.Context) *store.User {
-	if val, ok := ctx.Value(ctxKeyAuthnUser{}).(*store.User); ok {
+func ContextUser(ctx context.Context) *core.User {
+	if val, ok := ctx.Value(ctxKeyAuthnUser{}).(*core.User); ok {
 		return val
 	}
 	return nil
 }
 
 // withUser stores the user in the request context.
-func withUser(r *http.Request, user *store.User) *http.Request {
+func withUser(r *http.Request, user *core.User) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), ctxKeyAuthnUser{}, user))
 }
 
@@ -55,9 +54,9 @@ func (a *Server) AuthnMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		user, err := a.store.UserBySubject(r.Context(), core.UserLocal, subject)
+		user, err := a.deps.Users.UserBySubject(r.Context(), core.UserLocal, subject)
 		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
+			if errors.Is(err, core.ErrNotFound) {
 				http.Error(w, "authentication required", http.StatusUnauthorized)
 				return
 			}
@@ -75,20 +74,19 @@ func (a *Server) AuthnMiddleware(next http.Handler) http.Handler {
 
 // Policy holds the authorization rules. Every handler that reads audit data
 // must consult it; the middleware only establishes who is calling.
-type Policy struct {
-	s *store.Store
-}
+// Elle ne porte aucune dépendance : les règles actuelles se décident sur
+// l'utilisateur et le run qu'on lui passe. Le jour où « les hôtes que je gère »
+// apparaît, c'est un port du cœur qui entrera ici, pas un adaptateur.
+type Policy struct{}
 
 // NewPolicy creates a new authorization policy.
-func NewPolicy(s *store.Store) *Policy {
-	return &Policy{s: s}
-}
+func NewPolicy() *Policy { return &Policy{} }
 
 // CanViewRun reports whether the user may read a run and everything hanging off
 // it (events, diffs, git diffs).
 //
 // TODO: admins, and users who own the hosts a run touched.
-func (p *Policy) CanViewRun(ctx context.Context, user *store.User, run *store.Run) bool {
+func (p *Policy) CanViewRun(ctx context.Context, user *core.User, run *core.Run) bool {
 	if user == nil || run == nil {
 		return false
 	}
@@ -97,7 +95,7 @@ func (p *Policy) CanViewRun(ctx context.Context, user *store.User, run *store.Ru
 
 // CanListRuns reports whether the user may list runs. The listing itself is
 // always narrowed to the caller — see VisibleRunFilter.
-func (p *Policy) CanListRuns(ctx context.Context, user *store.User) bool {
+func (p *Policy) CanListRuns(ctx context.Context, user *core.User) bool {
 	return user != nil
 }
 
@@ -106,16 +104,16 @@ func (p *Policy) CanListRuns(ctx context.Context, user *store.User) bool {
 // own scope by passing someone else's id. ok is false when nothing is visible;
 // callers must not fall back to the unfiltered filter, since ListRuns treats a
 // non-positive UserID as "no filter at all".
-func (p *Policy) VisibleRunFilter(user *store.User, filter store.RunFilter) (store.RunFilter, bool) {
+func (p *Policy) VisibleRunFilter(user *core.User, filter core.RunFilter) (core.RunFilter, bool) {
 	if user == nil {
-		return store.RunFilter{}, false
+		return core.RunFilter{}, false
 	}
 	filter.UserID = user.ID
 	return filter, true
 }
 
 // CanViewHost reports whether the user may query runs by host.
-func (p *Policy) CanViewHost(ctx context.Context, user *store.User, host string) bool {
+func (p *Policy) CanViewHost(ctx context.Context, user *core.User, host string) bool {
 	return user != nil
 }
 
@@ -124,15 +122,15 @@ func (p *Policy) CanViewHost(ctx context.Context, user *store.User, host string)
 // A run the caller may not see is reported as absent: distinguishing "forbidden"
 // from "not found" would turn the endpoint into an oracle for which run_refs
 // exist, which is the enumeration property ADR-0021 removed by exposing ULIDs.
-func (a *Server) requireRunAccess(w http.ResponseWriter, r *http.Request, runRef string) (store.Run, bool) {
-	run, err := a.store.RunByRef(r.Context(), runRef)
+func (a *Server) requireRunAccess(w http.ResponseWriter, r *http.Request, runRef string) (core.Run, bool) {
+	run, err := a.deps.Runs.RunByRef(r.Context(), runRef)
 	if err != nil {
 		http.Error(w, "run not found", http.StatusNotFound)
-		return store.Run{}, false
+		return core.Run{}, false
 	}
 	if !a.policy.CanViewRun(r.Context(), ContextUser(r.Context()), &run) {
 		http.Error(w, "run not found", http.StatusNotFound)
-		return store.Run{}, false
+		return core.Run{}, false
 	}
 	return run, true
 }

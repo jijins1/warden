@@ -9,36 +9,13 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
-// Identity est ce qu'un fournisseur d'identité affirme d'un utilisateur qui
-// arrive.
-type Identity struct {
-	Type core.UserType
-
-	// Subject est l'identifiant IMMUABLE du fournisseur : le `sub` OIDC,
-	// l'entryUUID ou l'objectGUID LDAP. Jamais le DN, qui change dès qu'on
-	// déplace quelqu'un d'unité organisationnelle ; jamais l'email ni le login,
-	// qui changent aussi. L'ADR-0013 ne purgeant rien, un run de 2026 doit
-	// encore se résoudre à la bonne personne en 2032.
-	Subject string
-
-	// DisplayName et Email sont un INSTANTANÉ rafraîchi à chaque connexion. Le
-	// run pointant l'id, l'audit affiche l'identité actuelle d'un acteur passé.
-	// C'est le bon comportement pour un produit d'audit, mais c'est un choix.
-	DisplayName string
-	Email       string
-}
-
-// User est un utilisateur tel que stocké.
-type User struct {
-	ID          int64
-	Type        core.UserType
-	Subject     string
-	DisplayName string
-	Email       string
-	// Disabled est rendu à l'appelant plutôt qu'appliqué ici : refuser ou non
-	// est une décision d'autorisation, elle appartient au cœur.
-	Disabled bool
-}
+// Identity et User sont les types du cœur. Ils sont réexportés ici par alias :
+// le domaine appartient à `core` (ADR-0019), mais les appelants existants de
+// `store` continuent de compiler.
+type (
+	Identity = core.Identity
+	User     = core.User
+)
 
 // UpsertUser provisionne l'utilisateur à sa première arrivée et rafraîchit
 // l'instantané aux suivantes (ADR-0021).

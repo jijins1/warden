@@ -69,11 +69,33 @@ func setup(t *testing.T) *harness {
 		// insecure dev authenticator rather than around it.
 		InsecureDevAuth: true,
 	}
-	server, err := api.New(cfg)
+	// Le harnais assemble les mêmes adaptateurs que le binaire : c'est lui qui
+	// connaît les deux côtés, comme cmd/wardend.
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	t.Cleanup(st.Close)
+
+	dr, err := store.OpenDiffReader(ctx, dsn)
+	if err != nil {
+		t.Fatalf("opening diff reader: %v", err)
+	}
+	t.Cleanup(dr.Close)
+
+	f, err := flux.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("opening flux: %v", err)
+	}
+	t.Cleanup(f.Close)
+
+	server, err := api.New(cfg, api.Deps{
+		Runs: st, Users: st, Diffs: dr, Events: f,
+	})
 	if err != nil {
 		t.Fatalf("creating API server: %v", err)
 	}
-	t.Cleanup(func() { server.Close() })
+	t.Cleanup(func() { _ = server.Close() })
 
 	// Create HTTP server with proper routing, behind the same authentication
 	// middleware the production server mounts.
@@ -84,26 +106,12 @@ func setup(t *testing.T) *harness {
 	httpSrv := httptest.NewServer(server.AuthnMiddleware(mux))
 	t.Cleanup(httpSrv.Close)
 
-	// Open flux separately (the server opens it internally too)
-	f, err := flux.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("opening flux: %v", err)
-	}
-	t.Cleanup(f.Close)
-
 	// Start LISTEN goroutine
 	go func() { _ = f.Listen(context.WithoutCancel(ctx)) }()
 	time.Sleep(100 * time.Millisecond) // Let LISTEN establish
 
-	// Open store for creating test data
-	st, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("opening store: %v", err)
-	}
-	t.Cleanup(st.Close)
-
 	// Create test user
-	user, err := st.UpsertUser(ctx, store.Identity{
+	user, err := st.UpsertUser(ctx, core.Identity{
 		Type: core.UserLocal, Subject: "test", DisplayName: "Test User",
 	})
 	if err != nil {
@@ -182,7 +190,10 @@ func (h *harness) dialWS(t *testing.T, runRef string, fromOffset int64) *websock
 		path += "?from_offset=" + strconv.FormatInt(fromOffset, 10)
 	}
 
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL+path, h.authHeader())
+	ws, resp, err := websocket.DefaultDialer.Dial(wsURL+path, h.authHeader())
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("WebSocket dial: %v", err)
 	}
@@ -200,7 +211,7 @@ func (h *harness) authHeader() http.Header {
 func readWSMessage(t *testing.T, conn *websocket.Conn, timeout time.Duration) *wsproto.Message {
 	t.Helper()
 
-	conn.SetReadDeadline(time.Now().Add(timeout))
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	var msg wsproto.Message
 	if err := conn.ReadJSON(&msg); err != nil {
 		t.Fatalf("reading message: %v", err)
@@ -296,7 +307,7 @@ func TestOffsetReplay(t *testing.T) {
 	}
 
 	// No more events yet
-	ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	var msg wsproto.Message
 	if err := ws.ReadJSON(&msg); err == nil {
 		t.Errorf("unexpected message: %+v", msg)
@@ -361,7 +372,7 @@ func TestStreamEnd(t *testing.T) {
 	}
 
 	// Connection should close
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var nextMsg wsproto.Message
 	if err := ws.ReadJSON(&nextMsg); err == nil {
 		t.Errorf("unexpected message after end: %+v", nextMsg)

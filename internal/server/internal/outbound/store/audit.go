@@ -6,52 +6,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
-// RunFilter represents query parameters for listing runs.
-// Keyset pagination prevents O(n) offset scans (ADR-0013: table is never purged).
-type RunFilter struct {
-	// Keyset cursor for pagination: "started_at,run_id"
-	// If empty, starts from the most recent (DESC order)
-	Cursor string
-
-	// Page size (default 50, max 500)
-	Limit int
-
-	// Filters (all optional, AND'd together)
-	Environment string    // exact match
-	Inventory   string    // exact match
-	UserID      int64     // exact match (0 = any)
-	State       string    // exact match ("running", "succeeded", "failed", etc.)
-	Since       time.Time // started_at >= (zero = no filter)
-	Until       time.Time // started_at <= (zero = no filter)
-	ChangedMin  int       // changed_count >= (0 = no filter)
-}
-
-// RunListResult represents a paginated list of runs.
-type RunListResult struct {
-	// Runs in the result
-	Runs []RunListItem
-
-	// Cursor to pass as the next Cursor parameter for pagination
-	// Empty if this is the last page
-	NextCursor string
-}
-
-// RunListItem is a run in the audit list (subset of Run fields).
-type RunListItem struct {
-	ID              int64      `db:"id"`
-	RunRef          string     `db:"run_ref"`
-	UserID          int64      `db:"user_id"`
-	Environment     string     `db:"environment"`
-	Inventory       string     `db:"inventory"`
-	Playbook        string     `db:"playbook"`
-	State           string     `db:"state"`
-	StartedAt       time.Time  `db:"started_at"`
-	EndedAt         *time.Time `db:"ended_at"`
-	ChangedCount    int        `db:"changed_count"`
-	SecretsUnmasked bool       `db:"secrets_unmasked"`
-}
+// Types du cœur, réexportés par alias (voir users.go).
+type (
+	RunFilter     = core.RunFilter
+	RunListItem   = core.RunListItem
+	RunListResult = core.RunListResult
+)
 
 // encodeCursor serializes a keyset position.
 //
@@ -83,7 +47,7 @@ func decodeCursor(cursor string) (time.Time, int64, error) {
 // ListRuns returns a paginated list of runs matching the filter.
 // Uses keyset pagination on (started_at DESC, id DESC) to avoid O(n) offset scans.
 // Indexes: run_started_at_idx, run_env_inventory_idx, run_user_idx.
-func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult, error) {
+func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, error) {
 	if filter.Limit <= 0 {
 		filter.Limit = 50
 	}
@@ -98,7 +62,7 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 	if filter.Cursor != "" {
 		startedAt, id, err := decodeCursor(filter.Cursor)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cursor %q: %w", filter.Cursor, err)
+			return RunListResult{}, fmt.Errorf("invalid cursor %q: %w", filter.Cursor, err)
 		}
 		startedAtCursor = &startedAt
 		idCursor = &id
@@ -167,7 +131,7 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 	// Execute query
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("querying runs: %w", err)
+		return RunListResult{}, fmt.Errorf("querying runs: %w", err)
 	}
 	defer rows.Close()
 
@@ -176,12 +140,12 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 		var item RunListItem
 		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Environment, &item.Inventory,
 			&item.Playbook, &item.State, &item.StartedAt, &item.EndedAt, &item.ChangedCount, &item.SecretsUnmasked); err != nil {
-			return nil, fmt.Errorf("scanning run: %w", err)
+			return RunListResult{}, fmt.Errorf("scanning run: %w", err)
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating runs: %w", err)
+		return RunListResult{}, fmt.Errorf("iterating runs: %w", err)
 	}
 
 	// Check if there's a next page
@@ -193,7 +157,7 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 		nextCursor = encodeCursor(lastItem.StartedAt, lastItem.ID)
 	}
 
-	return &RunListResult{
+	return RunListResult{
 		Runs:       items,
 		NextCursor: nextCursor,
 	}, nil
@@ -206,7 +170,7 @@ const maxRunsByHost = 500
 // GetRunsByHost returns the runs that touched a host, for incident response (§6.5).
 // Used by: GET /hosts/{host}/runs?since=&until=
 // Results are capped at maxRunsByHost; narrow the window with since/until.
-func (s *Store) GetRunsByHost(ctx context.Context, host string, since, until time.Time) ([]RunListItem, error) {
+func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.Time) ([]RunListItem, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host required")
 	}

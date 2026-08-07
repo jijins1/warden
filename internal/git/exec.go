@@ -22,6 +22,10 @@ func New(dir string) *Git {
 // Environment is built from scratch (not inherited from os.Environ).
 // Per ADR-0005: all hooks, config, and credentials are disabled.
 func (g *Git) run(ctx context.Context, args ...string) (string, string, error) {
+	// #nosec G204 -- composer une ligne de commande git est la raison d'être de
+	// ce paquet. Le binaire est fixe, les arguments ne passent pas par un shell,
+	// et les valeurs qui viennent de l'extérieur sont validées en amont par les
+	// types SHA, Ref et Namespace.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = g.dir
 

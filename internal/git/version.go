@@ -25,7 +25,7 @@ func CheckVersion(ctx context.Context) error {
 	g := New("")
 	stdout, stderr, err := g.run(ctx, "--version")
 	if err != nil {
-		return fmt.Errorf("git not installed or failed to run: %v (stderr: %s)", err, stderr)
+		return fmt.Errorf("git not installed or failed to run: %w (stderr: %s)", err, stderr)
 	}
 
 	v, err := parseVersion(stdout)

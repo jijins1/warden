@@ -8,15 +8,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
-	"github.com/jijins1/warden/internal/server/internal/outbound/store"
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
 // Config holds API server configuration.
 type Config struct {
 	Addr        string
 	DatabaseURL string
-	RepoRoot    string // path to git repository for diff operations
 
 	// InsecureDevAuth trusts the X-User-Subject header to name the caller.
 	// Development only: any client can claim any provisioned identity. When
@@ -38,76 +36,77 @@ func FromEnv() (*Config, error) {
 		return nil, fmt.Errorf("WARDEN_DATABASE_URL not set")
 	}
 
-	repoRoot := os.Getenv("WARDEN_REPO_ROOT")
-	// RepoRoot is optional; git diff will return 501 if not configured
-
 	// Opt-in, and named so nobody sets it by accident.
 	insecureDevAuth := os.Getenv("WARDEN_INSECURE_DEV_AUTH") == "1"
 
 	return &Config{
 		Addr:             addr,
 		DatabaseURL:      dsn,
-		RepoRoot:         repoRoot,
 		InsecureDevAuth:  insecureDevAuth,
 		GracefulShutdown: 30 * time.Second,
 	}, nil
 }
 
+// Deps regroupe les ports que l'API consomme (ADR-0019).
+//
+// Ils sont reçus et non construits ici : c'est ce qui garde l'adaptateur entrant
+// ignorant de PostgreSQL et du rôle `git`. L'assemblage a lieu dans le binaire.
+type Deps struct {
+	Runs   core.RunReader
+	Users  core.UserDirectory
+	Diffs  core.EventDiffReader
+	Events core.EventFollower
+
+	// Repo est facultatif : sans client vers le rôle `git`, les diffs git
+	// répondent 501 plutôt que de lire un dépôt local, ce que le rôle `api`
+	// n'a pas le droit de faire (ADR-0006).
+	Repo core.RepoDiffer
+}
+
 // Server serves the HTTP API and WebSocket stream.
 type Server struct {
-	cfg        *Config
-	srv        *http.Server
-	flux       *flux.Flux
-	store      *store.Store
-	diffReader *store.DiffReader
-	repoRoot   string
-	policy     *Policy
+	cfg    *Config
+	srv    *http.Server
+	deps   Deps
+	policy *Policy
 
 	// insecureDevAuth mirrors Config.InsecureDevAuth; see AuthnMiddleware.
 	insecureDevAuth bool
 }
 
-// New creates a new API server.
-func New(cfg *Config) (*Server, error) {
-	f, err := flux.Open(context.Background(), cfg.DatabaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("opening flux: %w", err)
+// New creates a new API server from its ports.
+func New(cfg *Config, deps Deps) (*Server, error) {
+	if deps.Runs == nil {
+		return nil, fmt.Errorf("port Runs requis")
 	}
-
-	s, err := store.Open(context.Background(), cfg.DatabaseURL)
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("opening store: %w", err)
+	if deps.Users == nil {
+		return nil, fmt.Errorf("port Users requis")
 	}
-
-	// Open DiffReader with warden_diff_reader role for separate access control
-	dr, err := store.OpenDiffReader(context.Background(), cfg.DatabaseURL)
-	if err != nil {
-		f.Close()
-		s.Close()
-		return nil, fmt.Errorf("opening diff reader: %w", err)
+	if deps.Diffs == nil {
+		return nil, fmt.Errorf("port Diffs requis")
+	}
+	if deps.Events == nil {
+		return nil, fmt.Errorf("port Events requis")
 	}
 
 	return &Server{
-		cfg:        cfg,
-		flux:       f,
-		store:      s,
-		diffReader: dr,
-		repoRoot:   cfg.RepoRoot,
-		policy:     NewPolicy(s),
+		cfg:    cfg,
+		deps:   deps,
+		policy: NewPolicy(),
 
 		insecureDevAuth: cfg.InsecureDevAuth,
 		srv: &http.Server{
 			Addr: cfg.Addr,
+			// Sans délai sur la lecture des en-têtes, une connexion qui les
+			// envoie octet par octet immobilise un handler indéfiniment
+			// (Slowloris). Le streaming a ses propres délais côté WebSocket.
+			ReadHeaderTimeout: 10 * time.Second,
 		},
 	}, nil
 }
 
 // Run starts the server and blocks until ctx is cancelled or an error occurs.
 func (a *Server) Run(ctx context.Context) error {
-	// Start the LISTEN/NOTIFY goroutine
-	go func() { _ = a.flux.Listen(context.WithoutCancel(ctx)) }()
-
 	// Mount routes
 	router := http.NewServeMux()
 	router.HandleFunc("GET /runs", a.HandleListRuns)
@@ -120,11 +119,16 @@ func (a *Server) Run(ctx context.Context) error {
 	a.srv.Handler = a.AuthnMiddleware(router)
 
 	// Start listening
-	listener, err := net.Listen("tcp", a.cfg.Addr)
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", a.cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Addr, err)
 	}
 
+	// #nosec G118 -- l'arrêt gracieux part d'un contexte neuf par nécessité :
+	// celui de Run vient d'être annulé, et c'est ce qui déclenche l'arrêt.
+	// Réutiliser un contexte mort couperait les connexions au lieu de les
+	// laisser se terminer.
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.GracefulShutdown)
@@ -138,29 +142,11 @@ func (a *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-// Close releases resources.
-func (a *Server) Close() error {
-	if a.diffReader != nil {
-		a.diffReader.Close()
-	}
-	if a.flux != nil {
-		a.flux.Close()
-	}
-	if a.store != nil {
-		a.store.Close()
-	}
-	return nil
-}
-
-// streamRequest represents parameters for streaming a run.
-type streamRequest struct {
-	FromOffset int64 `json:"from_offset"`
-}
-
-// streamResponse wraps a frame with metadata.
-type streamResponse struct {
-	Frame any `json:"frame"`
-}
+// Close releases the resources owned by the server.
+//
+// Les ports ne sont pas fermés ici : ils appartiennent à l'assembleur, qui les
+// a ouverts et peut les partager avec un autre consommateur.
+func (a *Server) Close() error { return nil }
 
 // NewRunRequest represents a request to create a new run.
 type NewRunRequest struct {
