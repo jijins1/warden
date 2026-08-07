@@ -40,10 +40,11 @@ func FromEnv() (*Config, error) {
 
 // Server serves the HTTP API and WebSocket stream.
 type Server struct {
-	cfg   *Config
-	srv   *http.Server
-	flux  *flux.Flux
-	store *store.Store
+	cfg        *Config
+	srv        *http.Server
+	flux       *flux.Flux
+	store      *store.Store
+	diffReader *store.DiffReader
 }
 
 // New creates a new API server.
@@ -59,10 +60,19 @@ func New(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
 
+	// Open DiffReader with warden_diff_reader role for separate access control
+	dr, err := store.OpenDiffReader(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		f.Close()
+		s.Close()
+		return nil, fmt.Errorf("opening diff reader: %w", err)
+	}
+
 	return &Server{
-		cfg:   cfg,
-		flux:  f,
-		store: s,
+		cfg:        cfg,
+		flux:       f,
+		store:      s,
+		diffReader: dr,
 		srv: &http.Server{
 			Addr: cfg.Addr,
 		},
@@ -78,6 +88,7 @@ func (a *Server) Run(ctx context.Context) error {
 	router := http.NewServeMux()
 	router.HandleFunc("GET /runs", a.HandleListRuns)
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
+	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
 	a.srv.Handler = router
 
@@ -102,6 +113,9 @@ func (a *Server) Run(ctx context.Context) error {
 
 // Close releases resources.
 func (a *Server) Close() error {
+	if a.diffReader != nil {
+		a.diffReader.Close()
+	}
 	if a.flux != nil {
 		a.flux.Close()
 	}
