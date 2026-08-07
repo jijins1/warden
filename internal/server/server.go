@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jijins1/warden/internal/server/internal/inbound/api"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
@@ -58,7 +59,42 @@ func Run(ctx context.Context, r Role) error {
 	if _, err := ParseRole(string(r)); err != nil {
 		return err
 	}
-	return fmt.Errorf("rôle %q: pas encore implémenté", r)
+
+	switch r {
+	case RoleAPI:
+		return runAPI(ctx)
+	case RoleIngest:
+		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+	case RoleGit:
+		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+	case RoleController:
+		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+	default:
+		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+	}
+}
+
+func runAPI(ctx context.Context) error {
+	dsn, err := databaseURL(EnvDatabaseURL)
+	if err != nil {
+		return err
+	}
+
+	cfg := &api.Config{
+		Addr:         os.Getenv("WARDEN_API_ADDR"),
+		DatabaseURL:  dsn,
+	}
+	if cfg.Addr == "" {
+		cfg.Addr = ":8080"
+	}
+
+	server, err := api.New(cfg)
+	if err != nil {
+		return fmt.Errorf("creating API server: %w", err)
+	}
+	defer server.Close()
+
+	return server.Run(ctx)
 }
 
 // Variables d'environnement portant les chaînes de connexion.
