@@ -37,12 +37,21 @@ type streamHandler struct {
 }
 
 // HandleStream upgrades HTTP to WebSocket and streams run events.
+// Path parameter {run_ref} is a ULID (immutable, not enumerable).
 func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
-	runID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.Error(w, "invalid run ID", http.StatusBadRequest)
+	runRef := r.PathValue("run_ref")
+	if runRef == "" {
+		http.Error(w, "run_ref required", http.StatusBadRequest)
 		return
 	}
+
+	// Resolve run_ref to internal run ID
+	run, err := a.store.RunByRef(r.Context(), runRef)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("run not found: %v", err), http.StatusNotFound)
+		return
+	}
+	runID := run.ID
 
 	fromOffset := int64(0)
 	if offsetStr := r.URL.Query().Get("from_offset"); offsetStr != "" {

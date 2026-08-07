@@ -72,7 +72,7 @@ func setup(t *testing.T) *harness {
 
 	// Create HTTP server with proper routing
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /runs/{id}/stream", server.HandleStream)
+	mux.HandleFunc("GET /runs/{run_ref}/stream", server.HandleStream)
 	httpSrv := httptest.NewServer(mux)
 	t.Cleanup(httpSrv.Close)
 
@@ -120,11 +120,12 @@ func setup(t *testing.T) *harness {
 	}
 }
 
-// createRun creates a test run and returns its ID.
-func (h *harness) createRun(t *testing.T, ctx context.Context) int64 {
+// createRun creates a test run and returns its reference (ULID).
+func (h *harness) createRun(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	runID, err := h.store.CreateRun(ctx, store.NewRun{
-		RunRef:      "01JZQ00000000000000000ABCD",
+	runRef := "01JZQ00000000000000000ABCD"
+	_, err := h.store.CreateRun(ctx, store.NewRun{
+		RunRef:      runRef,
 		UserID:      h.userID,
 		Environment: "test",
 		Inventory:   "inv/test",
@@ -137,7 +138,7 @@ func (h *harness) createRun(t *testing.T, ctx context.Context) int64 {
 	if err != nil {
 		t.Fatalf("creating run: %v", err)
 	}
-	return runID
+	return runRef
 }
 
 // pushEvents sends events to the ingest.
@@ -163,11 +164,11 @@ func (h *harness) pushEvents(t *testing.T, runID int64, count int) {
 }
 
 // dialWS connects to the WebSocket endpoint.
-func (h *harness) dialWS(t *testing.T, runID int64, fromOffset int64) *websocket.Conn {
+func (h *harness) dialWS(t *testing.T, runRef string, fromOffset int64) *websocket.Conn {
 	t.Helper()
 
 	wsURL := "ws" + strings.TrimPrefix(h.httpSrv.URL, "http")
-	path := "/runs/" + strconv.FormatInt(runID, 10) + "/stream"
+	path := "/runs/" + runRef + "/stream"
 	if fromOffset > 0 {
 		path += "?from_offset=" + strconv.FormatInt(fromOffset, 10)
 	}
@@ -198,13 +199,17 @@ func TestWebSocketUpgrade(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	runID := h.createRun(t, ctx)
+	runRef := h.createRun(t, ctx)
+	run, err := h.store.RunByRef(ctx, runRef)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
 
 	// Send an event
-	h.pushEvents(t, runID, 1)
+	h.pushEvents(t, run.ID, 1)
 
 	// Connect via WebSocket
-	ws := h.dialWS(t, runID, 0)
+	ws := h.dialWS(t, runRef, 0)
 
 	// Should receive the event
 	msg := readWSMessage(t, ws, 5*time.Second)
@@ -230,13 +235,17 @@ func TestOffsetReplay(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	runID := h.createRun(t, ctx)
+	runRef := h.createRun(t, ctx)
+	run, err := h.store.RunByRef(ctx, runRef)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
 
 	// Send 10 events
-	h.pushEvents(t, runID, 10)
+	h.pushEvents(t, run.ID, 10)
 
 	// Connect from offset 5
-	ws := h.dialWS(t, runID, 5)
+	ws := h.dialWS(t, runRef, 5)
 
 	// Should receive events 5-9
 	for i := 5; i < 10; i++ {
@@ -268,10 +277,10 @@ func TestKeepAlive(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	runID := h.createRun(t, ctx)
+	runRef := h.createRun(t, ctx)
 
 	// Don't send any events, just connect
-	ws := h.dialWS(t, runID, 0)
+	ws := h.dialWS(t, runRef, 0)
 
 	// Should receive keep-alive within 25 seconds (20s interval + buffer)
 	msg := readWSMessage(t, ws, 30*time.Second)
@@ -285,19 +294,23 @@ func TestStreamEnd(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	runID := h.createRun(t, ctx)
+	runRef := h.createRun(t, ctx)
+	run, err := h.store.RunByRef(ctx, runRef)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
 
 	// Send one event
-	h.pushEvents(t, runID, 1)
+	h.pushEvents(t, run.ID, 1)
 
 	// Connect
-	ws := h.dialWS(t, runID, 0)
+	ws := h.dialWS(t, runRef, 0)
 
 	// Receive the event
 	_ = readWSMessage(t, ws, 5*time.Second)
 
 	// Close the run
-	if err := h.store.CloseRun(ctx, runID, core.RunSucceeded, ""); err != nil {
+	if err := h.store.CloseRun(ctx, run.ID, core.RunSucceeded, ""); err != nil {
 		t.Fatalf("closing run: %v", err)
 	}
 
@@ -329,14 +342,18 @@ func TestMultipleClients(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 
-	runID := h.createRun(t, ctx)
+	runRef := h.createRun(t, ctx)
+	run, err := h.store.RunByRef(ctx, runRef)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
 
 	// Connect two clients
-	ws1 := h.dialWS(t, runID, 0)
-	ws2 := h.dialWS(t, runID, 0)
+	ws1 := h.dialWS(t, runRef, 0)
+	ws2 := h.dialWS(t, runRef, 0)
 
 	// Send events
-	h.pushEvents(t, runID, 3)
+	h.pushEvents(t, run.ID, 3)
 
 	// Both clients should receive all events
 	for i := 0; i < 3; i++ {
