@@ -36,8 +36,8 @@ type streamHandler struct {
 	clientClosed bool
 }
 
-// handleStream upgrades HTTP to WebSocket and streams run events.
-func (a *Server) handleStream(w http.ResponseWriter, r *http.Request) {
+// HandleStream upgrades HTTP to WebSocket and streams run events.
+func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid run ID", http.StatusBadRequest)

@@ -76,7 +76,7 @@ func (a *Server) Run(ctx context.Context) error {
 
 	// Mount routes
 	router := http.NewServeMux()
-	router.HandleFunc("GET /runs/{id}/stream", a.handleStream)
+	router.HandleFunc("GET /runs/{id}/stream", a.HandleStream)
 	a.srv.Handler = router
 
 	// Start listening
