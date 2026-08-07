@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,63 +44,45 @@ func OpenDiffReader(ctx context.Context, dsn string) (*DiffReader, error) {
 
 // Diff retrieves the diff payload for a specific event.
 // Returns nil if the event has no diff (state was StateOK or StateSkipped, no change).
-func (d *DiffReader) Diff(ctx context.Context, runID int64, runDay string, seq int64) (json.RawMessage, error) {
+//
+// runDay is the run's partition key and is required: event_diff is partitioned
+// by range on it, so omitting it turns a primary-key lookup into a scan of every
+// partition of a table that is never purged.
+//
+// Supplying it from the caller also keeps the warden_diff_reader role limited to
+// event_diff — it needs no access to the run table at all.
+func (d *DiffReader) Diff(ctx context.Context, runID int64, runDay time.Time, seq int64) (json.RawMessage, error) {
 	if runID <= 0 {
 		return nil, fmt.Errorf("invalid run ID: %d", runID)
 	}
 	if seq < 0 {
 		return nil, fmt.Errorf("invalid seq: %d", seq)
 	}
+	if runDay.IsZero() {
+		return nil, fmt.Errorf("run day required: it is the partition key of event_diff")
+	}
 
-	// Query the diff from event_diff table, keyed by (run_id, run_day, seq)
 	var diff json.RawMessage
 	err := d.pool.QueryRow(ctx,
 		"SELECT diff FROM event_diff WHERE run_id = $1 AND run_day = $2 AND seq = $3",
 		runID, runDay, seq,
 	).Scan(&diff)
 
+	// No row means the event carried no diff, which is not an error.
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		// No diff found (event had no changes)
-		if err.Error() == "no rows in result set" {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("querying diff: %w", err)
 	}
 
 	return diff, nil
 }
 
-// DiffByRunRef retrieves the diff by run ID and seq, automatically determining run_day.
-// This is the public API method that doesn't require the caller to know about partitioning.
-func (d *DiffReader) DiffByRunRef(ctx context.Context, runID int64, seq int64) (json.RawMessage, error) {
-	if runID <= 0 {
-		return nil, fmt.Errorf("invalid run ID: %d", runID)
-	}
-	if seq < 0 {
-		return nil, fmt.Errorf("invalid seq: %d", seq)
-	}
-
-	// Query the diff with a JOIN to get run_day from the run table
-	// This requires a connection to both run and event_diff tables
-	// Note: the warden_diff_reader role must have SELECT access to run table as well
-	var diff json.RawMessage
-	err := d.pool.QueryRow(ctx, `
-		SELECT ed.diff
-		FROM event_diff ed
-		JOIN run r ON ed.run_id = r.id
-		WHERE ed.run_id = $1 AND ed.seq = $2
-		LIMIT 1
-	`, runID, seq).Scan(&diff)
-
-	if err != nil {
-		// No diff found (event had no changes)
-		if err.Error() == "no rows in result set" {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("querying diff: %w", err)
-	}
-
-	return diff, nil
+// DiffForRun retrieves the diff of one event of a run.
+// It is the convenience form of Diff for callers that already hold the run.
+func (d *DiffReader) DiffForRun(ctx context.Context, run Run, seq int64) (json.RawMessage, error) {
+	return d.Diff(ctx, run.ID, run.RunDay, seq)
 }
 
 // Close releases the connection pool.

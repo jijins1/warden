@@ -38,10 +38,9 @@ func (a *Server) HandleGetDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query the diff via separate DiffReader role
-	// We need run_day (the date the run started) as part of the partition key
-	// The API consumer doesn't need to know about run_day, so we fetch it internally
-	diff, err := a.diffReader.DiffByRunRef(r.Context(), run.ID, seq)
+	// Query the diff via the separate DiffReader role. The run carries its own
+	// partition key, so this stays a primary-key lookup.
+	diff, err := a.diffReader.DiffForRun(r.Context(), run, seq)
 	if err != nil {
 		http.Error(w, "querying diff failed", http.StatusInternalServerError)
 		return

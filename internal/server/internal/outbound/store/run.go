@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -177,6 +178,11 @@ type Run struct {
 	RunRef string
 	UserID int64
 
+	// RunDay est la clé de partition des events et des diffs du run. La lire
+	// avec le run évite de la rechercher par jointure au moment d'interroger
+	// une table partitionnée, ce qui empêcherait l'élagage des partitions.
+	RunDay time.Time
+
 	Environment string
 	Inventory   string
 	Playbook    string
@@ -196,7 +202,7 @@ type Run struct {
 // RunByRef lit un run par son identifiant public.
 func (s *Store) RunByRef(ctx context.Context, runRef string) (Run, error) {
 	const q = `
-SELECT id, run_ref, user_id, environment, inventory, playbook,
+SELECT id, run_ref, user_id, run_day, environment, inventory, playbook,
        audit_sha, base_sha, mainline_ref, mainline_sha,
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked
   FROM run
@@ -204,7 +210,7 @@ SELECT id, run_ref, user_id, environment, inventory, playbook,
 
 	var r Run
 	err := s.pool.QueryRow(ctx, q, runRef).Scan(
-		&r.ID, &r.RunRef, &r.UserID, &r.Environment, &r.Inventory, &r.Playbook,
+		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
 	)

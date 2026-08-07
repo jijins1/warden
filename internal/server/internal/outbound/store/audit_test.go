@@ -4,8 +4,13 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/jijins1/warden/internal/events"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
@@ -226,5 +231,91 @@ func TestListRunsSecureEnumeration(t *testing.T) {
 	}
 	if run.ID <= 0 {
 		t.Errorf("expected ID > 0, got %d", run.ID)
+	}
+}
+
+// TestDiffReaderUsesPartitionKey checks that a diff is read back through its
+// primary key (run_id, run_day, seq), and that a wrong run_day finds nothing.
+// The second half is what pins the partition key as load-bearing: a query that
+// ignores it would still return the row, while scanning every partition.
+func TestDiffReaderUsesPartitionKey(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	in, err := store.OpenIngest(ctx, dsn)
+	if err != nil {
+		t.Fatalf("OpenIngest: %v", err)
+	}
+	defer in.Close()
+
+	dr, err := store.OpenDiffReader(ctx, dsn)
+	if err != nil {
+		t.Fatalf("OpenDiffReader: %v", err)
+	}
+	defer dr.Close()
+
+	user := mustUser(t, ctx, s, "test")
+	ref := runRef(t, "D1")
+	runID := mustCreateRun(t, ctx, s, ref, user.ID, "prod", "inv", "p.yml")
+
+	now := time.Now().UTC()
+	if err := in.AppendEvents(ctx, runID, []events.Event{
+		{
+			Seq: 0, OccurredAt: now, Host: "h1", TaskNumber: 1,
+			State: events.StateChanged, Payload: json.RawMessage(`{}`),
+			Diff: json.RawMessage(`{"before":"a","after":"b"}`),
+		},
+		{
+			Seq: 1, OccurredAt: now, Host: "h1", TaskNumber: 2,
+			State: events.StateOK, Payload: json.RawMessage(`{}`),
+		},
+	}); err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+
+	run, err := s.RunByRef(ctx, ref)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
+	if run.RunDay.IsZero() {
+		t.Fatal("RunByRef did not return the partition key")
+	}
+
+	// The changed event carries its diff.
+	diff, err := dr.DiffForRun(ctx, run, 0)
+	if err != nil {
+		t.Fatalf("DiffForRun: %v", err)
+	}
+	if !strings.Contains(string(diff), "before") {
+		t.Errorf("expected the stored diff, got %q", diff)
+	}
+
+	// An event without a diff is absence, not an error.
+	none, err := dr.DiffForRun(ctx, run, 1)
+	if err != nil {
+		t.Fatalf("DiffForRun on an event without diff: %v", err)
+	}
+	if none != nil {
+		t.Errorf("expected no diff, got %q", none)
+	}
+
+	// The partition key participates in the lookup.
+	otherDay, err := dr.Diff(ctx, run.ID, run.RunDay.AddDate(0, 0, -1), 0)
+	if err != nil {
+		t.Fatalf("Diff on another run_day: %v", err)
+	}
+	if otherDay != nil {
+		t.Errorf("run_day is not part of the lookup: got %q", otherDay)
+	}
+
+	// A missing partition key is refused rather than silently scanning.
+	if _, err := dr.Diff(ctx, run.ID, time.Time{}, 0); err == nil {
+		t.Error("expected an error when run_day is missing")
 	}
 }
