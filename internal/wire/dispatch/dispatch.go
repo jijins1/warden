@@ -42,7 +42,7 @@ var ErrProtocol = errors.New("protocole de dispatch")
 //
 // Le type existe pour deux raisons, toutes deux dictées par l'ADR-0018.
 //
-// La première est le masquage : le corps des messages de dispatch ne doit
+// La première est le masquage : le body des messages de dispatch ne doit
 // JAMAIS être journalisé, et un `%v` sur une structure qui en contient est le
 // chemin le plus court vers l'inverse.
 //
@@ -50,7 +50,7 @@ var ErrProtocol = errors.New("protocole de dispatch")
 // « SSE ne transporte que du texte […] il doit être fixé explicitement, pas
 // hérité d'un défaut de bibliothèque ». Un `[]byte` est encodé en base64 par
 // `encoding/json`, ce qui garantit qu'une clé privée PEM — donc multi-lignes —
-// ne peut pas produire de saut de ligne dans le flux. Or un saut de ligne dans
+// ne peut pas produire de saut de line dans le flux. Or un saut de line dans
 // une trame SSE n'est pas une valeur corrompue : c'est une FIN DE MESSAGE.
 type Secret []byte
 
@@ -144,12 +144,12 @@ const maxMessageBytes = 512 * 1024
 
 // Encode écrit un message au format SSE.
 //
-// UNE seule ligne `data:`, par construction : le corps est du JSON compact, et
+// UNE seule line `data:`, par construction : le body est du JSON compact, et
 // les valeurs sensibles sont des `Secret`, donc du base64. C'est la décision que
 // l'ADR-0018 laissait en dette — l'encodage n'est hérité d'aucun défaut de
 // bibliothèque, il est fixé ici et vérifié par le test.
 //
-// Le contrôle du saut de ligne n'est pas de la prudence décorative : une clé
+// Le contrôle du saut de line n'est pas de la prudence décorative : une clé
 // privée PEM écrite telle quelle dans une trame SSE serait interprétée comme
 // une fin de message, et le reste de la clé comme un message suivant.
 func Encode(w io.Writer, m Message) error {
@@ -160,25 +160,25 @@ func Encode(w io.Writer, m Message) error {
 		return fmt.Errorf("%w: type de message avec saut de ligne", ErrProtocol)
 	}
 
-	corps, err := json.Marshal(m)
+	body, err := json.Marshal(m)
 	if err != nil {
 		// Jamais le message dans l'erreur : il porte des credentials.
 		return fmt.Errorf("%w: sérialisation du message %s", ErrProtocol, m.Kind)
 	}
-	if len(corps) > maxMessageBytes {
+	if len(body) > maxMessageBytes {
 		return fmt.Errorf("%w: message %s de %d octets, plafond %d",
-			ErrProtocol, m.Kind, len(corps), maxMessageBytes)
+			ErrProtocol, m.Kind, len(body), maxMessageBytes)
 	}
 	// Ceinture et bretelles. `encoding/json` échappe déjà les sauts de ligne
 	// dans les chaînes, et les `Secret` sont en base64 : cette vérification ne
 	// doit jamais se déclencher. Si elle se déclenche un jour, c'est que
 	// l'encodage a changé sous nos pieds — et le mode de défaillance qu'elle
 	// empêche est une clé privée coupée en deux au milieu d'un flux.
-	if bytes.ContainsAny(corps, "\r\n") {
-		return fmt.Errorf("%w: le corps du message %s contient un saut de ligne", ErrProtocol, m.Kind)
+	if bytes.ContainsAny(body, "\r\n") {
+		return fmt.Errorf("%w: le body du message %s contient un saut de ligne", ErrProtocol, m.Kind)
 	}
 
-	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", m.Kind, corps)
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", m.Kind, body)
 	return err
 }
 
@@ -205,25 +205,25 @@ func NewDecoder(r io.Reader) *Decoder {
 func (d *Decoder) Next() (Message, error) {
 	var kind Kind
 	for d.sc.Scan() {
-		ligne := d.sc.Text()
+		line := d.sc.Text()
 
 		switch {
-		case ligne == "":
+		case line == "":
 			// Fin de trame sans données utiles : trame de maintien, on continue.
 			kind = ""
-		case strings.HasPrefix(ligne, ":"):
+		case strings.HasPrefix(line, ":"):
 			// Commentaire — c'est ainsi qu'on tient une connexion ouverte à
 			// travers un proxy sans inventer de message.
-		case strings.HasPrefix(ligne, "event:"):
-			kind = Kind(strings.TrimSpace(strings.TrimPrefix(ligne, "event:")))
-		case strings.HasPrefix(ligne, "data:"):
-			corps := strings.TrimSpace(strings.TrimPrefix(ligne, "data:"))
+		case strings.HasPrefix(line, "event:"):
+			kind = Kind(strings.TrimSpace(strings.TrimPrefix(line, "event:")))
+		case strings.HasPrefix(line, "data:"):
+			body := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if kind == "" {
 				return Message{}, fmt.Errorf("%w: données sans type", ErrProtocol)
 			}
 			var m Message
-			if err := json.Unmarshal([]byte(corps), &m); err != nil {
-				return Message{}, fmt.Errorf("%w: corps illisible", ErrProtocol)
+			if err := json.Unmarshal([]byte(body), &m); err != nil {
+				return Message{}, fmt.Errorf("%w: body illisible", ErrProtocol)
 			}
 			m.Kind = kind
 			if m.Kind == KindOrder && m.Order == nil {

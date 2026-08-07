@@ -39,7 +39,7 @@ const (
 	// de la rendre rare, pas de l'éliminer.
 	//
 	// C'est aussi la valeur INITIALE, écrite avant la création du pod : un
-	// plantage entre l'insertion et le dispatch laisse alors une ligne exacte
+	// plantage entre l'insertion et le dispatch laisse alors une line exacte
 	// plutôt qu'un run éternellement « en cours ».
 	CauseUnknown TerminationCause = "unknown"
 )

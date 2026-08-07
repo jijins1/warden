@@ -17,7 +17,7 @@
 // `outbound/dispatch`, et cette séparation est délibérée (ADR-0018).
 //
 // Le lien entre run_id et pod est établi côté serveur, jamais accepté depuis le
-// corps de la requête : un runner hostile peut mentir sur ses propres events —
+// body de la requête : un runner hostile peut mentir sur ses propres events —
 // c'est irréductible, il est seul à observer l'exécution — mais il ne doit pas
 // pouvoir toucher à ceux d'un autre run.
 package ingest

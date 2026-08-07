@@ -26,7 +26,7 @@
 //     rend visible dans le code.
 //
 // Schéma dès la première version : table d'events partitionnée par date ;
-// index (hôte, date) ; compteur `changed` dénormalisé sur la ligne de run ;
+// index (hôte, date) ; compteur `changed` dénormalisé sur la line de run ;
 // payloads `--diff` dans une table SÉPARÉE à contrôle d'accès distinct, parce
 // qu'ils contiennent les secrets rendus (§6.5).
 //
@@ -35,7 +35,7 @@
 // toute contrainte d'unicité : partitionner sur la date de l'event aurait rendu
 // la clé (run_id, seq, occurred_at), donc laissé passer deux insertions du même
 // (run_id, seq) portant des horodatages différents. `run_day` étant une
-// fonction de `run_id` — recopiée depuis la ligne de run, jamais fournie par le
+// fonction de `run_id` — recopiée depuis la line de run, jamais fournie par le
 // runner — l'unicité obtenue équivaut à celle qu'annonce l'ADR-0008.
 //
 // Le compteur `changed` est tenu par un trigger STATEMENT à table de

@@ -61,7 +61,7 @@ type Event struct {
 
 	// Payload est le résultat de module, opaque. La redaction de l'ADR-0017
 	// s'applique à TOUT le payload, pas aux seuls diffs : un
-	// `shell: mysql -p{{ password }}` met le secret dans la ligne de commande,
+	// `shell: mysql -p{{ password }}` met le secret dans la line de commande,
 	// donc dans un event ordinaire.
 	Payload json.RawMessage `json:"payload"`
 

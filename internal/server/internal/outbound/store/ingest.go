@@ -55,7 +55,7 @@ func (i *Ingest) Close() { i.pool.Close() }
 // réplicas sans contrainte d'ordre (ADR-0008). L'ordre est reconstitué à la
 // lecture.
 //
-// `run_day` est lu depuis la ligne de run, jamais accepté de l'appelant. C'est
+// `run_day` est lu depuis la line de run, jamais accepté de l'appelant. C'est
 // la clé de partition : une valeur choisie par un pod hostile ferait écrire les
 // events d'un run dans la partition d'un autre mois, et casserait l'unicité qui
 // fonde l'idempotence.
@@ -77,7 +77,7 @@ func (i *Ingest) AppendEvents(ctx context.Context, runID int64, evs []events.Eve
 
 	// Le rôle d'ingestion n'a le SELECT que sur ces deux colonnes. Cette
 	// lecture vaut aussi contrôle d'existence : sans elle, un run inconnu
-	// donnerait zéro ligne insérée sans rien signaler.
+	// donnerait zéro line insérée sans rien signaler.
 	var runDay any
 	err = tx.QueryRow(ctx, `SELECT run_day FROM run WHERE id = $1`, runID).Scan(&runDay)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -106,7 +106,7 @@ func (i *Ingest) AppendEvents(ctx context.Context, runID int64, evs []events.Eve
 //
 // Une instruction par event serait plus simple à lire, mais le compteur
 // `changed` est tenu par un trigger STATEMENT à table de transition : autant
-// d'instructions, autant d'UPDATE sur la ligne de run.
+// d'instructions, autant d'UPDATE sur la line de run.
 func insertEvents(ctx context.Context, tx pgx.Tx, runID int64, runDay any, evs []events.Event) error {
 	const cols = 10
 

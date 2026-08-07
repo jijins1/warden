@@ -48,10 +48,10 @@
 //
 // # Interdictions
 //
-// Le corps des messages n'est JAMAIS journalisé : il porte des credentials, et
+// Le body des messages n'est JAMAIS journalisé : il porte des credentials, et
 // un log de debug sur cet endpoint exposerait ce que toute l'ADR-0017 protège.
 // Le lien entre run_id et pod est établi côté serveur, jamais accepté depuis le
-// corps d'une requête.
+// body d'une requête.
 //
 // Le protocole est propre au domaine runner : il ne réutilise pas
 // `internal/wire/ws`, que l'ADR-0011 interdit au pod hostile de lier.

@@ -87,7 +87,7 @@ func (s *Store) SetPodUID(ctx context.Context, podID int64, uid string) error {
 // AuthenticatePod résout un jeton d'amorçage en identité de pod.
 //
 // C'est le point où le lien `pod -> run` est établi CÔTÉ SERVEUR (ADR-0023). Un
-// `run_id` présent dans le corps d'une requête d'ingestion n'a pas à être
+// `run_id` présent dans le body d'une requête d'ingestion n'a pas à être
 // consulté : la source est ici, et nulle part ailleurs.
 //
 // La recherche se fait par empreinte : le jeton présenté n'est jamais comparé au

@@ -23,7 +23,7 @@ var ErrInvalidPodToken = errors.New("jeton d'amorçage invalide")
 // Sa capacité unique est « je suis le pod chaud N » : il ne nomme aucun run, ne
 // permet aucune lecture, et ne vaut rien tant que le pod n'est pas réclamé. Le
 // serveur résout `pod -> run` depuis sa propre base ; un `run_id` reçu dans un
-// corps de requête n'est jamais la source.
+// body de requête n'est jamais la source.
 //
 // Le type vit dans le cœur et non dans un adaptateur PARCE QUE deux adaptateurs
 // en dépendent — `store` en conserve l'empreinte, `dispatch` authentifie avec —
@@ -95,7 +95,7 @@ func (t PodToken) GoString() string { return tokenMask }
 // MarshalJSON masque la valeur.
 //
 // Rien ne sérialise légitimement un jeton d'amorçage : le pod le lit depuis un
-// fichier et le présente en en-tête, il ne transite dans aucun corps JSON. Le
+// fichier et le présente en en-tête, il ne transite dans aucun body JSON. Le
 // masquage couvre le cas où une structure englobante finirait par en contenir un
 // sans que personne l'ait voulu.
 func (t PodToken) MarshalJSON() ([]byte, error) {

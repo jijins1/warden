@@ -102,7 +102,7 @@ func (d *Dispatcher) loop(ctx context.Context, w http.ResponseWriter, flusher ht
 				return
 			}
 		case !existe:
-			// La ligne a disparu sous nos pieds. Il n'y a plus rien à router.
+			// La line a disparu sous nos pieds. Il n'y a plus rien à router.
 			return
 		case etat.Released():
 			// Fin de vie du pod (§8.2 : jamais réutilisé).
@@ -197,10 +197,10 @@ var errMissingToken = errors.New("jeton d'amorçage absent")
 // chaque proxy traversé, et c'est précisément ce que l'ADR-0018 interdit pour ce
 // canal.
 func jetonPorteur(r *http.Request) (core.PodToken, error) {
-	brut := r.Header.Get("Authorization")
-	const prefixe = "Bearer "
-	if len(brut) <= len(prefixe) || !strings.EqualFold(brut[:len(prefixe)], prefixe) {
+	raw := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(raw) <= len(prefix) || !strings.EqualFold(raw[:len(prefix)], prefix) {
 		return core.PodToken{}, errMissingToken
 	}
-	return core.ParsePodToken(strings.TrimSpace(brut[len(prefixe):]))
+	return core.ParsePodToken(strings.TrimSpace(raw[len(prefix):]))
 }

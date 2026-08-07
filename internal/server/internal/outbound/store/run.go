@@ -47,11 +47,11 @@ type NewRun struct {
 	RunnerImageDigest string
 }
 
-// CreateRun insère la ligne de run et renvoie son identifiant technique.
+// CreateRun insère la line de run et renvoie son identifiant technique.
 //
 // Le statut initial est `interrupted` / `unknown`, écrit AVANT la création du
 // pod (§6.4). Ce n'est pas un artifice : entre cette insertion et le dispatch,
-// un plantage du control plane laisse une ligne qui dit la vérité, là qu'un
+// un plantage du control plane laisse une line qui dit la vérité, là qu'un
 // statut « en attente » aurait laissé un run indéfiniment en vol.
 //
 // `run_day` n'est pas passé : la valeur par défaut de la colonne en est la
@@ -171,7 +171,7 @@ func (s *Store) MarkSecretsUnmasked(ctx context.Context, runID int64, reason str
 	return nil
 }
 
-// Run est une ligne de run telle que lue.
+// Run est une line de run telle que lue.
 type Run struct {
 	ID     int64
 	RunRef string

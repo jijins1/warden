@@ -43,7 +43,7 @@ func Roles() []Role {
 // ErrUnknownRole est retournée pour un rôle non reconnu.
 var ErrUnknownRole = errors.New("rôle inconnu")
 
-// ParseRole valide une chaîne fournie en ligne de commande.
+// ParseRole valide une chaîne fournie en line de commande.
 func ParseRole(s string) (Role, error) {
 	for _, r := range Roles() {
 		if Role(s) == r {

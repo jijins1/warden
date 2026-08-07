@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ErrNotFound est retournée quand une ligne attendue n'existe pas. Elle est
+// ErrNotFound est retournée quand une line attendue n'existe pas. Elle est
 // distinguée du reste parce que l'appelant en fait quelque chose de différent :
 // un run introuvable à l'ingestion est un défaut d'appariement, pas une panne
 // de base.
