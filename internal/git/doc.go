@@ -1,11 +1,22 @@
-// Package git est l'enveloppe du binaire git, moteur unique du produit
-// (ADR-0005) : exécution, timeouts, classification des erreurs, contrôle de
-// version, types SHA / Ref / Namespace.
+// Package git provides low-level git plumbing operations with strict security isolation.
 //
-// Socle partagé par les trois domaines de confiance (ADR-0011).
+// Per ADR-0005, this package:
+// - Runs git with a neutralised environment (no hooks, config, or credential helpers)
+// - Validates all SHA and Ref inputs before use
+// - Enforces a minimum git version (2.45.0) at startup
+// - Uses only porcelain v2 / machine-readable output (-z flags)
+// - Does not inherit from os.Environ() — environment is built from scratch
 //
-// Ne doit contenir AUCUNE règle métier — ni quarantaine, ni scan de secrets, ni
-// promotion, ni ancestry. Ces règles vivent dans le rôle `git` du serveur. Sans
-// cette séparation, le pod hostile lie de la politique serveur et le découpage
-// en domaines ne vaut plus rien.
+// The package is restricted by depguard rule 'socle-git' (total import deny)
+// to prevent accidental use of high-level git libraries or product code.
+//
+// Example:
+//
+//	ctx := context.Background()
+//	if err := CheckVersion(ctx); err != nil {
+//		log.Fatal(err) // fail-closed
+//	}
+//
+//	g := New("/path/to/repo")
+//	sha, _, err := g.run(ctx, "hash-object", "-t", "tree", "/dev/null")
 package git
