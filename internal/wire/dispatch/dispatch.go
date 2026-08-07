@@ -54,6 +54,7 @@ var ErrProtocol = errors.New("protocole de dispatch")
 // une trame SSE n'est pas une valeur corrompue : c'est une FIN DE MESSAGE.
 type Secret []byte
 
+// nolint:gosec
 const secretMask = "[valeur sensible supprimée]"
 
 // String masque la valeur.

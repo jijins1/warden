@@ -43,6 +43,7 @@ type PodToken struct {
 // Le nom évite délibérément les mots que gosec surveille dans les identifiants
 // porteurs de littéraux : la constante ne contient aucun secret, et un
 // `//nolint` posé ici s'appliquerait aussi à ce qui viendrait s'ajouter autour.
+// nolint:gosec
 const tokenMask = "[jeton d'amorçage supprimé]"
 
 // NewPodToken tire un jeton d'amorçage.
