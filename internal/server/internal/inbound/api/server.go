@@ -40,10 +40,11 @@ func FromEnv() (*Config, error) {
 
 // Server serves the HTTP API and WebSocket stream.
 type Server struct {
-	cfg   *Config
-	srv   *http.Server
-	flux  *flux.Flux
-	store *store.Store
+	cfg     *Config
+	srv     *http.Server
+	flux    *flux.Flux
+	store   *store.Store
+	pending *pendingPool
 }
 
 // New creates a new API server.
@@ -60,9 +61,10 @@ func New(cfg *Config) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:   cfg,
-		flux:  f,
-		store: s,
+		cfg:     cfg,
+		flux:    f,
+		store:   s,
+		pending: newPendingPool(),
 		srv: &http.Server{
 			Addr: cfg.Addr,
 		},
@@ -77,6 +79,7 @@ func (a *Server) Run(ctx context.Context) error {
 	// Mount routes
 	router := http.NewServeMux()
 	router.HandleFunc("GET /runs/{id}/stream", a.HandleStream)
+	router.HandleFunc("POST /runs/{id}/reattach", a.handleReattach)
 	a.srv.Handler = router
 
 	// Start listening
@@ -100,6 +103,9 @@ func (a *Server) Run(ctx context.Context) error {
 
 // Close releases resources.
 func (a *Server) Close() error {
+	if a.pending != nil {
+		a.pending.close()
+	}
 	if a.flux != nil {
 		a.flux.Close()
 	}

@@ -73,17 +73,17 @@ func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Start reading client messages (for ACKs and detach signals)
-	go h.readLoop()
+	go h.readLoop(a)
 
 	// Stream events
-	if err := h.streamEvents(r.Context()); err != nil && !errors.Is(err, context.Canceled) {
+	if err := h.streamEvents(r.Context(), a); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn("Stream error", "run_id", runID, "error", err)
 		h.sendError(fmt.Sprintf("stream error: %v", err))
 	}
 }
 
 // streamEvents reads from flux and sends to the client.
-func (h *streamHandler) streamEvents(ctx context.Context) error {
+func (h *streamHandler) streamEvents(ctx context.Context, server *Server) error {
 	stream, err := h.flux.Follow(ctx, h.runID, h.offset)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
@@ -126,18 +126,21 @@ func (h *streamHandler) streamEvents(ctx context.Context) error {
 	}
 }
 
-// readLoop processes incoming client messages.
+// readLoop processes incoming client messages and detects disconnection.
 // Clients can send:
 // - Acks: {"type": "ack", "body": {"offset": 5}}
 // - Detach: (optional, implicit on disconnect)
-func (h *streamHandler) readLoop() {
+func (h *streamHandler) readLoop(server *Server) {
 	for {
 		var msg wire.Message
 		if err := h.ws.ReadJSON(&msg); err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				h.mu.Lock()
 				h.clientClosed = true
+				lastSeq := h.lastAckSeq
 				h.mu.Unlock()
+				// Immediately mark this run as pending for reattach
+				server.pending.mark(h.runID, lastSeq)
 				return
 			}
 			return
@@ -178,4 +181,55 @@ func (h *streamHandler) sendEnd(status core.RunState, reason string) error {
 func (h *streamHandler) sendError(errMsg string) error {
 	_ = h.send(wire.NewErrorMessage(errMsg))
 	return h.ws.Close()
+}
+
+// handleReattach upgrades HTTP to WebSocket for a client reattaching after disconnect.
+//
+// Expects JSON body: {last_offset: int64}
+// Returns 404 if the client's detach window has expired
+// Returns 410 if the run has already ended
+func (a *Server) handleReattach(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid run ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check if this run still has a pending reattach window
+	lastSeq, ok := a.pending.claim(runID)
+	if !ok {
+		http.Error(w, "reattach window expired or run not found", http.StatusGone)
+		return
+	}
+
+	// Upgrade to WebSocket
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Warn("WebSocket upgrade failed on reattach", "run_id", runID, "error", err)
+		return
+	}
+	defer ws.Close()
+
+	h := &streamHandler{
+		runID:  runID,
+		offset: lastSeq + 1, // Resume from next sequence
+		flux:   a.flux,
+		ws:     ws,
+	}
+
+	// Set read/write deadlines
+	ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		return nil
+	})
+
+	// Start reading client messages
+	go h.readLoop(a)
+
+	// Resume streaming
+	if err := h.streamEvents(r.Context(), a); err != nil && !errors.Is(err, context.Canceled) {
+		slog.Warn("Stream error on reattach", "run_id", runID, "error", err)
+		h.sendError(fmt.Sprintf("stream error: %v", err))
+	}
 }
