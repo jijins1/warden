@@ -14,8 +14,9 @@ import (
 
 // Config holds API server configuration.
 type Config struct {
-	Addr          string
-	DatabaseURL   string
+	Addr             string
+	DatabaseURL      string
+	RepoRoot         string // path to git repository for diff operations
 	GracefulShutdown time.Duration
 }
 
@@ -31,9 +32,13 @@ func FromEnv() (*Config, error) {
 		return nil, fmt.Errorf("WARDEN_DATABASE_URL not set")
 	}
 
+	repoRoot := os.Getenv("WARDEN_REPO_ROOT")
+	// RepoRoot is optional; git diff will return 501 if not configured
+
 	return &Config{
 		Addr:             addr,
 		DatabaseURL:      dsn,
+		RepoRoot:         repoRoot,
 		GracefulShutdown: 30 * time.Second,
 	}, nil
 }
@@ -45,6 +50,7 @@ type Server struct {
 	flux       *flux.Flux
 	store      *store.Store
 	diffReader *store.DiffReader
+	repoRoot   string
 }
 
 // New creates a new API server.
@@ -73,6 +79,7 @@ func New(cfg *Config) (*Server, error) {
 		flux:       f,
 		store:      s,
 		diffReader: dr,
+		repoRoot:   cfg.RepoRoot,
 		srv: &http.Server{
 			Addr: cfg.Addr,
 		},
@@ -89,6 +96,7 @@ func (a *Server) Run(ctx context.Context) error {
 	router.HandleFunc("GET /runs", a.HandleListRuns)
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
+	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
 	a.srv.Handler = router
 

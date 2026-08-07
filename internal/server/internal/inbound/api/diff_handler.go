@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/jijins1/warden/internal/server/internal/outbound/gitd"
 )
 
 // HandleGetDiff retrieves the diff for a specific event.
@@ -53,6 +55,59 @@ func (a *Server) HandleGetDiff(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("null"))
 	} else {
 		w.Write(diff)
+	}
+}
+
+// HandleGetRunDiff returns git diff between commits for a run.
+// GET /runs/{run_ref}/diff?vs=mainline|previous
+//
+// vs=mainline: Compare mainline state at run start vs audit state (what changed in repo during run)
+// vs=previous: Compare previous run's base state vs current audit state (what was changed by this run)
+//
+// Response: JSON with unified diff or null if states are identical.
+func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
+	if a.repoRoot == "" {
+		http.Error(w, "git diff retrieval requires WARDEN_REPO_ROOT configuration", http.StatusNotImplemented)
+		return
+	}
+
+	runRef := r.PathValue("run_ref")
+	if runRef == "" {
+		http.Error(w, "run_ref required", http.StatusBadRequest)
+		return
+	}
+
+	vs := r.URL.Query().Get("vs")
+	if vs != "mainline" && vs != "previous" {
+		http.Error(w, "vs must be 'mainline' or 'previous'", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve run_ref to run record
+	run, err := a.store.RunByRef(r.Context(), runRef)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("run not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	var diff string
+	switch vs {
+	case "mainline":
+		diff, err = gitd.DiffMainline(r.Context(), a.repoRoot, run.MainlineSHA, run.AuditSHA)
+	case "previous":
+		diff, err = gitd.DiffPrevious(r.Context(), a.repoRoot, run.BaseSHA, run.AuditSHA)
+	}
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("computing diff: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if diff == "" {
+		w.Write([]byte(""))
+	} else {
+		w.Write([]byte(diff))
 	}
 }
 
