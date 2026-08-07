@@ -1,8 +1,11 @@
-// Package upload construit ce qui est envoyé au serveur : périmètre de l'upload
-// (§5.3), `.auditignore`, et commit d'audit chaîné sur le commit de base
-// (ADR-0003).
+// Package upload implements audit capture and push to the warden server.
 //
-// Contrainte non négociable (décision produit #4) : le worktree de
-// l'utilisateur n'est JAMAIS modifié. Le commit se construit par
-// `GIT_INDEX_FILE` et `commit-tree`, sans index ni HEAD du dépôt local.
+// The flow is:
+// 1. scope: determine which files to include (tracked + untracked-not-ignored)
+// 2. capture: tree the chosen files without touching the user's worktree
+// 3. push: upload to refs/audit/<user>/<run_ref> and measure cost
+//
+// Per ADR-0005, capture uses git's native read-only object alternates mechanism
+// to avoid writing any objects to the user's repository.
+// Per ADR-0003, pre-push cost is measured before uploading unbounded history.
 package upload
