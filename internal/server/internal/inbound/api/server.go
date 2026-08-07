@@ -51,6 +51,7 @@ type Server struct {
 	store      *store.Store
 	diffReader *store.DiffReader
 	repoRoot   string
+	policy     *Policy
 }
 
 // New creates a new API server.
@@ -80,6 +81,7 @@ func New(cfg *Config) (*Server, error) {
 		store:      s,
 		diffReader: dr,
 		repoRoot:   cfg.RepoRoot,
+		policy:     NewPolicy(s),
 		srv: &http.Server{
 			Addr: cfg.Addr,
 		},
@@ -98,7 +100,9 @@ func (a *Server) Run(ctx context.Context) error {
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
-	a.srv.Handler = router
+
+	// Apply authentication middleware to all routes
+	a.srv.Handler = a.AuthnMiddleware(router)
 
 	// Start listening
 	listener, err := net.Listen("tcp", a.cfg.Addr)

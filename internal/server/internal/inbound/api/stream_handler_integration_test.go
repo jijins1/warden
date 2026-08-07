@@ -4,20 +4,15 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jijins1/warden/internal/events"
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
-	"github.com/jijins1/warden/internal/wire/ws"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -58,7 +53,7 @@ func setupServer(t *testing.T) (*api.Server, *store.Ingest, int64) {
 	if err != nil {
 		t.Fatalf("creating server: %v", err)
 	}
-	t.Cleanup(server.Close)
+	t.Cleanup(func() { _ = server.Close() })
 
 	// Create ingest client for pushing events
 	in, err := store.OpenIngest(ctx, dsn)
@@ -120,15 +115,16 @@ func connectWS(t *testing.T, baseURL string, runID int64, fromOffset int64) *web
 }
 
 // readMessage reads and parses a WebSocket message.
-func readMessage(t *testing.T, ws *websocket.Conn) *ws.Message {
+// TODO: Implement proper message type for streaming
+func readMessage(t *testing.T, wsConn *websocket.Conn) map[string]interface{} {
 	t.Helper()
 
-	var msg ws.Message
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if err := ws.ReadJSON(&msg); err != nil {
+	var msg map[string]interface{}
+	wsConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := wsConn.ReadJSON(&msg); err != nil {
 		t.Fatalf("reading message: %v", err)
 	}
-	return &msg
+	return msg
 }
 
 // TestStreamBasicFlow tests the basic streaming flow.
