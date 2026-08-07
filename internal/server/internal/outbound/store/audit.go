@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,24 +36,48 @@ type RunListResult struct {
 	// Cursor to pass as the next Cursor parameter for pagination
 	// Empty if this is the last page
 	NextCursor string
-
-	// Total results that match the filter (expensive to compute; may not be populated)
-	Total int
 }
 
 // RunListItem is a run in the audit list (subset of Run fields).
 type RunListItem struct {
-	ID              int64     `db:"id"`
-	RunRef          string    `db:"run_ref"`
-	UserID          int64     `db:"user_id"`
-	Environment     string    `db:"environment"`
-	Inventory       string    `db:"inventory"`
-	Playbook        string    `db:"playbook"`
-	State           string    `db:"state"`
-	StartedAt       time.Time `db:"started_at"`
+	ID              int64      `db:"id"`
+	RunRef          string     `db:"run_ref"`
+	UserID          int64      `db:"user_id"`
+	Environment     string     `db:"environment"`
+	Inventory       string     `db:"inventory"`
+	Playbook        string     `db:"playbook"`
+	State           string     `db:"state"`
+	StartedAt       time.Time  `db:"started_at"`
 	EndedAt         *time.Time `db:"ended_at"`
-	ChangedCount    int       `db:"changed_count"`
-	SecretsUnmasked bool      `db:"secrets_unmasked"`
+	ChangedCount    int        `db:"changed_count"`
+	SecretsUnmasked bool       `db:"secrets_unmasked"`
+}
+
+// encodeCursor serializes a keyset position.
+//
+// started_at is stored as timestamptz (microsecond precision), so the cursor
+// must keep the sub-second part: formatting to whole seconds would place the
+// cursor earlier than the row it points at and skip every row sharing that
+// second on the next page.
+func encodeCursor(startedAt time.Time, id int64) string {
+	return startedAt.UTC().Format(time.RFC3339Nano) + "," + strconv.FormatInt(id, 10)
+}
+
+// decodeCursor parses a cursor produced by encodeCursor.
+func decodeCursor(cursor string) (time.Time, int64, error) {
+	tsPart, idPart, ok := strings.Cut(cursor, ",")
+	if !ok {
+		return time.Time{}, 0, fmt.Errorf("expected \"<timestamp>,<id>\"")
+	}
+	startedAt, err := time.Parse(time.RFC3339Nano, tsPart)
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("parsing timestamp: %w", err)
+	}
+	id, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("parsing id: %w", err)
+	}
+	return startedAt, id, nil
 }
 
 // ListRuns returns a paginated list of runs matching the filter.
@@ -65,18 +91,17 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 		filter.Limit = 500
 	}
 
-	// Normalize cursor
+	// Decode cursor. An unreadable cursor is an error rather than a silent
+	// restart at page 1: silently ignoring it makes a client paginate forever.
 	var startedAtCursor *time.Time
 	var idCursor *int64
 	if filter.Cursor != "" {
-		// Parse cursor format: "2026-08-07T12:30:00Z,12345"
-		var cursorStartedAt time.Time
-		var cursorID int64
-		if _, err := fmt.Sscanf(filter.Cursor, "%s,%d", &cursorStartedAt, &cursorID); err == nil {
-			startedAtCursor = &cursorStartedAt
-			idCursor = &cursorID
+		startedAt, id, err := decodeCursor(filter.Cursor)
+		if err != nil {
+			return nil, fmt.Errorf("invalid cursor %q: %w", filter.Cursor, err)
 		}
-		// If cursor is invalid, ignore and start from the beginning
+		startedAtCursor = &startedAt
+		idCursor = &id
 	}
 
 	// Build query
@@ -155,18 +180,17 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 		}
 		items = append(items, item)
 	}
-	if rows.Err() != nil {
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating runs: %w", err)
 	}
 
 	// Check if there's a next page
 	var nextCursor string
 	if len(items) > filter.Limit {
-		// Remove the extra item
-		lastItem := items[filter.Limit-1]
+		// Drop the extra probe row and point the cursor at the last row we return
 		items = items[:filter.Limit]
-		// Generate cursor for the next page
-		nextCursor = fmt.Sprintf("%s,%d", lastItem.StartedAt.Format(time.RFC3339), lastItem.ID)
+		lastItem := items[filter.Limit-1]
+		nextCursor = encodeCursor(lastItem.StartedAt, lastItem.ID)
 	}
 
 	return &RunListResult{
@@ -175,9 +199,13 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (*RunListResult,
 	}, nil
 }
 
-// GetRunsByHost returns events grouped by host for debugging/incident response (§6.5).
-// Query: SELECT DISTINCT host FROM event WHERE run_id = ... ORDER BY host
-// Used by: GET /hosts/{host}/events?since=&until=
+// maxRunsByHost caps GetRunsByHost. The event table is never purged, so a
+// long-lived host would otherwise pull its entire history into memory.
+const maxRunsByHost = 500
+
+// GetRunsByHost returns the runs that touched a host, for incident response (§6.5).
+// Used by: GET /hosts/{host}/runs?since=&until=
+// Results are capped at maxRunsByHost; narrow the window with since/until.
 func (s *Store) GetRunsByHost(ctx context.Context, host string, since, until time.Time) ([]RunListItem, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host required")
@@ -204,7 +232,8 @@ func (s *Store) GetRunsByHost(ctx context.Context, host string, since, until tim
 		argNum++
 	}
 
-	query += " ORDER BY r.started_at DESC"
+	query += fmt.Sprintf(" ORDER BY r.started_at DESC LIMIT $%d", argNum)
+	args = append(args, maxRunsByHost)
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -221,7 +250,7 @@ func (s *Store) GetRunsByHost(ctx context.Context, host string, since, until tim
 		}
 		items = append(items, item)
 	}
-	if rows.Err() != nil {
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating runs: %w", err)
 	}
 

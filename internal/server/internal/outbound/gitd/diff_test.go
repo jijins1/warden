@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitd"
@@ -13,7 +14,6 @@ import (
 // TestDiffMainlineIdenticalSHAs verifies that identical SHAs return empty diff.
 func TestDiffMainlineIdenticalSHAs(t *testing.T) {
 	repo := setupTestRepo(t)
-	defer os.RemoveAll(repo)
 
 	sha1 := createCommit(t, repo, "file.txt", "content")
 
@@ -29,7 +29,6 @@ func TestDiffMainlineIdenticalSHAs(t *testing.T) {
 // TestDiffMainlineDifferentSHAs verifies that different SHAs produce a diff.
 func TestDiffMainlineDifferentSHAs(t *testing.T) {
 	repo := setupTestRepo(t)
-	defer os.RemoveAll(repo)
 
 	sha1 := createCommit(t, repo, "file.txt", "line1\n")
 	sha2 := createCommit(t, repo, "file.txt", "line1\nline2\n")
@@ -41,7 +40,7 @@ func TestDiffMainlineDifferentSHAs(t *testing.T) {
 	if diff == "" {
 		t.Errorf("expected non-empty diff for different SHAs")
 	}
-	if !contains(diff, "line2") {
+	if !strings.Contains(diff, "line2") {
 		t.Errorf("expected diff to contain added line, got: %s", diff)
 	}
 }
@@ -49,7 +48,6 @@ func TestDiffMainlineDifferentSHAs(t *testing.T) {
 // TestDiffPreviousIdenticalSHAs verifies that identical SHAs return empty diff.
 func TestDiffPreviousIdenticalSHAs(t *testing.T) {
 	repo := setupTestRepo(t)
-	defer os.RemoveAll(repo)
 
 	sha := createCommit(t, repo, "file.txt", "content")
 
@@ -65,7 +63,6 @@ func TestDiffPreviousIdenticalSHAs(t *testing.T) {
 // TestDiffPreviousDifferentSHAs verifies that different SHAs produce a diff.
 func TestDiffPreviousDifferentSHAs(t *testing.T) {
 	repo := setupTestRepo(t)
-	defer os.RemoveAll(repo)
 
 	sha1 := createCommit(t, repo, "config.yml", "version: 1\n")
 	sha2 := createCommit(t, repo, "config.yml", "version: 2\n")
@@ -77,7 +74,7 @@ func TestDiffPreviousDifferentSHAs(t *testing.T) {
 	if diff == "" {
 		t.Errorf("expected non-empty diff for different SHAs")
 	}
-	if !contains(diff, "version") {
+	if !strings.Contains(diff, "version") {
 		t.Errorf("expected diff to contain version changes, got: %s", diff)
 	}
 }
@@ -85,7 +82,6 @@ func TestDiffPreviousDifferentSHAs(t *testing.T) {
 // TestDiffInvalidSHAs verifies that invalid SHAs are rejected.
 func TestDiffInvalidSHAs(t *testing.T) {
 	repo := setupTestRepo(t)
-	defer os.RemoveAll(repo)
 
 	_, err := gitd.DiffMainline(context.Background(), repo, "invalid", "also-invalid")
 	if err == nil {
@@ -129,16 +125,23 @@ func runCmd(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// contains checks if s contains substr.
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || findSubstring(s, substr)))
+// TestDiffMissingRepo verifies that a failing git invocation is reported rather
+// than crashing: cmd.ProcessState is nil when the process never starts.
+func TestDiffMissingRepo(t *testing.T) {
+	_, err := gitd.DiffMainline(context.Background(), filepath.Join(t.TempDir(), "nope"),
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if err == nil {
+		t.Error("expected an error for a non-existent repository")
+	}
 }
 
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+// TestDiffEmptyRepoPath rejects an empty path before shelling out.
+func TestDiffEmptyRepoPath(t *testing.T) {
+	_, err := gitd.DiffPrevious(context.Background(), "",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if err == nil {
+		t.Error("expected an error for an empty repository path")
 	}
-	return false
 }

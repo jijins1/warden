@@ -44,9 +44,10 @@ func DetermineScopeFromGit(ctx context.Context, repoDir string) (*Scope, error) 
 
 // ValidateNoLFS checks that the scope contains no git-lfs pointer files.
 // Pointer files look like:
-//   version https://git-lfs.github.com/spec/v1
-//   oid sha256:xxx
-//   size 123
+//
+//	version https://git-lfs.github.com/spec/v1
+//	oid sha256:xxx
+//	size 123
 func ValidateNoLFS(files []string, repoDir string) error {
 	for _, file := range files {
 		path := filepath.Join(repoDir, file)

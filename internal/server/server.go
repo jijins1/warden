@@ -81,8 +81,8 @@ func runAPI(ctx context.Context) error {
 	}
 
 	cfg := &api.Config{
-		Addr:         os.Getenv("WARDEN_API_ADDR"),
-		DatabaseURL:  dsn,
+		Addr:        os.Getenv("WARDEN_API_ADDR"),
+		DatabaseURL: dsn,
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = ":8080"

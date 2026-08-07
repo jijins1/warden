@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -25,38 +25,56 @@ func withUser(r *http.Request, user *store.User) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), ctxKeyAuthnUser{}, user))
 }
 
-// AuthnMiddleware extracts and validates the authenticated user.
-// For now, uses a simple header-based scheme (X-User-Subject).
-// In production, integrate with OAuth2/OIDC or mTLS.
+// devAuthHeader carries the caller's subject when insecure dev auth is enabled.
+// It is asserted by the client, so it is only ever trusted behind an explicit
+// opt-in (Config.InsecureDevAuth).
+const devAuthHeader = "X-User-Subject"
+
+// AuthnMiddleware resolves the caller into a provisioned user.
 //
-// TODO: Implement real authentication (OAuth2, mTLS, etc.)
+// There is no real authenticator yet. Rather than ship a header the client can
+// set to any value, the server refuses every request unless the operator has
+// explicitly turned on the insecure development mode. An audit product that
+// silently accepts "I am alice" is worse than one that refuses to answer.
+//
+// Even in dev mode the subject is only looked up, never created: provisioning
+// belongs to a login flow that has verified the identity, and an upsert driven
+// by an unauthenticated header lets anyone grow the users table.
+//
+// TODO: real authentication (OIDC or mTLS) — see ADR-0021.
 func (a *Server) AuthnMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Extract user subject from header (for testing/demo)
-		subject := r.Header.Get("X-User-Subject")
+		if !a.insecureDevAuth {
+			http.Error(w, "no authenticator configured", http.StatusNotImplemented)
+			return
+		}
+
+		subject := r.Header.Get(devAuthHeader)
 		if subject == "" {
-			// For now, deny unauthenticated requests
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
 
-		// Upsert user in database to ensure it exists
-		user, err := a.store.UpsertUser(r.Context(), store.Identity{
-			Type:        core.UserLocal,
-			Subject:     subject,
-			DisplayName: subject,
-		})
+		user, err := a.store.UserBySubject(r.Context(), core.UserLocal, subject)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("user lookup failed: %v", err), http.StatusInternalServerError)
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+				return
+			}
+			http.Error(w, "user lookup failed", http.StatusInternalServerError)
+			return
+		}
+		if user.Disabled {
+			http.Error(w, "account disabled", http.StatusForbidden)
 			return
 		}
 
-		// Store user in context for authorization checks
 		next.ServeHTTP(w, withUser(r, &user))
 	})
 }
 
-// Policy defines authorization rules.
+// Policy holds the authorization rules. Every handler that reads audit data
+// must consult it; the middleware only establishes who is calling.
 type Policy struct {
 	s *store.Store
 }
@@ -66,27 +84,55 @@ func NewPolicy(s *store.Store) *Policy {
 	return &Policy{s: s}
 }
 
-// CanViewRun checks if the user can view a specific run.
-// Rules:
-//   - User can view their own runs (user_id matches)
-//   - TODO: Admins can view all runs
-//   - TODO: Users can view runs for hosts they manage
+// CanViewRun reports whether the user may read a run and everything hanging off
+// it (events, diffs, git diffs).
+//
+// TODO: admins, and users who own the hosts a run touched.
 func (p *Policy) CanViewRun(ctx context.Context, user *store.User, run *store.Run) bool {
-	if user == nil {
+	if user == nil || run == nil {
 		return false
 	}
-	// For now: users can only view their own runs
 	return user.ID == run.UserID
 }
 
-// CanListRuns checks if the user can list runs.
-// For now, all authenticated users can list (but results are filtered by user_id).
+// CanListRuns reports whether the user may list runs. The listing itself is
+// always narrowed to the caller — see VisibleRunFilter.
 func (p *Policy) CanListRuns(ctx context.Context, user *store.User) bool {
 	return user != nil
 }
 
-// CanViewHost checks if the user can view host-scoped runs.
-// For now, all authenticated users can view all hosts.
+// VisibleRunFilter narrows a caller-supplied filter to what the user may see.
+// It overwrites UserID rather than validating it, so a caller cannot widen its
+// own scope by passing someone else's id. ok is false when nothing is visible;
+// callers must not fall back to the unfiltered filter, since ListRuns treats a
+// non-positive UserID as "no filter at all".
+func (p *Policy) VisibleRunFilter(user *store.User, filter store.RunFilter) (store.RunFilter, bool) {
+	if user == nil {
+		return store.RunFilter{}, false
+	}
+	filter.UserID = user.ID
+	return filter, true
+}
+
+// CanViewHost reports whether the user may query runs by host.
 func (p *Policy) CanViewHost(ctx context.Context, user *store.User, host string) bool {
 	return user != nil
+}
+
+// requireRunAccess resolves a run_ref and checks read access in one step.
+//
+// A run the caller may not see is reported as absent: distinguishing "forbidden"
+// from "not found" would turn the endpoint into an oracle for which run_refs
+// exist, which is the enumeration property ADR-0021 removed by exposing ULIDs.
+func (a *Server) requireRunAccess(w http.ResponseWriter, r *http.Request, runRef string) (store.Run, bool) {
+	run, err := a.store.RunByRef(r.Context(), runRef)
+	if err != nil {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return store.Run{}, false
+	}
+	if !a.policy.CanViewRun(r.Context(), ContextUser(r.Context()), &run) {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return store.Run{}, false
+	}
+	return run, true
 }

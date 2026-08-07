@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
@@ -70,6 +72,33 @@ RETURNING id, type, subject, display_name, coalesce(email, ''), disabled_at IS N
 		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled)
 	if err != nil {
 		return User{}, fmt.Errorf("provisionnement de l'utilisateur %s/%s: %w", id.Type, id.Subject, err)
+	}
+	return u, nil
+}
+
+// UserBySubject lit un utilisateur déjà provisionné.
+//
+// Distinct de UpsertUser : provisionner appartient au flux de connexion, qui a
+// vérifié l'identité. Une lecture de requête ne doit pas créer de ligne, sinon
+// un appelant non authentifié fait grossir la table `users` à volonté.
+func (s *Store) UserBySubject(ctx context.Context, typ core.UserType, subject string) (User, error) {
+	if subject == "" {
+		return User{}, fmt.Errorf("sujet vide: %w", ErrNotFound)
+	}
+
+	const q = `
+SELECT id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT NULL
+  FROM users
+ WHERE type = $1 AND subject = $2`
+
+	var u User
+	err := s.pool.QueryRow(ctx, q, string(typ), subject).
+		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, fmt.Errorf("utilisateur %s/%s: %w", typ, subject, ErrNotFound)
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("lecture de l'utilisateur %s/%s: %w", typ, subject, err)
 	}
 	return u, nil
 }

@@ -88,3 +88,21 @@ func TestTempObjWriter(t *testing.T) {
 		t.Errorf("Close() error = %v", err)
 	}
 }
+
+// TestWorktreeInvarianceRefusesUncapturedState pins the guard against a vacuous
+// pass: while CaptureState is a stub, comparing two zero values must not be
+// mistaken for evidence that the worktree was untouched.
+func TestWorktreeInvarianceRefusesUncapturedState(t *testing.T) {
+	if err := VerifyWorktreeInvariance(&WorktreeState{}, &WorktreeState{}); err == nil {
+		t.Error("expected an error when neither state was captured")
+	}
+
+	captured := &WorktreeState{
+		HeadRef:  "HEAD",
+		HeadSHA:  "0123456789abcdef0123456789abcdef01234567",
+		IndexMD5: "abc123def456",
+	}
+	if err := VerifyWorktreeInvariance(captured, &WorktreeState{}); err == nil {
+		t.Error("expected an error when the after state was not captured")
+	}
+}

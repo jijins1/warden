@@ -2,9 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
@@ -13,6 +13,12 @@ import (
 // HandleListRuns lists runs with keyset pagination.
 // GET /runs?env=&inventory=&state=&since=&until=&changed_min=&cursor=&limit=
 func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
+	user := ContextUser(r.Context())
+	if !a.policy.CanListRuns(r.Context(), user) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+
 	filter := store.RunFilter{
 		Environment: r.URL.Query().Get("env"),
 		Inventory:   r.URL.Query().Get("inventory"),
@@ -27,11 +33,12 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse optional user ID
-	if userStr := r.URL.Query().Get("user"); userStr != "" {
-		if userID, err := strconv.ParseInt(userStr, 10, 64); err == nil && userID > 0 {
-			filter.UserID = userID
-		}
+	// The owner is never taken from the query string: it is the authenticated
+	// caller, or the request does not happen.
+	filter, visible := a.policy.VisibleRunFilter(user, filter)
+	if !visible {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
 	}
 
 	// Parse optional time filters
@@ -55,7 +62,12 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 
 	result, err := a.store.ListRuns(r.Context(), filter)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("listing runs: %v", err), http.StatusInternalServerError)
+		// A bad cursor is the caller's mistake, and the message names it.
+		if strings.Contains(err.Error(), "invalid cursor") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "listing runs failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -69,6 +81,12 @@ func (a *Server) HandleListByHost(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	if host == "" {
 		http.Error(w, "host required", http.StatusBadRequest)
+		return
+	}
+
+	user := ContextUser(r.Context())
+	if !a.policy.CanViewHost(r.Context(), user, host) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
 
@@ -87,10 +105,18 @@ func (a *Server) HandleListByHost(w http.ResponseWriter, r *http.Request) {
 
 	runs, err := a.store.GetRunsByHost(r.Context(), host, since, until)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("listing runs by host: %v", err), http.StatusInternalServerError)
+		http.Error(w, "listing runs by host failed", http.StatusInternalServerError)
 		return
 	}
 
+	// The host view crosses runs, so it is filtered here rather than in SQL.
+	visible := make([]store.RunListItem, 0, len(runs))
+	for _, run := range runs {
+		if run.UserID == user.ID {
+			visible = append(visible, run)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(runs)
+	_ = json.NewEncoder(w).Encode(visible)
 }

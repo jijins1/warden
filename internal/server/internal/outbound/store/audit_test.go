@@ -4,11 +4,62 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
+
+// runRef builds a syntactically valid run_ref: 26 characters drawn from the
+// Crockford base32 alphabet, as enforced by the run_run_ref_check constraint.
+// A malformed ref is rejected by the database, so the helper validates the
+// length here rather than letting every caller produce a silent INSERT failure.
+func runRef(t *testing.T, suffix string) string {
+	t.Helper()
+	const prefix = "01JZQ"
+	pad := 26 - len(prefix) - len(suffix)
+	if pad < 0 {
+		t.Fatalf("suffix %q too long for a 26-char ref", suffix)
+	}
+	ref := prefix + fmt.Sprintf("%0*d", pad, 0) + suffix
+	if len(ref) != 26 {
+		t.Fatalf("built ref %q has %d chars, want 26", ref, len(ref))
+	}
+	return ref
+}
+
+// mustCreateRun creates a run and fails the test on error. Ignoring the error
+// here would let the assertions below run against an empty table.
+func mustCreateRun(t *testing.T, ctx context.Context, s *store.Store, ref string, userID int64, env, inventory, playbook string) int64 {
+	t.Helper()
+	id, err := s.CreateRun(ctx, store.NewRun{
+		RunRef:      ref,
+		UserID:      userID,
+		Environment: env,
+		Inventory:   inventory,
+		Playbook:    playbook,
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+	})
+	if err != nil {
+		t.Fatalf("creating run %s: %v", ref, err)
+	}
+	return id
+}
+
+func mustUser(t *testing.T, ctx context.Context, s *store.Store, subject string) store.User {
+	t.Helper()
+	u, err := s.UpsertUser(ctx, store.Identity{
+		Type: core.UserLocal, Subject: subject, DisplayName: subject,
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser %s: %v", subject, err)
+	}
+	return u
+}
 
 // TestListRunsBasic tests basic run listing and filtering.
 func TestListRunsBasic(t *testing.T) {
@@ -20,53 +71,25 @@ func TestListRunsBasic(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Create a test user
-	user, err := s.UpsertUser(ctx, store.Identity{
-		Type: core.UserLocal, Subject: "test", DisplayName: "Test User",
-	})
-	if err != nil {
-		t.Fatalf("UpsertUser: %v", err)
+	user := mustUser(t, ctx, s, "test")
+
+	// A run is born 'interrupted'/'unknown' (§6.4): the row is written before the
+	// pod exists, so a crash in between leaves an honest line. MarkRunning is what
+	// moves it to 'running'.
+	runID1 := mustCreateRun(t, ctx, s, runRef(t, "001"), user.ID, "production", "inv/prod", "deploy.yml")
+	runID2 := mustCreateRun(t, ctx, s, runRef(t, "002"), user.ID, "staging", "inv/staging", "deploy.yml")
+	runID3 := mustCreateRun(t, ctx, s, runRef(t, "003"), user.ID, "test", "inv/test", "test.yml")
+
+	for _, id := range []int64{runID1, runID2, runID3} {
+		if err := s.MarkRunning(ctx, id, "pod-test"); err != nil {
+			t.Fatalf("MarkRunning %d: %v", id, err)
+		}
 	}
 
-	// Create 3 runs with different environments
-	_, _ = s.CreateRun(ctx, store.NewRun{
-		RunRef:      "01JZQ00000000000000000001",
-		UserID:      user.ID,
-		Environment: "production",
-		Inventory:   "inv/prod",
-		Playbook:    "deploy.yml",
-		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		MainlineRef: "refs/heads/main",
-		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
-	})
-
-	_, _ = s.CreateRun(ctx, store.NewRun{
-		RunRef:      "01JZQ00000000000000000002",
-		UserID:      user.ID,
-		Environment: "staging",
-		Inventory:   "inv/staging",
-		Playbook:    "deploy.yml",
-		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		MainlineRef: "refs/heads/main",
-		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
-	})
-
-	runID3, _ := s.CreateRun(ctx, store.NewRun{
-		RunRef:      "01JZQ00000000000000000003",
-		UserID:      user.ID,
-		Environment: "test",
-		Inventory:   "inv/test",
-		Playbook:    "test.yml",
-		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		MainlineRef: "refs/heads/main",
-		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
-	})
-
 	// Close one run to test state filtering
-	s.CloseRun(ctx, runID3, core.RunSucceeded, "")
+	if err := s.CloseRun(ctx, runID3, core.RunSucceeded, ""); err != nil {
+		t.Fatalf("CloseRun: %v", err)
+	}
 
 	// Test 1: List all runs
 	result, err := s.ListRuns(ctx, store.RunFilter{Limit: 100})
@@ -74,7 +97,7 @@ func TestListRunsBasic(t *testing.T) {
 		t.Fatalf("ListRuns all: %v", err)
 	}
 	if len(result.Runs) != 3 {
-		t.Errorf("expected 3 runs, got %d", len(result.Runs))
+		t.Fatalf("expected 3 runs, got %d", len(result.Runs))
 	}
 
 	// Test 2: Filter by environment
@@ -83,7 +106,7 @@ func TestListRunsBasic(t *testing.T) {
 		t.Fatalf("ListRuns prod: %v", err)
 	}
 	if len(result.Runs) != 1 {
-		t.Errorf("expected 1 production run, got %d", len(result.Runs))
+		t.Fatalf("expected 1 production run, got %d", len(result.Runs))
 	}
 	if result.Runs[0].Environment != "production" {
 		t.Errorf("expected production env, got %s", result.Runs[0].Environment)
@@ -108,7 +131,74 @@ func TestListRunsBasic(t *testing.T) {
 	}
 }
 
-// TestListRunsSecureEnumeration verifies that list uses ULID, not sequential ID.
+// TestListRunsPagination walks every page and asserts that each run is seen
+// exactly once. A cursor that fails to decode re-serves page 1 forever, so this
+// also guards against the loop that bug produces.
+func TestListRunsPagination(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	user := mustUser(t, ctx, s, "test")
+
+	const total = 7
+	for i := range total {
+		mustCreateRun(t, ctx, s, runRef(t, fmt.Sprintf("%03d", i)), user.ID, "prod", "inv", "p.yml")
+	}
+
+	seen := map[string]int{}
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > total+2 {
+			t.Fatalf("pagination did not terminate after %d pages (cursor not honored?)", page)
+		}
+		res, err := s.ListRuns(ctx, store.RunFilter{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("ListRuns page %d: %v", page, err)
+		}
+		for _, r := range res.Runs {
+			seen[r.RunRef]++
+		}
+		if res.NextCursor == "" {
+			break
+		}
+		if res.NextCursor == cursor {
+			t.Fatalf("cursor did not advance: %q", cursor)
+		}
+		cursor = res.NextCursor
+	}
+
+	if len(seen) != total {
+		t.Errorf("expected %d distinct runs across pages, got %d", total, len(seen))
+	}
+	for ref, n := range seen {
+		if n != 1 {
+			t.Errorf("run %s returned %d times, want exactly 1", ref, n)
+		}
+	}
+}
+
+// TestListRunsRejectsBadCursor verifies that a malformed cursor is reported
+// rather than silently ignored (which would quietly restart at page 1).
+func TestListRunsRejectsBadCursor(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if _, err := s.ListRuns(ctx, store.RunFilter{Cursor: "not-a-cursor"}); err == nil {
+		t.Error("expected an error for a malformed cursor, got nil")
+	}
+}
+
+// TestListRunsSecureEnumeration verifies that list exposes ULID, not sequential ID.
 func TestListRunsSecureEnumeration(t *testing.T) {
 	ctx := context.Background()
 	dsn := startPostgres(t)
@@ -118,37 +208,22 @@ func TestListRunsSecureEnumeration(t *testing.T) {
 	}
 	defer s.Close()
 
-	user, _ := s.UpsertUser(ctx, store.Identity{
-		Type: core.UserLocal, Subject: "test", DisplayName: "Test User",
-	})
+	user := mustUser(t, ctx, s, "test")
+	ref := runRef(t, "001")
+	mustCreateRun(t, ctx, s, ref, user.ID, "test", "inv/test", "test.yml")
 
-	// Create a run
-	_, _ = s.CreateRun(ctx, store.NewRun{
-		RunRef:      "01JZQ00000000000000000001",
-		UserID:      user.ID,
-		Environment: "test",
-		Inventory:   "inv/test",
-		Playbook:    "test.yml",
-		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		MainlineRef: "refs/heads/main",
-		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
-	})
-
-	// Verify that the returned run has run_ref (ULID) and ID is internal only
 	result, err := s.ListRuns(ctx, store.RunFilter{})
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
 	}
 	if len(result.Runs) != 1 {
-		t.Errorf("expected 1 run, got %d", len(result.Runs))
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
 	}
 
 	run := result.Runs[0]
-	if run.RunRef != "01JZQ00000000000000000001" {
-		t.Errorf("expected RunRef '01JZQ00000000000000000001', got %s", run.RunRef)
+	if run.RunRef != ref {
+		t.Errorf("expected RunRef %q, got %s", ref, run.RunRef)
 	}
-	// Verify ID exists but is not exposed in API (it's just used internally)
 	if run.ID <= 0 {
 		t.Errorf("expected ID > 0, got %d", run.ID)
 	}

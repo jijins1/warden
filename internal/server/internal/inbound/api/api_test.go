@@ -23,13 +23,15 @@ import (
 
 // harness sets up a test API server with PostgreSQL backend.
 type harness struct {
-	server   *api.Server
-	store    *store.Store
-	ingest   *store.Ingest
-	flux     *flux.Flux
-	httpSrv  *httptest.Server
-	userID   int64
-	dsn      string
+	server  *api.Server
+	store   *store.Store
+	ingest  *store.Ingest
+	flux    *flux.Flux
+	httpSrv *httptest.Server
+	userID  int64
+	// userSubject is what the dev authenticator expects in X-User-Subject.
+	userSubject string
+	dsn         string
 }
 
 // setup creates a test harness with database.
@@ -63,6 +65,9 @@ func setup(t *testing.T) *harness {
 	cfg := &api.Config{
 		Addr:        "127.0.0.1:0",
 		DatabaseURL: dsn,
+		// The tests exercise the real middleware chain, so they run with the
+		// insecure dev authenticator rather than around it.
+		InsecureDevAuth: true,
 	}
 	server, err := api.New(cfg)
 	if err != nil {
@@ -70,10 +75,13 @@ func setup(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { server.Close() })
 
-	// Create HTTP server with proper routing
+	// Create HTTP server with proper routing, behind the same authentication
+	// middleware the production server mounts.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /runs/{run_ref}/stream", server.HandleStream)
-	httpSrv := httptest.NewServer(mux)
+	mux.HandleFunc("GET /runs", server.HandleListRuns)
+	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
+	httpSrv := httptest.NewServer(server.AuthnMiddleware(mux))
 	t.Cleanup(httpSrv.Close)
 
 	// Open flux separately (the server opens it internally too)
@@ -110,13 +118,14 @@ func setup(t *testing.T) *harness {
 	t.Cleanup(in.Close)
 
 	return &harness{
-		server:  server,
-		store:   st,
-		ingest:  in,
-		flux:    f,
-		httpSrv: httpSrv,
-		userID:  user.ID,
-		dsn:     dsn,
+		server:      server,
+		store:       st,
+		ingest:      in,
+		flux:        f,
+		httpSrv:     httpSrv,
+		userID:      user.ID,
+		userSubject: "test",
+		dsn:         dsn,
 	}
 }
 
@@ -173,13 +182,18 @@ func (h *harness) dialWS(t *testing.T, runRef string, fromOffset int64) *websock
 		path += "?from_offset=" + strconv.FormatInt(fromOffset, 10)
 	}
 
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL+path, nil)
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL+path, h.authHeader())
 	if err != nil {
 		t.Fatalf("WebSocket dial: %v", err)
 	}
 	t.Cleanup(func() { _ = ws.Close() })
 
 	return ws
+}
+
+// authHeader names the harness user to the dev authenticator.
+func (h *harness) authHeader() http.Header {
+	return http.Header{"X-User-Subject": []string{h.userSubject}}
 }
 
 // readWSMessage reads a WebSocket message.
@@ -192,6 +206,23 @@ func readWSMessage(t *testing.T, conn *websocket.Conn, timeout time.Duration) *w
 		t.Fatalf("reading message: %v", err)
 	}
 	return &msg
+}
+
+// readEventSeq reads until an event frame arrives and returns its sequence,
+// skipping keep-alives.
+func readEventSeq(t *testing.T, conn *websocket.Conn) int64 {
+	t.Helper()
+	for {
+		msg := readWSMessage(t, conn, 5*time.Second)
+		if msg.Type != wsproto.TypeEvent {
+			continue
+		}
+		var frame wsproto.EventFrame
+		if err := json.Unmarshal(msg.Body, &frame); err != nil {
+			t.Fatalf("unmarshaling frame: %v", err)
+		}
+		return frame.Seq
+	}
 }
 
 // TestWebSocketUpgrade verifies WebSocket upgrade works.
@@ -377,5 +408,31 @@ func TestMultipleClients(t *testing.T) {
 // TestReconnectWithOffset verifies that clients can reconnect from a saved offset.
 // The offset is managed by the client, not the server.
 func TestReconnectWithOffset(t *testing.T) {
-	t.Skip("Client-managed offset reconnection - tested as part of CLI upload flow")
+	h := setup(t)
+	ctx := context.Background()
+
+	runRef := h.createRun(t, ctx)
+	run, err := h.store.RunByRef(ctx, runRef)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
+	h.pushEvents(t, run.ID, 6)
+
+	// First connection reads part of the stream, then drops.
+	first := h.dialWS(t, runRef, 0)
+	var lastSeq int64 = -1
+	for range 3 {
+		lastSeq = readEventSeq(t, first)
+	}
+	if lastSeq < 0 {
+		t.Fatal("no event received on the first connection")
+	}
+	_ = first.Close()
+
+	// The client, not the server, remembers where it stopped: it reconnects at
+	// the next offset and must not be re-sent what it already has.
+	second := h.dialWS(t, runRef, lastSeq+1)
+	if seq := readEventSeq(t, second); seq <= lastSeq {
+		t.Errorf("reconnection replayed seq %d, already delivered up to %d", seq, lastSeq)
+	}
 }

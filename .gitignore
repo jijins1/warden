@@ -1,6 +1,8 @@
 # Binaires construits
 /bin/
 /dist/
+/warden
+/wardend
 
 # Go
 *.test

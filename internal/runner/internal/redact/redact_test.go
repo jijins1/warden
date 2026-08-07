@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -25,11 +26,11 @@ func TestBuildDerivations(t *testing.T) {
 	}
 
 	expectedForms := []string{
-		"hunter2",                                 // raw
-		"aHVudGVyMg==",                           // base64 align 0
-		"481a6a9f20938d10a67c7e44e77a2b5e",      // MD5
-		"HUNTER2",                                 // upper
-		"hunter2",                                 // lower (duplicate)
+		"hunter2",                          // raw
+		"aHVudGVyMg==",                     // base64 align 0
+		"481a6a9f20938d10a67c7e44e77a2b5e", // MD5
+		"HUNTER2",                          // upper
+		"hunter2",                          // lower (duplicate)
 	}
 
 	for _, form := range expectedForms {
@@ -73,7 +74,7 @@ func TestRedactBase64(t *testing.T) {
 	redactor := NewRedactor(secrets, 5, 100)
 
 	// Create base64-encoded secret in different contexts
-	text := "YWJjMTIz"  // base64("abc123")
+	text := "YWJjMTIz" // base64("abc123")
 	redacted, matches, _ := redactor.RedactText(text)
 
 	if matches > 0 {
@@ -84,7 +85,7 @@ func TestRedactBase64(t *testing.T) {
 // TestRedactShortSecret tests that secrets < min length are flagged.
 func TestRedactShortSecret(t *testing.T) {
 	secrets := []Secret{
-		{Name: "pin", Value: "123"},  // too short (< 5)
+		{Name: "pin", Value: "123"},     // too short (< 5)
 		{Name: "key", Value: "hunter2"}, // ok
 	}
 	redactor := NewRedactor(secrets, 5, 100)
@@ -134,12 +135,12 @@ func TestRedactMultipleSecrets(t *testing.T) {
 // TestRedactThreshold tests that excessive matches are flagged.
 func TestRedactThreshold(t *testing.T) {
 	secrets := []Secret{
-		{Name: "secret", Value: "a"},  // short but testing threshold only
+		{Name: "secret", Value: "a"}, // short but testing threshold only
 	}
-	redactor := NewRedactor(secrets, 1, 5)  // threshold = 5
+	redactor := NewRedactor(secrets, 1, 5) // threshold = 5
 
 	// Create text with many 'a's
-	text := strings.Repeat("a", 10)  // 10 matches, above threshold of 5
+	text := strings.Repeat("a", 10) // 10 matches, above threshold of 5
 	_, matches, exceptions := redactor.RedactText(text)
 
 	if matches <= 5 {
@@ -228,4 +229,56 @@ func TestRedactJSONPayload(t *testing.T) {
 	// (The actual check depends on how the result is serialized)
 	_ = redacted
 	t.Logf("JSON redaction test passed")
+}
+
+// TestRedactJSONNeverReturnsRawSecret pins the fail-closed contract of
+// ADR-0017: a payload that cannot be verified after redaction is dropped, never
+// returned as-is. The secret name is hostile here because it comes from a
+// playbook variable and lands inside the marker.
+func TestRedactJSONNeverReturnsRawSecret(t *testing.T) {
+	const secret = "s3cr3t-value-abcdef"
+	redactor := NewRedactor([]Secret{{Name: `pw"x`, Value: secret}}, 5, 100)
+
+	out, err := redactor.RedactJSON(map[string]string{"stdout": "connecting with " + secret})
+	if err != nil {
+		t.Fatalf("RedactJSON() error: %v", err)
+	}
+
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("re-marshaling result: %v", err)
+	}
+	if strings.Contains(string(encoded), secret) {
+		t.Errorf("raw secret leaked into redacted output: %s", encoded)
+	}
+}
+
+// TestRedactJSONDropsUnverifiablePayload checks the other half of the contract:
+// when the result cannot be parsed back, no data comes out at all.
+func TestRedactJSONDropsUnverifiablePayload(t *testing.T) {
+	redactor := NewRedactor(nil, 5, 100)
+
+	// json.Marshal rejects a channel, so this exercises the error path without
+	// depending on a specific way of corrupting the redacted text.
+	if _, err := redactor.RedactJSON(map[string]any{"bad": make(chan int)}); err == nil {
+		t.Error("expected an error for an unmarshalable payload, got nil")
+	}
+}
+
+// TestRedactEmptySecretDoesNotCorrupt guards the empty-needle case: replacing
+// "" would insert a marker between every character of the payload.
+func TestRedactEmptySecretDoesNotCorrupt(t *testing.T) {
+	redactor := NewRedactor([]Secret{{Name: "empty", Value: ""}}, 0, 100)
+
+	const text = "nothing to hide here"
+	got, matches, exceptions := redactor.RedactText(text)
+	if got != text {
+		t.Errorf("empty secret altered the text: %q", got)
+	}
+	if matches != 0 {
+		t.Errorf("expected 0 matches, got %d", matches)
+	}
+	if len(exceptions) == 0 {
+		t.Error("expected the empty secret to be reported as an exception")
+	}
 }

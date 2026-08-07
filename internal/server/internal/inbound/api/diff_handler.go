@@ -33,10 +33,8 @@ func (a *Server) HandleGetDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve run_ref to internal run ID
-	run, err := a.store.RunByRef(r.Context(), runRef)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("run not found: %v", err), http.StatusNotFound)
+	run, ok := a.requireRunAccess(w, r, runRef)
+	if !ok {
 		return
 	}
 
@@ -45,16 +43,16 @@ func (a *Server) HandleGetDiff(w http.ResponseWriter, r *http.Request) {
 	// The API consumer doesn't need to know about run_day, so we fetch it internally
 	diff, err := a.diffReader.DiffByRunRef(r.Context(), run.ID, seq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("querying diff: %v", err), http.StatusInternalServerError)
+		http.Error(w, "querying diff failed", http.StatusInternalServerError)
 		return
 	}
 
 	// Return the diff (or null if none)
 	w.Header().Set("Content-Type", "application/json")
 	if diff == nil {
-		w.Write([]byte("null"))
+		_, _ = w.Write([]byte("null"))
 	} else {
-		w.Write(diff)
+		_, _ = w.Write(diff)
 	}
 }
 
@@ -83,14 +81,15 @@ func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve run_ref to run record
-	run, err := a.store.RunByRef(r.Context(), runRef)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("run not found: %v", err), http.StatusNotFound)
+	run, ok := a.requireRunAccess(w, r, runRef)
+	if !ok {
 		return
 	}
 
-	var diff string
+	var (
+		diff string
+		err  error
+	)
 	switch vs {
 	case "mainline":
 		diff, err = gitd.DiffMainline(r.Context(), a.repoRoot, run.MainlineSHA, run.AuditSHA)
@@ -99,16 +98,12 @@ func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("computing diff: %v", err), http.StatusInternalServerError)
+		http.Error(w, "computing diff failed", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	if diff == "" {
-		w.Write([]byte(""))
-	} else {
-		w.Write([]byte(diff))
-	}
+	_, _ = w.Write([]byte(diff))
 }
 
 // DiffResponse wraps a diff for JSON responses.

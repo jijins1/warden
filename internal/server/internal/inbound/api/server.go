@@ -14,9 +14,15 @@ import (
 
 // Config holds API server configuration.
 type Config struct {
-	Addr             string
-	DatabaseURL      string
-	RepoRoot         string // path to git repository for diff operations
+	Addr        string
+	DatabaseURL string
+	RepoRoot    string // path to git repository for diff operations
+
+	// InsecureDevAuth trusts the X-User-Subject header to name the caller.
+	// Development only: any client can claim any provisioned identity. When
+	// false the API refuses every request until a real authenticator exists.
+	InsecureDevAuth bool
+
 	GracefulShutdown time.Duration
 }
 
@@ -35,10 +41,14 @@ func FromEnv() (*Config, error) {
 	repoRoot := os.Getenv("WARDEN_REPO_ROOT")
 	// RepoRoot is optional; git diff will return 501 if not configured
 
+	// Opt-in, and named so nobody sets it by accident.
+	insecureDevAuth := os.Getenv("WARDEN_INSECURE_DEV_AUTH") == "1"
+
 	return &Config{
 		Addr:             addr,
 		DatabaseURL:      dsn,
 		RepoRoot:         repoRoot,
+		InsecureDevAuth:  insecureDevAuth,
 		GracefulShutdown: 30 * time.Second,
 	}, nil
 }
@@ -52,6 +62,9 @@ type Server struct {
 	diffReader *store.DiffReader
 	repoRoot   string
 	policy     *Policy
+
+	// insecureDevAuth mirrors Config.InsecureDevAuth; see AuthnMiddleware.
+	insecureDevAuth bool
 }
 
 // New creates a new API server.
@@ -82,6 +95,8 @@ func New(cfg *Config) (*Server, error) {
 		diffReader: dr,
 		repoRoot:   cfg.RepoRoot,
 		policy:     NewPolicy(s),
+
+		insecureDevAuth: cfg.InsecureDevAuth,
 		srv: &http.Server{
 			Addr: cfg.Addr,
 		},
@@ -149,16 +164,16 @@ type streamResponse struct {
 
 // NewRunRequest represents a request to create a new run.
 type NewRunRequest struct {
-	Playbook     string            `json:"playbook"`
-	Environment  string            `json:"environment"`
-	Inventory    string            `json:"inventory"`
-	ExtraVars    map[string]string `json:"extra_vars,omitempty"`
-	Check        bool              `json:"check,omitempty"`
-	Diff         bool              `json:"diff,omitempty"`
-	Limit        string            `json:"limit,omitempty"`
-	Tags         string            `json:"tags,omitempty"`
-	SkipTags     string            `json:"skip_tags,omitempty"`
-	Verbosity    int               `json:"verbosity,omitempty"`
+	Playbook    string            `json:"playbook"`
+	Environment string            `json:"environment"`
+	Inventory   string            `json:"inventory"`
+	ExtraVars   map[string]string `json:"extra_vars,omitempty"`
+	Check       bool              `json:"check,omitempty"`
+	Diff        bool              `json:"diff,omitempty"`
+	Limit       string            `json:"limit,omitempty"`
+	Tags        string            `json:"tags,omitempty"`
+	SkipTags    string            `json:"skip_tags,omitempty"`
+	Verbosity   int               `json:"verbosity,omitempty"`
 }
 
 // NewRunResponse is returned after creating a run.

@@ -45,10 +45,9 @@ func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve run_ref to internal run ID
-	run, err := a.store.RunByRef(r.Context(), runRef)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("run not found: %v", err), http.StatusNotFound)
+	// Resolve run_ref to internal run ID and check read access
+	run, ok := a.requireRunAccess(w, r, runRef)
+	if !ok {
 		return
 	}
 	runID := run.ID
@@ -182,4 +181,3 @@ func (h *streamHandler) sendError(errMsg string) error {
 	_ = h.send(wire.NewErrorMessage(errMsg))
 	return h.ws.Close()
 }
-

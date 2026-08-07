@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 // Git manages a git repository with strict environment isolation per ADR-0005.
@@ -73,4 +74,25 @@ func (g *Git) WithAuth(token string) *Git {
 	// This method is a placeholder for future credential binding.
 	_ = token
 	return &g2
+}
+
+// Diff returns the unified diff between two tree-ish objects.
+//
+// Empty when the two sides are identical. git diff exits 0 whether or not it
+// found differences, so a non-zero status is a real failure and is reported as
+// such, stderr included.
+func (g *Git) Diff(ctx context.Context, from, to SHA) (string, error) {
+	if !from.Valid() {
+		return "", fmt.Errorf("invalid from SHA: %q", from)
+	}
+	if !to.Valid() {
+		return "", fmt.Errorf("invalid to SHA: %q", to)
+	}
+
+	stdout, stderr, err := g.run(ctx, "diff", "--unified=3", "--no-color",
+		from.String(), to.String())
+	if err != nil {
+		return "", fmt.Errorf("git diff %s %s: %w: %s", from, to, err, strings.TrimSpace(stderr))
+	}
+	return strings.TrimSpace(stdout), nil
 }

@@ -11,9 +11,9 @@ import (
 // CaptureWorktreeState captures the current state of git index/HEAD.
 // Used to verify invariance before and after capture (critical ADR-0005 property).
 type WorktreeState struct {
-	HeadRef string      // HEAD symbolic ref
-	HeadSHA string      // HEAD commit SHA
-	IndexMD5 string     // MD5 of .git/index
+	HeadRef      string // HEAD symbolic ref
+	HeadSHA      string // HEAD commit SHA
+	IndexMD5     string // MD5 of .git/index
 	StatusOutput string // `git status --porcelain=v2`
 }
 
@@ -95,6 +95,13 @@ func CaptureAuditTree(ctx context.Context, repoDir string, baseSHA string, scope
 func VerifyWorktreeInvariance(before, after *WorktreeState) error {
 	if before == nil || after == nil {
 		return fmt.Errorf("both before and after states required")
+	}
+
+	// CaptureState is still a stub returning a zero value. Comparing two empty
+	// states would succeed while proving nothing, which is exactly the silent
+	// pass this check exists to prevent: refuse instead.
+	if (*before == WorktreeState{}) || (*after == WorktreeState{}) {
+		return fmt.Errorf("worktree state was not captured; invariance cannot be verified")
 	}
 
 	if before.HeadRef != after.HeadRef {
