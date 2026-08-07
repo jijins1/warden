@@ -357,13 +357,8 @@ func TestMultipleClients(t *testing.T) {
 	}
 }
 
-// TestDetachReattach verifies that the detach/reattach flow works correctly.
-// This is a simplified test that verifies the pending pool tracks detached streams.
-func TestDetachReattach(t *testing.T) {
-	t.Skip("WebSocket detach/reattach requires full E2E client coordination - skipped for now")
-}
-
-// TestDetachExpired verifies that reattach window expires after 5 minutes.
-func TestDetachExpired(t *testing.T) {
-	t.Skip("Skipping time-based expiration test (would require 5 min wait)")
+// TestReconnectWithOffset verifies that clients can reconnect from a saved offset.
+// The offset is managed by the client, not the server.
+func TestReconnectWithOffset(t *testing.T) {
+	t.Skip("Client-managed offset reconnection - tested as part of CLI upload flow")
 }
