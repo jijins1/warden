@@ -128,6 +128,11 @@ linters:
             # Voir la même entrée dans `serveur-sortants` : c'est le contrat de
             # l'arête, servi ici et appelé là-bas.
             - github.com/jijins1/warden/internal/server/internal/gitwire
+            # `gitd` lui-même, pour son paquet de test externe. Même forme que
+            # l'entrée équivalente de `coeur`, et pour la même raison : le refus
+            # ci-dessus doit rester actif DANS les tests, sinon un test suffirait
+            # à ouvrir une arête que l'ADR-0006 ferme.
+            - github.com/jijins1/warden/internal/server/internal/gitd
 
         # `gitwire` est partagé par deux paquets à qui l'ADR-0019 interdit de se
         # voir. Ce privilège n'est tenable que s'il reste ce qu'il prétend être :

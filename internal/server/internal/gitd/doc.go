@@ -19,6 +19,19 @@
 // `outbound/gitclient`. Il vit donc à côté de la décomposition hexagonale de
 // l'ADR-0019, pas dedans — l'ADR le rangeait à tort côté entrant.
 //
-// Arêtes autorisées : `outbound/store` et le socle `internal/git`. Ce paquet
-// n'importe ni `core`, ni `inbound`, ni les autres adaptateurs.
+// Arêtes autorisées : `outbound/store` et le socle `internal/git`, plus le
+// contrat `gitwire` qu'il partage avec `outbound/gitclient`. Ce paquet n'importe
+// ni `core`, ni `inbound`, ni les autres adaptateurs.
+//
+// ÉTAT : seule l'API interne de diff est implémentée (ADR-0024). Le smart HTTP,
+// la quarantaine, le scan de secrets, la promotion, l'ancestry et le cycle de
+// vie des espaces de noms restent à écrire.
+//
+// Il ne parle pas à PostgreSQL, et c'est délibéré. L'endpoint de diff reçoit
+// deux objets et le dépôt où les trouver, jamais un run : « quel est le run
+// précédent » est une règle de run, tranchée par le rôle `api` qui détient la
+// politique d'accès. Un `gitd` qui la trancherait lui-même court-circuiterait
+// cette politique — le run précédent appartient souvent à quelqu'un d'autre, et
+// son arbre est son code. Accessoirement, rester sans base garde tout ce paquet
+// à l'étage 1 de l'ADR-0010.
 package gitd
