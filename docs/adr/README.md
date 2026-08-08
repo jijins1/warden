@@ -37,6 +37,7 @@ d'implémentation prises en cours de route.
 | [0022](0022-pgx-comme-pilote-postgresql.md) | pgx en accès natif, `database/sql` réservé aux migrations | Accepted |
 | [0023](0023-identite-damorcage-du-pod-runner.md) | Identité d'amorçage du pod runner : jeton porteur émis par le contrôleur | Accepted |
 | [0024](0024-api-interne-du-role-git.md) | API interne du rôle `git` : HTTP sur port distinct, jeton porteur partagé | Accepted |
+| [0025](0025-perimetre-de-la-capture-daudit.md) | Périmètre de la capture d'audit : l'arbre dit ce qui va tourner | Accepted |
 
 ## Convention
 
