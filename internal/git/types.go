@@ -3,6 +3,7 @@ package git
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // SHA is a validated git object hash (40 hex chars or 64 hex chars for new hash algorithms).
@@ -32,18 +33,46 @@ func (s SHA) Valid() bool {
 }
 
 // Ref is a validated git reference name (e.g., refs/heads/main, refs/audit/123/ulid).
-// Validated via git check-ref-format to ensure it conforms to git naming rules.
+//
+// The rules below are git check-ref-format's, applied in-process. Shelling out
+// to git would be more faithful, but it would make constructing a ref an
+// operation that can fail for reasons having nothing to do with the ref, and
+// this type is used to build the argv of the push that follows.
 type Ref string
+
+// refInterdits lists the bytes git refuses anywhere in a reference name. `~^:`
+// and `?*[` are revision syntax; a ref carrying them would be read as an
+// expression rather than a name.
+const refInterdits = " ~^:?*[\\"
 
 // NewRef validates and creates a Ref.
 func NewRef(r string) (Ref, error) {
-	if r == "" {
-		return "", fmt.Errorf("ref cannot be empty")
+	if !strings.HasPrefix(r, "refs/") {
+		return "", fmt.Errorf("invalid ref %q: must start with refs/", r)
 	}
-	// Full validation would require calling git check-ref-format.
-	// For now, basic pattern: must start with "refs/" and contain no whitespace.
-	if r[0:1] != "r" || len(r) < 5 {
-		return "", fmt.Errorf("invalid ref format: %q (should be refs/...)", r)
+	if strings.HasSuffix(r, "/") || strings.HasSuffix(r, ".") || strings.HasSuffix(r, ".lock") {
+		return "", fmt.Errorf("invalid ref %q: bad terminator", r)
+	}
+	if strings.Contains(r, "..") || strings.Contains(r, "@{") || strings.Contains(r, "//") {
+		return "", fmt.Errorf("invalid ref %q: forbidden sequence", r)
+	}
+	if strings.ContainsAny(r, refInterdits) {
+		return "", fmt.Errorf("invalid ref %q: forbidden character", r)
+	}
+	for _, c := range r {
+		// Control characters and DEL. A newline in a ref name would split the
+		// line-oriented output of every git command that reports refs.
+		if c < 0x20 || c == 0x7f {
+			return "", fmt.Errorf("invalid ref %q: control character", r)
+		}
+	}
+	for _, composant := range strings.Split(r, "/") {
+		if composant == "" {
+			return "", fmt.Errorf("invalid ref %q: empty component", r)
+		}
+		if strings.HasPrefix(composant, ".") || strings.HasSuffix(composant, ".lock") {
+			return "", fmt.Errorf("invalid ref %q: bad component %q", r, composant)
+		}
 	}
 	return Ref(r), nil
 }

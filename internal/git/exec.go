@@ -11,7 +11,8 @@ import (
 
 // Git manages a git repository with strict environment isolation per ADR-0005.
 type Git struct {
-	dir string // repository working directory
+	dir string   // repository working directory
+	env []string // extra environment, appended after the neutral base
 }
 
 // New creates a new Git instance for the given repository directory.
@@ -19,27 +20,59 @@ func New(dir string) *Git {
 	return &Git{dir: dir}
 }
 
+// withEnv returns a copy carrying additional environment entries.
+//
+// Unexported on purpose: composing the environment is this package's job, and
+// the callers outside it are meant to reach for a named operation instead. The
+// receiver is never mutated — two Git values must be able to point at the same
+// directory with different redirections without one leaking into the other.
+func (g *Git) withEnv(kv ...string) *Git {
+	c := *g
+	c.env = append(append([]string(nil), g.env...), kv...)
+	return &c
+}
+
+// hardening lists the configuration overrides applied to EVERY invocation.
+//
+// Neutralising GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM is not enough: the
+// repository's own `.git/config` is still read, and both of these keys name a
+// program that git runs on our behalf. The CLI runs git inside a repository it
+// did not create, so treating repository-local config as trusted input would
+// hand execution to whoever wrote it.
+//
+// core.fsmonitor is the less obvious of the two — it is a hook by another name,
+// and it fires on the read-only commands (status, ls-files) rather than on the
+// writing ones.
+var hardening = []string{
+	"-c", "core.hooksPath=/dev/null",
+	"-c", "core.fsmonitor=false",
+}
+
 // command builds a git command with neutralised environment.
 // Environment is built from scratch (not inherited from os.Environ).
 // Per ADR-0005: all hooks, config, and credentials are disabled.
 func (g *Git) command(ctx context.Context, args ...string) *exec.Cmd {
+	full := make([]string, 0, len(hardening)+len(args))
+	full = append(full, hardening...)
+	full = append(full, args...)
+
 	// #nosec G204 -- composer une ligne de commande git est la raison d'être de
 	// ce paquet. Le binaire est fixe, les arguments ne passent pas par un shell,
 	// et les valeurs qui viennent de l'extérieur sont validées en amont par les
 	// types SHA, Ref et Namespace.
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = g.dir
 
 	// Strict environment isolation: start empty, add only what we control.
 	// This prevents hooks, user config, credential helpers, or other surprises.
-	cmd.Env = []string{
+	cmd.Env = append([]string{
 		"PATH=/usr/bin:/bin",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
 		"LC_ALL=C",
-	}
+	}, g.env...)
 	return cmd
 }
 
@@ -128,14 +161,84 @@ func (g *Git) run(ctx context.Context, args ...string) (string, string, error) {
 	return string(stdoutBytes), string(stderrBytes), err
 }
 
-// WithAuth adds authentication headers for pushing to our git server.
-// Returns a modified Git instance with auth configured.
+// runStdin executes a git command, feeding it the given bytes on stdin.
+//
+// Writing on a pipe while the child may already be writing to its own means
+// neither side can be done first: git blocks on a full stdout pipe long before
+// it has consumed a large --stdin payload. Hence the goroutine — closing stdin
+// is what tells git the list is complete, so it must happen even when the write
+// fails half-way.
+func (g *Git) runStdin(ctx context.Context, input []byte, args ...string) (string, string, error) {
+	cmd := g.command(ctx, args...)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", "", fmt.Errorf("start: %w", err)
+	}
+
+	errWrite := make(chan error, 1)
+	go func() {
+		_, err := stdin.Write(input)
+		errWrite <- err
+		_ = stdin.Close()
+	}()
+
+	stdoutBytes, _ := io.ReadAll(stdout)
+	stderrBytes, _ := io.ReadAll(stderr)
+	waitErr := cmd.Wait()
+
+	if err := <-errWrite; err != nil && waitErr == nil {
+		return "", "", fmt.Errorf("writing stdin: %w", err)
+	}
+	return string(stdoutBytes), string(stderrBytes), waitErr
+}
+
+// output runs a git command and returns its trimmed stdout.
+//
+// It folds stderr into the error rather than dropping it: a git failure whose
+// message has been discarded is indistinguishable from any other, and this
+// package exists precisely so callers do not have to guess.
+func (g *Git) output(ctx context.Context, args ...string) (string, error) {
+	stdout, stderr, err := g.run(ctx, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr))
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// WithAuth returns a copy that authenticates to our git server with the given
+// bearer token.
+//
+// The token travels in the ENVIRONMENT, not in argv. GIT_CONFIG_COUNT and its
+// numbered pairs are exactly equivalent to the `-c` that ADR-0005 names, with
+// one difference that decides the choice: a process command line is readable by
+// any user on the machine through /proc, while its environment is not. The CLI
+// runs on a developer workstation, which is precisely where "any user on the
+// machine" is not a hypothetical.
+//
+// Not composable: a second call overwrites the first pair rather than adding to
+// it. There is one credential on this edge, and making it stackable would only
+// invite a second.
 func (g *Git) WithAuth(token string) *Git {
-	g2 := *g
-	// Authentication will be added to commands via -c http.extraHeader when needed.
-	// This method is a placeholder for future credential binding.
-	_ = token
-	return &g2
+	if token == "" {
+		return g
+	}
+	return g.withEnv(
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=http.extraHeader",
+		"GIT_CONFIG_VALUE_0=Authorization: Bearer "+token,
+	)
 }
 
 // HasObject reports whether the SHA names a commit present in the repository.
