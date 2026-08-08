@@ -13,9 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/jijins1/warden/internal/git"
+	"github.com/jijins1/warden/internal/server/internal/core"
+	"github.com/jijins1/warden/internal/server/internal/gitd"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
+	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
@@ -67,7 +72,7 @@ func Run(ctx context.Context, r Role) error {
 	case RoleIngest:
 		return fmt.Errorf("rôle %q: pas encore implémenté", r)
 	case RoleGit:
-		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+		return runGit(ctx)
 	case RoleController:
 		return fmt.Errorf("rôle %q: pas encore implémenté", r)
 	default:
@@ -120,13 +125,35 @@ func runAPI(ctx context.Context) error {
 	// LISTEN/NOTIFY appartient à l'adaptateur, pas au serveur HTTP.
 	go func() { _ = f.Listen(context.WithoutCancel(ctx)) }()
 
+	// Le client vers le rôle `git` est FACULTATIF : sans lui, les diffs git
+	// répondent 501 et le reste de l'API fonctionne. C'est ce qui permet de
+	// développer sans volume de dépôts.
+	//
+	// Le type est celui du PORT et non *gitclient.Client : une valeur nulle de
+	// type concret rangée dans un champ d'interface n'est pas nil, et la branche
+	// qui répond 501 se transformerait en déréférencement de pointeur nul.
+	var repo core.RepoDiffer
+	if adresse := os.Getenv(EnvGitInternalURL); adresse != "" {
+		jeton := os.Getenv(EnvGitInternalToken)
+		if jeton == "" {
+			// Une URL sans jeton n'est pas une dégradation, c'est une erreur de
+			// configuration : elle produirait des 401 en silence à la première
+			// consultation d'audit.
+			return fmt.Errorf("%s est définie sans %s", EnvGitInternalURL, EnvGitInternalToken)
+		}
+		gc, err := gitclient.New(gitclient.Config{BaseURL: adresse, Token: jeton})
+		if err != nil {
+			return fmt.Errorf("client du rôle git: %w", err)
+		}
+		repo = gc
+	}
+
 	server, err := api.New(cfg, api.Deps{
 		Runs:   st,
 		Users:  st,
 		Diffs:  dr,
 		Events: f,
-		// Repo reste nil : le client vers le rôle `git` n'existe pas encore
-		// (outbound/gitclient), et les diffs git répondent 501 en attendant.
+		Repo:   repo,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
@@ -145,6 +172,20 @@ const (
 	EnvDatabaseURL       = "WARDEN_DATABASE_URL"
 	EnvIngestDatabaseURL = "WARDEN_INGEST_DATABASE_URL"
 	EnvDiffDatabaseURL   = "WARDEN_DIFF_DATABASE_URL"
+)
+
+// Configuration du rôle `git` et de l'arête qui y mène (ADR-0024).
+//
+// Deux adresses et non une : le smart HTTP est joignable depuis les pods runner,
+// donc depuis du code arbitraire (ADR-0007), là où l'API interne ne l'est que
+// par le rôle `api` (ADR-0006). Les séparer dès maintenant rend la NetworkPolicy
+// exprimable par port, sans changement de code le jour où le smart HTTP existera.
+const (
+	EnvGitAddr          = "WARDEN_GIT_ADDR"           // smart HTTP — pas encore servi
+	EnvGitInternalAddr  = "WARDEN_GIT_INTERNAL_ADDR"  // API interne, servie par gitd
+	EnvGitRoot          = "WARDEN_GIT_ROOT"           // racine des dépôts bare
+	EnvGitInternalURL   = "WARDEN_GIT_INTERNAL_URL"   // côté `api` : où joindre gitd
+	EnvGitInternalToken = "WARDEN_GIT_INTERNAL_TOKEN" // partagé par les deux
 )
 
 // Migrate applique les migrations de schéma en attente.
@@ -171,4 +212,29 @@ func databaseURL(name string) (string, error) {
 		return "", fmt.Errorf("%s n'est pas définie", name)
 	}
 	return dsn, nil
+}
+
+// runGit sert l'API interne du rôle `git` (ADR-0024).
+//
+// Le smart HTTP n'est pas encore servi : ce rôle se réduit pour l'instant aux
+// diffs d'audit du §6.5.
+func runGit(ctx context.Context) error {
+	// ADR-0005 : le moteur est le binaire git, et sa version est une condition
+	// de correction, pas une préférence. Le contrôle est ici, au démarrage du
+	// processus, plutôt que dans gitd.New — c'est le processus qui a une version
+	// de git, pas l'objet.
+	if err := git.CheckVersion(ctx); err != nil {
+		return fmt.Errorf("rôle git: %w", err)
+	}
+
+	srv, err := gitd.New(gitd.Config{
+		Addr:             os.Getenv(EnvGitInternalAddr),
+		Racine:           os.Getenv(EnvGitRoot),
+		Jeton:            os.Getenv(EnvGitInternalToken),
+		GracefulShutdown: 30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("rôle git: %w", err)
+	}
+	return srv.Run(ctx)
 }

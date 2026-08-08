@@ -5,6 +5,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -318,5 +319,98 @@ func TestDiffReaderUsesPartitionKey(t *testing.T) {
 	// A missing partition key is refused rather than silently scanning.
 	if _, err := dr.Diff(ctx, run.ID, time.Time{}, 0); err == nil {
 		t.Error("expected an error when run_day is missing")
+	}
+}
+
+// TestPreviousRun couvre « le run précédent sur le même inventaire » du §6.5.
+func TestPreviousRun(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	user := mustUser(t, ctx, s, "test")
+
+	// Trois runs sur le même triplet, plus deux leurres : un autre inventaire,
+	// et surtout un autre DÉPÔT — deux SHA de dépôts différents n'ont aucun
+	// ancêtre commun, les comparer échouerait.
+	creer := func(suffixe, repo, env, inv string) (int64, string) {
+		ref := runRef(t, suffixe)
+		id, err := s.CreateRun(ctx, store.NewRun{
+			RunRef: ref, UserID: user.ID, Repo: repo,
+			Environment: env, Inventory: inv, Playbook: "p.yml",
+			AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			MainlineRef: "refs/heads/main",
+			MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+		})
+		if err != nil {
+			t.Fatalf("CreateRun %s: %v", ref, err)
+		}
+		return id, ref
+	}
+
+	_, ref1 := creer("P01", "warden", "prod", "inv")
+	_, ref2 := creer("P02", "warden", "prod", "inv")
+	_, ref3 := creer("P03", "warden", "prod", "inv")
+	creer("P04", "warden", "prod", "autre") // autre inventaire
+	creer("P05", "autre", "prod", "inv")    // autre dépôt
+
+	troisieme, err := s.RunByRef(ctx, ref3)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
+
+	prec, err := s.PreviousRun(ctx, troisieme)
+	if err != nil {
+		t.Fatalf("PreviousRun: %v", err)
+	}
+	if prec.RunRef != ref2 {
+		t.Errorf("précédent de %s = %s, attendu %s", ref3, prec.RunRef, ref2)
+	}
+
+	// Le deuxième a bien le premier pour précédent.
+	deuxieme, _ := s.RunByRef(ctx, ref2)
+	prec, err = s.PreviousRun(ctx, deuxieme)
+	if err != nil {
+		t.Fatalf("PreviousRun sur le deuxième: %v", err)
+	}
+	if prec.RunRef != ref1 {
+		t.Errorf("précédent de %s = %s, attendu %s", ref2, prec.RunRef, ref1)
+	}
+
+	// Le premier n'en a pas : c'est une absence, pas une panne.
+	premier, _ := s.RunByRef(ctx, ref1)
+	if _, err := s.PreviousRun(ctx, premier); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("erreur = %v, attendu ErrNotFound", err)
+	}
+}
+
+// TestCreateRunRefuseDepotVide : contrepartie en Go du DROP DEFAULT de la
+// migration 00004. Un run sans dépôt s'insérerait sans bruit et son artefact
+// deviendrait introuvable des mois plus tard.
+func TestCreateRunRefuseDepotVide(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	user := mustUser(t, ctx, s, "test")
+	_, err = s.CreateRun(ctx, store.NewRun{
+		RunRef: runRef(t, "X01"), UserID: user.ID, Repo: "",
+		Environment: "prod", Inventory: "inv", Playbook: "p.yml",
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+	})
+	if err == nil {
+		t.Error("run créé sans dépôt")
 	}
 }

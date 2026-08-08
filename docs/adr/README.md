@@ -36,6 +36,7 @@ d'implémentation prises en cours de route.
 | [0021](0021-modele-devent-normalise.md) | Modèle d'event normalisé, identifiants et métadonnées de run | Accepted (amendé le 2026-08-06) |
 | [0022](0022-pgx-comme-pilote-postgresql.md) | pgx en accès natif, `database/sql` réservé aux migrations | Accepted |
 | [0023](0023-identite-damorcage-du-pod-runner.md) | Identité d'amorçage du pod runner : jeton porteur émis par le contrôleur | Accepted |
+| [0024](0024-api-interne-du-role-git.md) | API interne du rôle `git` : HTTP sur port distinct, jeton porteur partagé | Accepted |
 
 ## Convention
 

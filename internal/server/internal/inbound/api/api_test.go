@@ -1,3 +1,10 @@
+//go:build integration
+
+// Étage 2 de l'ADR-0010 : ce harnais démarre un vrai PostgreSQL par
+// testcontainers. Sans ce tag, `make test` — l'étage qui ne doit réclamer ni
+// Docker ni cluster — en dépendait, et sa rapidité est précisément la propriété
+// qui le rend utile.
+
 package api_test
 
 import (
@@ -28,10 +35,36 @@ type harness struct {
 	ingest  *store.Ingest
 	flux    *flux.Flux
 	httpSrv *httptest.Server
+	diffs   *store.DiffReader
 	userID  int64
 	// userSubject is what the dev authenticator expects in X-User-Subject.
 	userSubject string
 	dsn         string
+	cfg         *api.Config
+}
+
+// remonter reconstruit le serveur d'API avec d'autres ports et rebranche le
+// serveur HTTP du harnais dessus.
+//
+// Le harnais assemble les mêmes adaptateurs que le binaire ; certains tests ont
+// besoin d'en ajouter un — le client du rôle `git` — après coup.
+func (h *harness) remonter(t *testing.T, deps api.Deps) {
+	t.Helper()
+
+	server, err := api.New(h.cfg, deps)
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /runs/{run_ref}/stream", server.HandleStream)
+	mux.HandleFunc("GET /runs", server.HandleListRuns)
+	mux.HandleFunc("GET /runs/{run_ref}/diff", server.HandleGetRunDiff)
+	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
+
+	h.httpSrv.Config.Handler = server.AuthnMiddleware(mux)
+	h.server = server
 }
 
 // setup creates a test harness with database.
@@ -102,6 +135,7 @@ func setup(t *testing.T) *harness {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /runs/{run_ref}/stream", server.HandleStream)
 	mux.HandleFunc("GET /runs", server.HandleListRuns)
+	mux.HandleFunc("GET /runs/{run_ref}/diff", server.HandleGetRunDiff)
 	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
 	httpSrv := httptest.NewServer(server.AuthnMiddleware(mux))
 	t.Cleanup(httpSrv.Close)
@@ -131,7 +165,9 @@ func setup(t *testing.T) *harness {
 		ingest:      in,
 		flux:        f,
 		httpSrv:     httpSrv,
+		diffs:       dr,
 		userID:      user.ID,
+		cfg:         cfg,
 		userSubject: "test",
 		dsn:         dsn,
 	}
