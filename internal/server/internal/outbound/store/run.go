@@ -211,3 +211,51 @@ SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
 	}
 	return r, nil
 }
+
+// PreviousRun rend le run qui précède celui-ci sur (dépôt, environnement,
+// inventaire) — le « qu'est-ce qui a changé depuis que ça marchait » du §6.5.
+//
+// La position du run courant est relue dans la même instruction plutôt que
+// passée en argument : `core.Run` ne porte pas `started_at`, et l'y ajouter pour
+// cette seule requête élargirait un type du domaine au bénéfice d'un adaptateur.
+// Le surcoût est une recherche sur la clé primaire, dans la même requête.
+//
+// Le départage se fait sur (started_at, id) DESC, comme la pagination keyset de
+// ListRuns : deux runs peuvent partager l'horodatage à la microseconde près.
+//
+// Aucun filtre sur l'état, et les runs purgés ne sont pas sautés. « Le run
+// précédent » est le run précédent : en écarter un répondrait en silence à une
+// autre question, ce qu'un outil d'audit ne doit pas faire. Un artefact absent
+// se signale, il ne se contourne pas.
+func (s *Store) PreviousRun(ctx context.Context, run Run) (Run, error) {
+	const q = `
+WITH courant AS (
+    SELECT repo, environment, inventory, started_at, id FROM run WHERE id = $1
+)
+SELECT r.id, r.run_ref, r.user_id, r.run_day, r.repo, r.environment, r.inventory,
+       r.playbook, r.audit_sha, r.base_sha, r.mainline_ref, r.mainline_sha,
+       r.state, coalesce(r.termination_cause, ''), r.changed_count,
+       r.secrets_unmasked, r.artifact_pruned_at
+  FROM run r, courant c
+ WHERE r.repo = c.repo
+   AND r.environment = c.environment
+   AND r.inventory = c.inventory
+   AND (r.started_at, r.id) < (c.started_at, c.id)
+ ORDER BY r.started_at DESC, r.id DESC
+ LIMIT 1`
+
+	var p Run
+	err := s.pool.QueryRow(ctx, q, run.ID).Scan(
+		&p.ID, &p.RunRef, &p.UserID, &p.RunDay, &p.Repo, &p.Environment, &p.Inventory,
+		&p.Playbook, &p.AuditSHA, &p.BaseSHA, &p.MainlineRef, &p.MainlineSHA,
+		&p.State, &p.TerminationCause, &p.ChangedCount, &p.SecretsUnmasked,
+		&p.ArtifactPrunedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, fmt.Errorf("run précédant %s: %w", run.RunRef, ErrNotFound)
+	}
+	if err != nil {
+		return Run{}, fmt.Errorf("lecture du run précédant %s: %w", run.RunRef, err)
+	}
+	return p, nil
+}

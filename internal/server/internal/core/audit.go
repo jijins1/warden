@@ -12,6 +12,14 @@ import (
 // importer l'adaptateur qui l'a produite.
 var ErrNotFound = errors.New("introuvable")
 
+// ErrArtifactGone : l'entité existe, son code non.
+//
+// Distincte d'ErrNotFound parce que la réponse diffère — 410 contre 404 — et
+// parce que l'ADR-0013 fait de « code purgé » un cas de premier ordre de
+// l'interface d'audit, à traiter dès maintenant et non le jour de la première
+// purge. Un run dont l'artefact a disparu a bel et bien existé.
+var ErrArtifactGone = errors.New("artefact git indisponible")
+
 // Identity est ce qu'un fournisseur d'identité affirme d'un utilisateur qui
 // arrive.
 type Identity struct {

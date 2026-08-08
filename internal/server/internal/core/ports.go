@@ -30,6 +30,22 @@ type RunReader interface {
 
 	// RunsByHost rend les runs ayant touché un hôte, borné côté adaptateur.
 	RunsByHost(ctx context.Context, host string, since, until time.Time) ([]RunListItem, error)
+
+	// PreviousRun rend le run qui précède celui-ci sur le même TRIPLET
+	// (dépôt, environnement, inventaire) — le « qu'est-ce qui a changé depuis
+	// que ça marchait » du §6.5.
+	//
+	// Le dépôt fait partie de la clé, et pas seulement pour l'index : deux runs
+	// d'inventaires homonymes dans des dépôts différents n'ont aucun ancêtre
+	// commun, et les differ ne donnerait pas un mauvais résultat mais un échec.
+	//
+	// Erreur enveloppant ErrNotFound quand ce run est le premier.
+	//
+	// L'appelant DOIT vérifier la visibilité du run rendu. Le run précédent
+	// appartient souvent à quelqu'un d'autre, et son arbre est son code : le
+	// servir sans contrôle divulguerait la source d'un tiers à qui n'a pas le
+	// droit de voir ce run.
+	PreviousRun(ctx context.Context, run Run) (Run, error)
 }
 
 // UserDirectory résout une identité déjà provisionnée.
@@ -73,9 +89,23 @@ type EventFollower interface {
 // filesystem git (ADR-0006), il interroge le rôle `git` par `outbound/gitclient`.
 // Une implémentation qui lirait un dépôt local trahirait cette frontière.
 type RepoDiffer interface {
-	// DiffMainline compare l'état de la branche de référence à l'état audité.
+	// DiffMainline compare la branche de référence au commit audité :
+	// mainline_sha -> audit_sha.
+	//
+	// Le SHA de la branche est celui FIGÉ dans le run, pas la position de la
+	// branche aujourd'hui : sans quoi le diff d'un run de mars changerait à
+	// chaque consultation (ADR-0021).
 	DiffMainline(ctx context.Context, run Run) (string, error)
 
-	// DiffPrevious compare l'état de base du run à l'état audité.
-	DiffPrevious(ctx context.Context, run Run) (string, error)
+	// DiffPrevious compare le commit audité du run PRÉCÉDENT à celui de ce run :
+	// precedent.AuditSHA -> run.AuditSHA.
+	//
+	// Et NON base_sha -> audit_sha, qui répondait à une autre question — « qu'a
+	// modifié l'utilisateur en local », déjà couverte par DiffMainline. Le §6.5
+	// demande « qu'est-ce qui a changé depuis que ça marchait », et l'ADR-0004
+	// nomme cette comparaison la justification même du choix de git.
+	//
+	// Le run précédent est résolu et autorisé par l'appelant : le rôle `git` ne
+	// connaît pas le modèle de run, et la politique d'accès ne vit pas chez lui.
+	DiffPrevious(ctx context.Context, run, precedent Run) (string, error)
 }
