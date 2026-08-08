@@ -110,6 +110,7 @@ func TestListRunsIsScopedToCaller(t *testing.T) {
 	if _, err := h.store.CreateRun(ctx, store.NewRun{
 		RunRef:      "01JZQ0000000000000000002ND",
 		UserID:      other.ID,
+		Repo:        "warden",
 		Environment: "prod",
 		Inventory:   "inv/prod",
 		Playbook:    "deploy.yml",
@@ -155,6 +156,7 @@ func TestStreamDeniesOtherUsersRun(t *testing.T) {
 	if _, err := h.store.CreateRun(ctx, store.NewRun{
 		RunRef:      otherRef,
 		UserID:      other.ID,
+		Repo:        "warden",
 		Environment: "prod",
 		Inventory:   "inv/prod",
 		Playbook:    "deploy.yml",

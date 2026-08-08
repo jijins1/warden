@@ -105,6 +105,13 @@ linters:
               desc: "ADR-0019 : un adaptateur sortant n'importe que le cœur, pour ses types de domaine. Deux adaptateurs qui se parlent recréent le couplage que la décomposition supprime — y compris store et flux, séparés exprès (ADR-0008)."
           allow:
             - github.com/jijins1/warden/internal/server/internal/core
+            # `gitwire` est le contrat de l'arête api → git, la seule autorisée
+            # entre deux rôles (ADR-0006). Le partager plutôt que le dupliquer
+            # est une décision de l'ADR-0024 : deux définitions jumelles du même
+            # message dérivent en silence, et la dérive ne se voit qu'en
+            # production. Le paquet ne contient que des types, et sa propre
+            # règle `serveur-contrat-git` l'y tient.
+            - github.com/jijins1/warden/internal/server/internal/gitwire
 
         # `gitd` n'est pas un adaptateur : c'est un service distinct, qui sert le
         # protocole git aux runners sans passer par le cœur, et que le cœur
@@ -118,6 +125,24 @@ linters:
               desc: "ADR-0006 : arêtes de `gitd` limitées à outbound/store (et au socle internal/git, hors de ce périmètre). Il n'importe pas le cœur : la quarantaine, l'ancestry et la promotion sont SES règles, pas celles du run."
           allow:
             - github.com/jijins1/warden/internal/server/internal/outbound/store
+            # Voir la même entrée dans `serveur-sortants` : c'est le contrat de
+            # l'arête, servi ici et appelé là-bas.
+            - github.com/jijins1/warden/internal/server/internal/gitwire
+
+        # `gitwire` est partagé par deux paquets à qui l'ADR-0019 interdit de se
+        # voir. Ce privilège n'est tenable que s'il reste ce qu'il prétend être :
+        # des types et leur encodage. Sans cette règle, les deux `allow`
+        # ci-dessus ouvriraient un chemin de contournement entre `gitd` et
+        # `outbound/gitclient` — il suffirait d'y déposer du code.
+        serveur-contrat-git:
+          list-mode: lax
+          files:
+            - "**/internal/server/internal/gitwire/**"
+          deny:
+            - pkg: github.com/jijins1/warden/internal
+              desc: "ADR-0024 : contrat de fil, et rien d'autre. Un import du produit ici ferait de la forme du message une dépendance du métier, exactement ce que le partage de ce paquet doit éviter."
+            - pkg: net/http
+              desc: "ADR-0024 : le contrat déclare les codes, pas le transport. Un client ou un serveur qui apparaît ici est un adaptateur déguisé — c'est d'ailleurs pourquoi Code.HTTPStatus rend un entier littéral."
 
         # ------------------------------------------------------------------
         # Domaine hostile (ADR-0011).

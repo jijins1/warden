@@ -70,7 +70,7 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, 
 
 	// Build query
 	query := `
-		SELECT id, run_ref, user_id, environment, inventory, playbook,
+		SELECT id, run_ref, user_id, repo, environment, inventory, playbook,
 		       state, started_at, ended_at, changed_count, secrets_unmasked
 		FROM run
 		WHERE 1=1
@@ -138,7 +138,7 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, 
 	var items []RunListItem
 	for rows.Next() {
 		var item RunListItem
-		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Environment, &item.Inventory,
+		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Repo, &item.Environment, &item.Inventory,
 			&item.Playbook, &item.State, &item.StartedAt, &item.EndedAt, &item.ChangedCount, &item.SecretsUnmasked); err != nil {
 			return RunListResult{}, fmt.Errorf("scanning run: %w", err)
 		}
@@ -176,7 +176,7 @@ func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.T
 	}
 
 	query := `
-		SELECT DISTINCT r.id, r.run_ref, r.user_id, r.environment, r.inventory,
+		SELECT DISTINCT r.id, r.run_ref, r.user_id, r.repo, r.environment, r.inventory,
 		       r.playbook, r.state, r.started_at, r.ended_at, r.changed_count, r.secrets_unmasked
 		FROM event e
 		JOIN run r ON e.run_id = r.id
@@ -208,7 +208,7 @@ func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.T
 	var items []RunListItem
 	for rows.Next() {
 		var item RunListItem
-		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Environment, &item.Inventory,
+		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Repo, &item.Environment, &item.Inventory,
 			&item.Playbook, &item.State, &item.StartedAt, &item.EndedAt, &item.ChangedCount, &item.SecretsUnmasked); err != nil {
 			return nil, fmt.Errorf("scanning run: %w", err)
 		}

@@ -91,6 +91,7 @@ func setup(t *testing.T) *harnais {
 	}
 	h.runID, err = h.store.CreateRun(ctx, store.NewRun{
 		RunRef: testULID, UserID: u.ID,
+		Repo:        "warden",
 		Environment: "staging", Inventory: "inv/staging", Playbook: "site.yml",
 		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

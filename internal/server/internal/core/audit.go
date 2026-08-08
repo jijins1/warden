@@ -51,6 +51,10 @@ type Run struct {
 	// RunDay est la clé de partition des events et des diffs du run.
 	RunDay time.Time
 
+	// Repo est le dépôt d'où vient le run. Le rôle `git` en déduit le bare repo
+	// à ouvrir pour les diffs du §6.5 (ADR-0006).
+	Repo string
+
 	Environment string
 	Inventory   string
 	Playbook    string
@@ -65,7 +69,17 @@ type Run struct {
 
 	ChangedCount    int
 	SecretsUnmasked bool
+
+	// ArtifactPrunedAt est non nul quand le code du run a été purgé (ADR-0013).
+	// L'interface d'audit doit traiter ce cas en première classe plutôt que de
+	// renvoyer un 404 le jour de la première purge : le run a bien existé, c'est
+	// son arbre git qui n'est plus là.
+	ArtifactPrunedAt *time.Time
 }
+
+// ArtifactPruned dit si le code du run a été purgé et si ses diffs git sont donc
+// devenus incalculables.
+func (r Run) ArtifactPruned() bool { return r.ArtifactPrunedAt != nil }
 
 // RunFilter décrit une interrogation de la liste des runs.
 // La pagination est par keyset : la table ne se purge jamais (ADR-0013), et un
@@ -92,6 +106,7 @@ type RunListItem struct {
 	ID              int64
 	RunRef          string
 	UserID          int64
+	Repo            string
 	Environment     string
 	Inventory       string
 	Playbook        string

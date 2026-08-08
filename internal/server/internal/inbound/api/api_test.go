@@ -144,6 +144,7 @@ func (h *harness) createRun(t *testing.T, ctx context.Context) string {
 	_, err := h.store.CreateRun(ctx, store.NewRun{
 		RunRef:      runRef,
 		UserID:      h.userID,
+		Repo:        "warden",
 		Environment: "test",
 		Inventory:   "inv/test",
 		Playbook:    "test.yml",

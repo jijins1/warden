@@ -38,6 +38,7 @@ func seedRunFor(t *testing.T, s *store.Store, userID int64, ref string) int64 {
 	t.Helper()
 	id, err := s.CreateRun(context.Background(), store.NewRun{
 		RunRef: ref, UserID: userID,
+		Repo:        "warden",
 		Environment: "staging", Inventory: "inv/staging", Playbook: "site.yml",
 		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

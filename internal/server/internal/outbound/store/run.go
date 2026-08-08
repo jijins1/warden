@@ -22,6 +22,11 @@ type NewRun struct {
 	RunRef string
 	UserID int64
 
+	// Repo est le dépôt d'où vient le run. Le rôle `git` en déduit le bare repo
+	// à ouvrir : l'ADR-0006 veut tous les runs d'un dépôt dans le même, et les
+	// diffs du §6.5 en dépendent.
+	Repo string
+
 	Environment string
 	Inventory   string
 	Playbook    string
@@ -58,22 +63,29 @@ type NewRun struct {
 // seule source, et c'est elle qui déterminera la partition de tous les events
 // du run.
 func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
+	// Contrepartie du DROP DEFAULT de la migration 00004 : un run sans dépôt
+	// s'insérerait sans bruit et son artefact deviendrait introuvable des mois
+	// plus tard, au moment précis où quelqu'un en a besoin. L'échec est ici.
+	if n.Repo == "" {
+		return 0, errors.New("run créé sans dépôt : ses diffs d'audit seraient incalculables (§6.5)")
+	}
+
 	flags := n.Flags
 	if len(flags) == 0 {
 		flags = json.RawMessage(`{}`)
 	}
 
 	const q = `
-INSERT INTO run (run_ref, user_id, environment, inventory, playbook,
+INSERT INTO run (run_ref, user_id, repo, environment, inventory, playbook,
                  audit_sha, base_sha, mainline_ref, mainline_sha, flags,
                  runner_image, runner_image_digest, state, termination_cause)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        NULLIF($11, ''), NULLIF($12, ''), $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+        NULLIF($12, ''), NULLIF($13, ''), $14, $15)
 RETURNING id`
 
 	var id int64
 	err := s.pool.QueryRow(ctx, q,
-		n.RunRef, n.UserID, n.Environment, n.Inventory, n.Playbook,
+		n.RunRef, n.UserID, n.Repo, n.Environment, n.Inventory, n.Playbook,
 		n.AuditSHA, n.BaseSHA, n.MainlineRef, n.MainlineSHA, flags,
 		n.RunnerImage, n.RunnerImageDigest,
 		string(core.RunInterrupted), string(core.CauseUnknown),
@@ -177,17 +189,19 @@ type Run = core.Run
 // RunByRef lit un run par son identifiant public.
 func (s *Store) RunByRef(ctx context.Context, runRef string) (Run, error) {
 	const q = `
-SELECT id, run_ref, user_id, run_day, environment, inventory, playbook,
+SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
        audit_sha, base_sha, mainline_ref, mainline_sha,
-       state, coalesce(termination_cause, ''), changed_count, secrets_unmasked
+       state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
+       artifact_pruned_at
   FROM run
  WHERE run_ref = $1`
 
 	var r Run
 	err := s.pool.QueryRow(ctx, q, runRef).Scan(
-		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Environment, &r.Inventory, &r.Playbook,
+		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
+		&r.ArtifactPrunedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, ErrNotFound)

@@ -41,6 +41,7 @@ func mustCreateRun(t *testing.T, ctx context.Context, s *store.Store, ref string
 	id, err := s.CreateRun(ctx, store.NewRun{
 		RunRef:      ref,
 		UserID:      userID,
+		Repo:        "warden",
 		Environment: env,
 		Inventory:   inventory,
 		Playbook:    playbook,
