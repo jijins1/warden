@@ -143,6 +143,13 @@ linters:
               desc: "ADR-0024 : contrat de fil, et rien d'autre. Un import du produit ici ferait de la forme du message une dépendance du métier, exactement ce que le partage de ce paquet doit éviter."
             - pkg: net/http
               desc: "ADR-0024 : le contrat déclare les codes, pas le transport. Un client ou un serveur qui apparaît ici est un adaptateur déguisé — c'est d'ailleurs pourquoi Code.HTTPStatus rend un entier littéral."
+          allow:
+            # `gitwire` lui-même, pour le seul cas où ce chemin est atteignable :
+            # le paquet de test externe `gitwire_test`, qui doit importer ce
+            # qu'il teste. Même forme que l'entrée équivalente de `coeur`, et
+            # pour la même raison : le refus ci-dessus doit rester actif DANS les
+            # tests, sinon un test suffirait à faire entrer le produit ici.
+            - github.com/jijins1/warden/internal/server/internal/gitwire
 
         # ------------------------------------------------------------------
         # Domaine hostile (ADR-0011).
