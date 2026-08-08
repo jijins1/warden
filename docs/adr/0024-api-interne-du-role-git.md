@@ -63,26 +63,45 @@ code le jour où le smart HTTP arrivera.
 
 ### Authentification
 
-**Retenu — jeton porteur partagé**, lu par les deux rôles dans
-`WARDEN_GIT_INTERNAL_TOKEN`, présenté en `Authorization: Bearer`.
+**Retenu — une défense à trois couches, dont le jeton porteur est la plus
+interne.** Ce n'est pas le jeton seul qui ferme l'arête, et c'est la combinaison
+qui justifie de s'en contenter :
 
-La comparaison porte sur les **empreintes SHA-256** et non sur les octets : à
-longueur fixe, sa durée ne dépend ni de la valeur présentée ni de sa taille.
-L'ADR-0023 pose déjà qu'aucun secret ne se compare octet à octet.
+| Couche | Ce qu'elle arrête | État |
+|---|---|---|
+| Port distinct pour l'API interne | tout ce qui ne connaît pas ce port | fait |
+| NetworkPolicy sur ce port | tout ce qui n'est pas le pod `api` | **à venir** (déploiement) |
+| Jeton porteur partagé | tout ce qui ne connaît pas le secret | fait |
+
+Le jeton est lu par les deux rôles dans `WARDEN_GIT_INTERNAL_TOKEN` et présenté
+en `Authorization: Bearer`. La comparaison porte sur les **empreintes SHA-256**
+et non sur les octets : à longueur fixe, sa durée ne dépend ni de la valeur
+présentée ni de sa taille. L'ADR-0023 pose déjà qu'aucun secret ne se compare
+octet à octet.
 
 Le refus est nu : 401, corps vide, pas de `WWW-Authenticate`, aucune distinction
 entre jeton absent et jeton faux. Chacune de ces différences est une information
 offerte à qui sonde.
 
-**Écarté pour l'instant — mTLS.** C'est la cible, et il faut le dire clairement :
-le jeton retenu **n'est pas une identité**. Il n'a ni expiration, ni audience, ni
-porteur nommé, et sa rotation est un redéploiement des deux rôles. Il ferme
-l'arête, il ne l'authentifie pas finement. Aucune PKI n'existe dans le projet et
-en introduire une déborde de cette tranche.
+Il faut être précis sur ce que ce jeton est : **il n'est pas une identité**. Il
+n'a ni expiration, ni audience, ni porteur nommé, et sa rotation est un
+redéploiement des deux rôles. Il prouve que l'appelant connaît le secret, pas
+qu'il est le rôle `api`. C'est exactement pourquoi les deux autres couches ne
+sont pas facultatives — et pourquoi elles suffisent : les trois ensemble ferment
+une arête interne au control plane, où aucun acteur hostile n'est censé se
+trouver.
 
-**Écarté — NetworkPolicy seule.** Le `doc.go` de `gitd` et l'ADR-0007 exigent que
-l'autorisation soit couverte par un test négatif. Sans credential applicatif, ce
-test n'est pas écrivable à l'étage 1.
+**Écarté — mTLS.** Un certificat de service porterait une identité vérifiable,
+expirerait et se renouvellerait sans redéploiement coordonné. Il n'est pas retenu
+parce qu'aucune PKI n'existe dans le projet et que l'arête, une fois isolée par
+le port et la NetworkPolicy, n'a pas besoin d'une identité fine. L'option reste
+en mémoire, à reconsidérer si cette arête grossit — plusieurs appelants,
+plusieurs niveaux de privilège — ou si le contexte de déploiement change.
+
+**Écarté — NetworkPolicy seule, sans jeton.** Le `doc.go` de `gitd` et l'ADR-0007
+exigent que l'autorisation soit couverte par un test négatif. Sans credential
+applicatif, ce test n'est pas écrivable à l'étage 1, et la frontière ne
+reposerait plus que sur une configuration qui ne vit pas dans ce dépôt.
 
 ### Emplacement des types du contrat
 
@@ -133,7 +152,7 @@ index, puis un appel HTTP. Négligeable.
 |---|---|
 | Transport | HTTP. `POST /internal/v1/diff`, requête JSON, réponse `text/plain` brute. |
 | Surface | Port distinct du smart HTTP. |
-| Authentification | Jeton porteur partagé par variable d'environnement, comparé sur empreintes, refus nu. |
+| Authentification | Trois couches : port distinct, NetworkPolicy sur ce port, jeton porteur partagé comparé sur empreintes avec refus nu. |
 | Contrat | `internal/server/internal/gitwire`, partagé, gardé par sa propre règle depguard. |
 | Modèle de run | Inconnu de `gitd`. Le rôle `api` résout et autorise, puis transmet deux SHA. |
 | Taille des réponses | Bornée à 8 Mio, troncature **signalée** par un en-tête. |
@@ -158,9 +177,16 @@ en consulter en masse, il faudra basculer en flux, ce qui suppose de changer le
 port `core.RepoDiffer` — il rend une chaîne aujourd'hui. C'est la prochaine étape
 connue, pas une surprise à venir.
 
-Le jeton statique est une dette nommée, au même titre que l'était l'identité
-d'amorçage avant l'ADR-0023. Tant qu'il n'est pas remplacé, l'arête `api → git`
-n'a pas d'identité, seulement une serrure.
+**Tant que la NetworkPolicy n'existe pas, le jeton n'est pas la seconde ligne :
+c'est la seule.** Ce n'est pas une réserve de principe, c'est vérifiable — aucun
+manifeste Kubernetes ne vit dans ce dépôt à ce jour, et l'ADR-0007 prévoit que
+les pods runner joignent le rôle `git` au niveau réseau. Rien n'empêcherait donc
+un runner de frapper le port de l'API interne, sinon le secret.
+
+Le travail de déploiement doit fermer ce port à tout ce qui n'est pas le pod
+`api`. C'est la condition qui rend la décision ci-dessus vraie ; les deux
+adresses distinctes existent précisément pour qu'elle s'écrive sans changement de
+code.
 
 L'ADR-0006 rangeait le versionnage d'une API interne parmi les coûts qu'il
 cherchait à éviter. Le préfixe `/internal/v1/` l'assume : c'est le premier, et il

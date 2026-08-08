@@ -10,9 +10,14 @@ import (
 // authentificateur porte l'empreinte du jeton attendu sur l'API interne.
 //
 // Le jeton est partagé et statique : le rôle `api` et le rôle `git` le lisent
-// dans la même variable d'environnement. C'est le strict nécessaire pour que
-// l'arête ne soit pas ouverte, pas une identité — il n'a ni expiration, ni
-// audience, ni porteur nommé. L'ADR-0024 le dit et désigne mTLS comme la cible.
+// dans la même variable d'environnement. Il prouve que l'appelant connaît le
+// secret, pas qu'il est le rôle `api` — il n'a ni expiration, ni audience, ni
+// porteur nommé.
+//
+// C'est assumé : l'ADR-0024 ferme cette arête en trois couches, dont celle-ci est
+// la plus interne. Le port distinct et la NetworkPolicy qui le restreint au pod
+// `api` portent l'essentiel ; ce jeton est ce qui reste quand les deux premières
+// tombent, et ce qui rend le refus testable à l'étage 1.
 type authentificateur struct{ empreinte [32]byte }
 
 func nouvelAuth(jeton string) authentificateur {
