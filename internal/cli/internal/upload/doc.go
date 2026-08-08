@@ -1,11 +1,15 @@
-// Package upload implements audit capture and push to the warden server.
+// Package upload builds the audit commit and sends it to the warden server.
 //
-// The flow is:
-// 1. scope: determine which files to include (tracked + untracked-not-ignored)
-// 2. capture: tree the chosen files without touching the user's worktree
-// 3. push: upload to refs/audit/<user>/<run_ref> and measure cost
+// The sequence is the one of §5.2, and it runs entirely before the server is
+// told anything about the run:
 //
-// Per ADR-0005, capture uses git's native read-only object alternates mechanism
-// to avoid writing any objects to the user's repository.
-// Per ADR-0003, pre-push cost is measured before uploading unbounded history.
+//	scope    which files the audit contains (§5.3)
+//	capture  a tree and a commit, chained on the base commit (ADR-0003)
+//	push     refs/audit/<user>/<run_ref>, after measuring what it will cost
+//
+// The property the whole package is arranged around is negative: the user's
+// repository is never written to. Not their HEAD, not their index, not even a
+// loose object in their object store. ADR-0005 obtains this with redirections
+// rather than with copies — see git.Capture — and CaptureAudit verifies it on
+// every run instead of trusting that the redirections still hold.
 package upload
