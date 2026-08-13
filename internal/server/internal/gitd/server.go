@@ -26,15 +26,28 @@ type Config struct {
 	// Jeton est partagé avec le rôle `api`.
 	Jeton string
 
+	// SmartAddr est l'adresse du SMART HTTP servi aux pods runner (ADR-0007).
+	//
+	// Vide, le smart HTTP n'est pas servi et le service se réduit à l'API
+	// interne de diff — un déploiement qui ne sert que l'audit reste valide.
+	SmartAddr string
+
+	// Authorizer resolves a runner's token into the scope it opens. Required as
+	// soon as SmartAddr is set: without it the transport would serve the
+	// repository to whoever asks.
+	Authorizer Authorizer
+
 	GracefulShutdown time.Duration
 }
 
 // Server sert l'API interne du rôle `git`.
 type Server struct {
-	cfg    Config
-	depots depots
-	auth   authentificateur
-	srv    *http.Server
+	cfg      Config
+	depots   depots
+	auth     authentificateur
+	srv      *http.Server
+	smart    *smartHTTP
+	smartSrv *http.Server
 }
 
 // New construit le service et échoue à froid plutôt qu'à la première requête.
@@ -48,6 +61,14 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Racine == "" {
 		return nil, errors.New("racine des dépôts absente")
+	}
+
+	// A listening address with no authorization port would serve the runners'
+	// transport to whoever reaches it. Refusing at startup keeps that from being
+	// a configuration mistake nobody notices until a run reads someone else's
+	// code.
+	if cfg.SmartAddr != "" && cfg.Authorizer == nil {
+		return nil, errors.New("adresse smart HTTP fournie sans port d'autorisation : la surface serait ouverte")
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = ":8081"
@@ -75,7 +96,38 @@ func New(cfg Config) (*Server, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler:           s.Handler(),
 	}
+
+	if cfg.Authorizer != nil {
+		smart, err := newSmartHTTP(cfg.Racine, cfg.Authorizer, nil)
+		if err != nil {
+			return nil, err
+		}
+		s.smart = smart
+		s.smartSrv = &http.Server{
+			Addr:              cfg.SmartAddr,
+			ReadHeaderTimeout: 10 * time.Second,
+			Handler:           smart,
+			// Pas de WriteTimeout, délibérément. Un `upload-pack` diffuse un pack
+			// dont la durée dépend de la taille du dépôt et du débit du pod ; un
+			// délai d'écriture couperait les gros transferts au milieu, et le
+			// symptôme — un fetch qui échoue passé une certaine taille — se
+			// diagnostique très mal. Le corps entrant, lui, est borné.
+		}
+	}
+
 	return s, nil
+}
+
+// SmartHandler rend le routeur du smart HTTP, ou nil s'il n'est pas servi.
+//
+// Exporté pour la même raison que Handler : les tests le montent derrière un
+// httptest.Server sans réserver de port. Un nil est une réponse et non un
+// oubli — il dit que ce déploiement ne sert pas les runners.
+func (s *Server) SmartHandler() http.Handler {
+	if s.smart == nil {
+		return nil
+	}
+	return s.smart
 }
 
 // Handler rend le routeur du service, authentification comprise.
@@ -89,24 +141,70 @@ func (s *Server) Handler() http.Handler {
 }
 
 // Run sert jusqu'à l'annulation du contexte.
+//
+// Les deux surfaces sont servies par le même processus mais sur deux ports :
+// l'API interne, joignable du seul rôle `api`, et le smart HTTP, joignable des
+// pods runner. Le commentaire de `Config.Addr` dit pourquoi la séparation est
+// portée par le PORT et non par le chemin — c'est ce qui rend la NetworkPolicy
+// exprimable.
+//
+// La première erreur gagne et fait tomber l'autre surface. Continuer à servir le
+// smart HTTP alors que l'API interne est morte laisserait des runs démarrer sans
+// que personne puisse consulter leur audit.
 func (s *Server) Run(ctx context.Context) error {
+	ctx, annuler := context.WithCancel(ctx)
+	defer annuler()
+
+	type surface struct {
+		nom string
+		srv *http.Server
+	}
+	surfaces := []surface{{nom: "API interne", srv: s.srv}}
+	if s.smartSrv != nil {
+		surfaces = append(surfaces, surface{nom: "smart HTTP", srv: s.smartSrv})
+	}
+
+	// Les écoutes sont ouvertes AVANT de servir quoi que ce soit : un échec de
+	// bind sur la seconde ne doit pas laisser la première en service, à demi
+	// démarrée et sans que rien ne le signale.
 	var lc net.ListenConfig
-	listener, err := lc.Listen(ctx, "tcp", s.cfg.Addr)
-	if err != nil {
-		return fmt.Errorf("écoute sur %s: %w", s.cfg.Addr, err)
+	listeners := make([]net.Listener, 0, len(surfaces))
+	for _, s2 := range surfaces {
+		listener, err := lc.Listen(ctx, "tcp", s2.srv.Addr)
+		if err != nil {
+			for _, ouvert := range listeners {
+				_ = ouvert.Close()
+			}
+			return fmt.Errorf("écoute de %s sur %s: %w", s2.nom, s2.srv.Addr, err)
+		}
+		listeners = append(listeners, listener)
 	}
 
-	// #nosec G118 -- l'arrêt gracieux part d'un contexte neuf par nécessité :
-	// celui de Run vient d'être annulé, et c'est ce qui déclenche l'arrêt.
-	go func() {
-		<-ctx.Done()
-		arret, annuler := context.WithTimeout(context.Background(), s.cfg.GracefulShutdown)
-		defer annuler()
-		_ = s.srv.Shutdown(arret)
-	}()
+	erreurs := make(chan error, len(surfaces))
+	for i, s2 := range surfaces {
+		go func() {
+			// #nosec G118 -- l'arrêt gracieux part d'un contexte neuf par
+			// nécessité : celui de Run vient d'être annulé, et c'est ce qui
+			// déclenche l'arrêt.
+			go func() {
+				<-ctx.Done()
+				arret, annulerArret := context.WithTimeout(context.Background(), s.cfg.GracefulShutdown)
+				defer annulerArret()
+				_ = s2.srv.Shutdown(arret)
+			}()
 
-	if err := s.srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("service git: %w", err)
+			if err := s2.srv.Serve(listeners[i]); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				erreurs <- fmt.Errorf("service %s: %w", s2.nom, err)
+				return
+			}
+			erreurs <- nil
+		}()
 	}
-	return nil
+
+	premiere := <-erreurs
+	annuler()
+	for range len(surfaces) - 1 {
+		<-erreurs
+	}
+	return premiere
 }

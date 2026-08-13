@@ -45,34 +45,52 @@ type Ref string
 // expression rather than a name.
 const refInterdits = " ~^:?*[\\"
 
+// nameRules applies check-ref-format's rules to a slash-separated name.
+//
+// Shared by Ref and Namespace rather than written twice: a namespace is spliced
+// into refs/namespaces/<ns>/, so git ends up parsing it under exactly these
+// rules. One implementation means a rule tightened for one of the two types
+// cannot silently stay loose for the other.
+//
+// `what` names the type in the message, so a caller reads "invalid namespace"
+// rather than a ref error about a string that is not a ref.
+func nameRules(what, s string) error {
+	if strings.HasSuffix(s, "/") || strings.HasSuffix(s, ".") || strings.HasSuffix(s, ".lock") {
+		return fmt.Errorf("invalid %s %q: bad terminator", what, s)
+	}
+	if strings.Contains(s, "..") || strings.Contains(s, "@{") || strings.Contains(s, "//") {
+		return fmt.Errorf("invalid %s %q: forbidden sequence", what, s)
+	}
+	if strings.ContainsAny(s, refInterdits) {
+		return fmt.Errorf("invalid %s %q: forbidden character", what, s)
+	}
+	for _, c := range s {
+		// Control characters and DEL. A newline in a ref name would split the
+		// line-oriented output of every git command that reports refs.
+		if c < 0x20 || c == 0x7f {
+			return fmt.Errorf("invalid %s %q: control character", what, s)
+		}
+	}
+	// A leading slash surfaces here as an empty first component, which is why
+	// there is no separate check for it.
+	for _, composant := range strings.Split(s, "/") {
+		if composant == "" {
+			return fmt.Errorf("invalid %s %q: empty component", what, s)
+		}
+		if strings.HasPrefix(composant, ".") || strings.HasSuffix(composant, ".lock") {
+			return fmt.Errorf("invalid %s %q: bad component %q", what, s, composant)
+		}
+	}
+	return nil
+}
+
 // NewRef validates and creates a Ref.
 func NewRef(r string) (Ref, error) {
 	if !strings.HasPrefix(r, "refs/") {
 		return "", fmt.Errorf("invalid ref %q: must start with refs/", r)
 	}
-	if strings.HasSuffix(r, "/") || strings.HasSuffix(r, ".") || strings.HasSuffix(r, ".lock") {
-		return "", fmt.Errorf("invalid ref %q: bad terminator", r)
-	}
-	if strings.Contains(r, "..") || strings.Contains(r, "@{") || strings.Contains(r, "//") {
-		return "", fmt.Errorf("invalid ref %q: forbidden sequence", r)
-	}
-	if strings.ContainsAny(r, refInterdits) {
-		return "", fmt.Errorf("invalid ref %q: forbidden character", r)
-	}
-	for _, c := range r {
-		// Control characters and DEL. A newline in a ref name would split the
-		// line-oriented output of every git command that reports refs.
-		if c < 0x20 || c == 0x7f {
-			return "", fmt.Errorf("invalid ref %q: control character", r)
-		}
-	}
-	for _, composant := range strings.Split(r, "/") {
-		if composant == "" {
-			return "", fmt.Errorf("invalid ref %q: empty component", r)
-		}
-		if strings.HasPrefix(composant, ".") || strings.HasSuffix(composant, ".lock") {
-			return "", fmt.Errorf("invalid ref %q: bad component %q", r, composant)
-		}
+	if err := nameRules("ref", r); err != nil {
+		return "", err
 	}
 	return Ref(r), nil
 }
@@ -86,10 +104,21 @@ func (r Ref) String() string {
 // Used to isolate object spaces per ADR-0007.
 type Namespace string
 
-// NewNamespace creates a Namespace.
+// NewNamespace validates and creates a Namespace.
+//
+// The validation carries weight this type did not use to have. ADR-0007 rests
+// the isolation of a run on GIT_NAMESPACE, and says why in the terms that
+// matter: the restriction must hold "à l'extérieur de la négociation", without
+// depending on the client's discipline. That guarantee is only as good as the
+// path this value composes — refs/namespaces/<ns>/. A namespace carrying `..`
+// would resolve inside a different run's space, and one carrying a newline would
+// break every command that reports refs a line at a time.
 func NewNamespace(ns string) (Namespace, error) {
 	if ns == "" {
 		return "", fmt.Errorf("namespace cannot be empty")
+	}
+	if err := nameRules("namespace", ns); err != nil {
+		return "", err
 	}
 	return Namespace(ns), nil
 }

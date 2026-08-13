@@ -129,6 +129,61 @@ func TestNewNamespace(t *testing.T) {
 			input:   "",
 			wantErr: true,
 		},
+
+		// What follows is not tidiness. A Namespace composes
+		// refs/namespaces/<ns>/, and ADR-0007 rests the whole isolation of a run
+		// on that path being exactly the one the server intended. Each case below
+		// is a way of stepping outside it.
+		{
+			name:    "parent traversal escapes into another run's namespace",
+			input:   "runs/../runs/01JZQ00000000000000000ABCD",
+			wantErr: true,
+		},
+		{
+			name:    "bare parent component",
+			input:   "..",
+			wantErr: true,
+		},
+		{
+			name:    "leading slash makes the composed path absolute",
+			input:   "/runs/01JZQ00000000000000000ABCD",
+			wantErr: true,
+		},
+		{
+			name:    "trailing slash yields an empty component",
+			input:   "runs/",
+			wantErr: true,
+		},
+		{
+			name:    "empty inner component",
+			input:   "runs//01JZQ00000000000000000ABCD",
+			wantErr: true,
+		},
+		{
+			name:    "newline splits the line-oriented output of every ref command",
+			input:   "runs/a\nruns/b",
+			wantErr: true,
+		},
+		{
+			name:    "space is refused by check-ref-format",
+			input:   "runs/a b",
+			wantErr: true,
+		},
+		{
+			name:    "revision syntax would be read as an expression",
+			input:   "runs/a^b",
+			wantErr: true,
+		},
+		{
+			name:    "component starting with a dot",
+			input:   "runs/.git",
+			wantErr: true,
+		},
+		{
+			name:    "lock suffix collides with git's own lock files",
+			input:   "runs/a.lock",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
