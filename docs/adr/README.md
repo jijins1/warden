@@ -19,7 +19,7 @@ d'implémentation prises en cours de route.
 | [0004](0004-maintenance-des-depots-par-le-binaire-git.md) | Maintenance des dépôts serveur par le binaire git | Accepted (amendé par 0005) |
 | [0005](0005-binaire-git-comme-moteur-unique.md) | Le binaire git comme moteur unique | Accepted |
 | [0006](0006-un-binaire-trois-roles.md) | Un binaire, trois rôles déployés séparément | Accepted |
-| [0007](0007-acces-du-runner-au-code.md) | Accès du runner au code par fetch scopé à un SHA | Accepted |
+| [0007](0007-acces-du-runner-au-code.md) | Accès du runner au code par fetch scopé à un SHA | Accepted (amendée le 2026-08-13) |
 | [0008](0008-postgresql-comme-journal-et-transport-devents.md) | PostgreSQL comme journal et comme transport des events | Accepted |
 | [0009](0009-configuration-resolue-depuis-le-commit.md) | La configuration effective est résolue depuis le commit | Accepted |
 | [0010](0010-strategie-de-test-en-trois-etages.md) | Stratégie de test en trois étages, sans cluster jetable | Accepted |
@@ -38,6 +38,7 @@ d'implémentation prises en cours de route.
 | [0023](0023-identite-damorcage-du-pod-runner.md) | Identité d'amorçage du pod runner : jeton porteur émis par le contrôleur | Accepted |
 | [0024](0024-api-interne-du-role-git.md) | API interne du rôle `git` : HTTP sur port distinct, jeton porteur partagé | Accepted |
 | [0025](0025-perimetre-de-la-capture-daudit.md) | Périmètre de la capture d'audit : l'arbre dit ce qui va tourner | Accepted |
+| [0026](0026-isolation-de-lecture-du-role-git.md) | L'isolation de lecture du rôle `git` est une conjonction, pas un espace de noms | Accepted |
 
 ## Convention
 

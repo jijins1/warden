@@ -1,7 +1,24 @@
 # ADR-0007 — Accès du runner au code par fetch scopé à un SHA
 
 **Date** : 2026-08-04
-**Statut** : Accepted
+**Statut** : Accepted (amendée le 2026-08-13 par
+[l'ADR-0026](0026-isolation-de-lecture-du-role-git.md))
+
+> **Amendement.** Deux énoncés de cette ADR sont faux tels qu'écrits, et le
+> vérifier demande d'exécuter le protocole — les deux échouent en silence.
+>
+> 1. Le chemin `refs/namespaces/runs/<run-id>/refs/heads/run` n'est pas celui que
+>    `GIT_NAMESPACE=runs/<run-id>` désigne : git imbrique chaque composant.
+> 2. « Un runner qui demande autre chose ne reçoit rien » n'est vrai que si le
+>    protocole est épinglé en v0 et `receive-pack` refusé. Sous le protocole v2,
+>    un `want` sur un SHA non annoncé est servi malgré l'espace de noms, et
+>    `gitnamespaces(7)` énonce que les espaces de noms « are not effective for
+>    read access control ».
+>
+> L'[ADR-0026](0026-isolation-de-lecture-du-role-git.md) corrige le chemin et
+> reformule la propriété comme la conjonction de trois contrôles. La décision de
+> fond — le runner tire son code par `git fetch` vers le rôle `git`, avec une
+> capacité réduite à son seul run — n'est pas remise en cause.
 
 ## Contexte
 
