@@ -175,6 +175,39 @@ SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
 	return r, nil
 }
 
+// RunByID lit un run par son identifiant technique.
+//
+// Distinct de RunByRef, qui prend l'identifiant PUBLIC. Celui-ci n'a qu'un
+// appelant et c'est voulu : le dispatcher, qui tient un `run_id` parce que la
+// table `runner_pod` le porte. Rien de ce qui vient de l'extérieur n'atteint
+// cette fonction — un `id` séquentiel est devinable, et c'est précisément
+// pourquoi le schéma initial insiste sur le fait que le lien pod ↔ run est
+// établi côté serveur et jamais accepté d'une requête.
+func (s *Store) RunByID(ctx context.Context, id int64) (Run, error) {
+	const q = `
+SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
+       audit_sha, base_sha, mainline_ref, mainline_sha,
+       state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
+       artifact_pruned_at
+  FROM run
+ WHERE id = $1`
+
+	var r Run
+	err := s.pool.QueryRow(ctx, q, id).Scan(
+		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
+		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
+		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
+		&r.ArtifactPrunedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, fmt.Errorf("run %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return Run{}, fmt.Errorf("lecture du run %d: %w", id, err)
+	}
+	return r, nil
+}
+
 // PreviousRun rend le run qui précède celui-ci sur (dépôt, environnement,
 // inventaire) — le « qu'est-ce qui a changé depuis que ça marchait » du §6.5.
 //
