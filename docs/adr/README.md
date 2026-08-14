@@ -40,6 +40,7 @@ d'implémentation prises en cours de route.
 | [0025](0025-perimetre-de-la-capture-daudit.md) | Périmètre de la capture d'audit : l'arbre dit ce qui va tourner | Accepted (amendée le 2026-08-14) |
 | [0026](0026-isolation-de-lecture-du-role-git.md) | L'isolation de lecture du rôle `git` est une conjonction, pas un espace de noms | Accepted (amendée le 2026-08-14) |
 | [0027](0027-ecriture-du-role-git.md) | Écriture du rôle `git` : quarantaine native, fraîcheur des objets, ref d'audit écrite une fois | Accepted |
+| [0028](0028-jeton-de-push-auto-porteur.md) | Le jeton de push porte sa propre portée signée ; le serveur écrit le miroir de la principale | Accepted |
 
 ## Convention
 
