@@ -27,18 +27,9 @@ var ErrPodUnknown = errors.New("pod inconnu")
 // démarrage.
 var ErrNoWarmPod = errors.New("aucun pod chaud disponible")
 
-// NewPod décrit un pod chaud au moment où le contrôleur l'enregistre.
-//
-// L'enregistrement précède la création du pod : le Secret qui porte le jeton
-// doit exister avant que le kubelet monte le volume, faute de quoi le pod attend
-// au montage — et l'attente au démarrage est ce que le pré-chauffage supprime
-// (§8.1).
-type NewPod struct {
-	PodName string
-	Pool    core.PodPool
-	// Token n'est pas stocké : seule son empreinte l'est (ADR-0023).
-	Token core.PodToken
-}
+// NewPod vit dans le cœur : enregistrer un pod est une opération du domaine,
+// et son port doit se déclarer sans connaître PostgreSQL (ADR-0019).
+type NewPod = core.NewPod
 
 // RegisterPod enregistre un pod chaud et son identité d'amorçage.
 func (s *Store) RegisterPod(ctx context.Context, n NewPod) (int64, error) {
@@ -49,14 +40,20 @@ func (s *Store) RegisterPod(ctx context.Context, n NewPod) (int64, error) {
 		return 0, errors.New("pod enregistré sans jeton d'amorçage")
 	}
 
+	// `claimed_at` suit `run_id` : les deux vont ensemble ou aucun. Un pod portant
+	// un run sans date d'attribution mentirait au reconciler, qui s'en sert pour
+	// distinguer un pod en attente d'un pod au travail.
 	const q = `
-INSERT INTO runner_pod (pod_name, user_id, repo, environment, token_hash)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO runner_pod (pod_name, user_id, repo, environment, token_hash,
+                        run_id, claimed_at)
+VALUES ($1, $2, $3, $4, $5,
+        NULLIF($6, 0::bigint), CASE WHEN $6 = 0 THEN NULL ELSE now() END)
 RETURNING id`
 
 	var id int64
 	err := s.pool.QueryRow(ctx, q,
 		n.PodName, n.Pool.UserID, n.Pool.Repo, n.Pool.Environment, n.Token.Hash(),
+		n.RunID,
 	).Scan(&id)
 	if err != nil {
 		// Le jeton n'apparaît dans aucun message d'erreur, y compris en cas de
