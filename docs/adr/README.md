@@ -37,8 +37,9 @@ d'implémentation prises en cours de route.
 | [0022](0022-pgx-comme-pilote-postgresql.md) | pgx en accès natif, `database/sql` réservé aux migrations | Accepted |
 | [0023](0023-identite-damorcage-du-pod-runner.md) | Identité d'amorçage du pod runner : jeton porteur émis par le contrôleur | Accepted |
 | [0024](0024-api-interne-du-role-git.md) | API interne du rôle `git` : HTTP sur port distinct, jeton porteur partagé | Accepted |
-| [0025](0025-perimetre-de-la-capture-daudit.md) | Périmètre de la capture d'audit : l'arbre dit ce qui va tourner | Accepted |
-| [0026](0026-isolation-de-lecture-du-role-git.md) | L'isolation de lecture du rôle `git` est une conjonction, pas un espace de noms | Accepted |
+| [0025](0025-perimetre-de-la-capture-daudit.md) | Périmètre de la capture d'audit : l'arbre dit ce qui va tourner | Accepted (amendée le 2026-08-14) |
+| [0026](0026-isolation-de-lecture-du-role-git.md) | L'isolation de lecture du rôle `git` est une conjonction, pas un espace de noms | Accepted (amendée le 2026-08-14) |
+| [0027](0027-ecriture-du-role-git.md) | Écriture du rôle `git` : quarantaine native, fraîcheur des objets, ref d'audit écrite une fois | Accepted |
 
 ## Convention
 

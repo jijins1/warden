@@ -111,6 +111,17 @@ des trois ne suffit seul.** L'ADR-0007 est amendée sur ce point : la formule
 « un runner qui demande autre chose ne reçoit rien » n'est vraie que sous ces
 trois conditions réunies.
 
+> **Amendement du 2026-08-14 — la conjonction en compte cinq.**
+> L'[ADR-0027](0027-ecriture-du-role-git.md) a découvert une seconde forme du
+> vecteur n°1 : un commit d'audit neuf portant l'ARBRE d'autrui. La tête est
+> nouvelle donc transmise, l'arbre ne l'est pas, et l'attaquant lit ensuite le
+> code d'autrui par le diff de son propre run. Le point 2 ci-dessous n'y suffit
+> pas. Deux contrôles s'ajoutent, tous deux situés sur l'arête d'ÉCRITURE :
+> l'allowlist de refs en `pre-receive`, et le contrôle de fraîcheur — tout objet
+> atteignable depuis la nouvelle ref et non atteignable depuis la principale doit
+> avoir été transmis par ce push. **La propriété d'isolation en LECTURE dépend
+> donc aussi de l'arête d'écriture.**
+
 1. **`GIT_NAMESPACE`**, qui borne l'annonce de refs. Il empêche la découverte,
    pas l'accès.
 2. **Le refus de `receive-pack`** sur ce transport. Il ferme le vecteur n°1 de
@@ -142,8 +153,8 @@ relève de l'option A, dépôt dédié — porte laissée ouverte, non emprunté
 
 - **Avantages** :
   - la propriété de sécurité est énoncée en termes exacts, donc vérifiable ;
-  - les trois contrôles sont épinglés par des tests d'étage 1 qui font échouer
-    la suite si l'un disparaît, dont `TestProtocolIsPinnedToV0` ;
+  - les contrôles sont épinglés par des tests d'étage 1 qui font échouer la
+    suite si l'un disparaît, dont `TestProtocolIsPinnedToV0` ;
   - le correctif tient en une ligne et ne coûte rien en exploitation.
 
 - **Contraintes** :
@@ -158,8 +169,8 @@ relève de l'option A, dépôt dédié — porte laissée ouverte, non emprunté
     supposerait v2 sur cette arête est à traiter comme un changement de sécurité.
 
 - **Dette technique éventuelle** :
-  - L'autorisation par ref n'existe pas, donc `receive-pack` est refusé
-    entièrement. Le point 2 de la conjonction est aujourd'hui obtenu par
-    l'absence de la fonctionnalité. Quand la quarantaine l'ouvrira, il faudra
-    qu'un runner reste incapable d'écrire une ref dans son espace de noms —
-    sans quoi le vecteur n°1 se rouvre.
+  - ~~L'autorisation par ref n'existe pas, donc `receive-pack` est refusé
+    entièrement.~~ **Soldée** par l'[ADR-0027](0027-ecriture-du-role-git.md), qui
+    ouvre l'écriture et maintient l'incapacité du runner à écrire par trois
+    moyens : listener et port d'autorisation distincts, allowlist de refs, et
+    contrôle de fraîcheur.

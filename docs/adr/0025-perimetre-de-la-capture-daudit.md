@@ -133,8 +133,11 @@ Ce que cette reproductibilité **ne donne pas**, c'est l'immuabilité. Un commit
 différent poussé sur la même ref est refusé aujourd'hui, mais seulement parce
 qu'il n'est pas en avance rapide — un effet de bord des défauts de git, pas une
 garantie. Rendre une ref d'audit écrite-une-fois est une propriété du rôle `git`
-côté serveur, et elle n'est pas décidée. Le code ne prétend pas le contraire : il
-s'abstient de `--force` et le dit.
+côté serveur. **Tranchée depuis par l'[ADR-0027](0027-ecriture-du-role-git.md)** :
+refus en `pre-receive` de toute mise à jour dont l'ancienne valeur n'est pas
+nulle sous `refs/audit/`, complété par `receive.denyDeletes`,
+`receive.denyNonFastForwards` et `receive.hideRefs`. Le code côté client ne
+prétend toujours rien : il s'abstient de `--force` et le dit.
 
 Enfin, deux points de sécurité que cette tranche a fermés en passant, parce que
 la capture est le premier endroit où le produit exécute git **dans un dépôt qu'il
