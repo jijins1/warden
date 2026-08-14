@@ -25,9 +25,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/server/internal/gitd"
+	"github.com/jijins1/warden/internal/server/internal/gitwire"
 )
 
 // TestMain lets this binary act as the pre-receive hook.
@@ -711,5 +713,120 @@ func TestSecretInACommitMessageIsRefused(t *testing.T) {
 	}
 	if strings.Contains(out, leakedToken) {
 		t.Errorf("the refusal echoed the secret:\n%s", out)
+	}
+}
+
+// --- the grant authorizer, end to end --------------------------------------
+
+// TestGrantAuthorizerDrivesARealPush wires the signed grant through the whole
+// write path.
+//
+// Until now every write test used a hand-made authorizer. This one mints a token
+// the way the `api` role will, hands it to a real git client, and lets the
+// transport verify it — so the format, the signature, the scope conversion and
+// the hook all meet on the same push.
+func TestGrantAuthorizerDrivesARealPush(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+
+	authz, err := gitd.NewGrantAuthorizer(jetonDeTest)
+	if err != nil {
+		t.Fatalf("NewGrantAuthorizer: %v", err)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locating the test binary: %v", err)
+	}
+	s, err := gitd.New(gitd.Config{
+		Racine:         root,
+		Jeton:          jetonDeTest,
+		PushAuthorizer: authz,
+		HooksDir:       filepath.Join(t.TempDir(), "hooks"),
+		HookExecutable: exe,
+	})
+	if err != nil {
+		t.Fatalf("gitd.New: %v", err)
+	}
+	srv := httptest.NewServer(s.PushHandler())
+	t.Cleanup(srv.Close)
+
+	grant, err := gitwire.SignPushGrant(gitwire.PushGrant{
+		Repo:     "depot",
+		Ref:      aliceRef,
+		Mainline: mainlineRef,
+		Expires:  time.Now().Add(time.Hour).Unix(),
+	}, jetonDeTest)
+	if err != nil {
+		t.Fatalf("SignPushGrant: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte("[dev]\nlocalhost"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "a run authorized by a signed grant")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	if out, err := gitWithToken(t, alice, grant, "push", srv.URL+"/depot.git", sha+":"+aliceRef); err != nil {
+		t.Fatalf("a correctly signed grant was refused: %v\n%s", err, out)
+	}
+	if !refExists(t, bare, aliceRef) {
+		t.Fatal("the ref was not created")
+	}
+
+	// The same client, aiming at Bob's ref with the grant it holds. The scope is
+	// signed, so it cannot be widened by the party that carries it.
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "aiming elsewhere")
+	other := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+	if out, err := gitWithToken(t, alice, grant, "push", srv.URL+"/depot.git", other+":"+bobRef); err == nil {
+		t.Fatalf("the grant was used to write outside its scope:\n%s", out)
+	}
+}
+
+// TestAForgedGrantIsRefused: the token travels through the user's machine, so
+// the only thing standing between a curious user and any ref in the
+// organisation is the signature.
+func TestAForgedGrantIsRefused(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+
+	authz, err := gitd.NewGrantAuthorizer(jetonDeTest)
+	if err != nil {
+		t.Fatalf("NewGrantAuthorizer: %v", err)
+	}
+	exe, _ := os.Executable()
+	s, err := gitd.New(gitd.Config{
+		Racine:         root,
+		Jeton:          jetonDeTest,
+		PushAuthorizer: authz,
+		HooksDir:       filepath.Join(t.TempDir(), "hooks"),
+		HookExecutable: exe,
+	})
+	if err != nil {
+		t.Fatalf("gitd.New: %v", err)
+	}
+	srv := httptest.NewServer(s.PushHandler())
+	t.Cleanup(srv.Close)
+
+	// Signed with a secret the attacker chose, naming a scope they wish they had.
+	forged, err := gitwire.SignPushGrant(gitwire.PushGrant{
+		Repo:     "depot",
+		Ref:      bobRef,
+		Mainline: mainlineRef,
+		Expires:  time.Now().Add(time.Hour).Unix(),
+	}, "a-secret-the-attacker-picked")
+	if err != nil {
+		t.Fatalf("SignPushGrant: %v", err)
+	}
+
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "forged")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	out, err := gitWithToken(t, alice, forged, "push", srv.URL+"/depot.git", sha+":"+bobRef)
+	if err == nil {
+		t.Fatalf("a forged grant was accepted:\n%s", out)
+	}
+	before := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", bobRef))
+	if before == sha {
+		t.Fatal("bob's audit ref was overwritten with a forged grant")
 	}
 }
