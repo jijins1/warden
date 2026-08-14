@@ -1,0 +1,255 @@
+// Étage 1 : la propriété testée ici est que le serveur ne croit PAS le client sur
+// l'origine du commit d'audit. Elle ne dépend d'aucun stockage réel.
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jijins1/warden/internal/server/internal/core"
+)
+
+// gitFactice répond ce qu'un rôle `git` répondrait, et enregistre CE QU'ON LUI A
+// DEMANDÉ — c'est cette dernière partie qui porte le test.
+type gitFactice struct {
+	refsDemandees []string
+	parRef        map[string]string
+	mainline      string
+}
+
+func (g *gitFactice) RefreshMirror(context.Context, string, string, string) (string, error) {
+	return g.mainline, nil
+}
+
+func (g *gitFactice) ResolveRef(_ context.Context, _, ref string) (string, error) {
+	g.refsDemandees = append(g.refsDemandees, ref)
+	sha, ok := g.parRef[ref]
+	if !ok {
+		return "", errors.New("ref absente")
+	}
+	return sha, nil
+}
+
+type creatorFactice struct{ recus []core.NewRun }
+
+func (c *creatorFactice) CreateRun(_ context.Context, n core.NewRun) (int64, error) {
+	c.recus = append(c.recus, n)
+	return int64(len(c.recus)), nil
+}
+
+type frappeurFactice struct{ prefixes []string }
+
+func (f *frappeurFactice) IssuePushGrant(_ context.Context, _, refPrefix string, _ time.Time) (string, error) {
+	f.prefixes = append(f.prefixes, refPrefix)
+	return "jeton-" + refPrefix, nil
+}
+
+const (
+	shaAlice = "1111111111111111111111111111111111111111"
+	shaBob   = "2222222222222222222222222222222222222222"
+	shaMain  = "3333333333333333333333333333333333333333"
+
+	runAlice = "01JZQ000000000000000000ABC"
+)
+
+func monterEcriture(t *testing.T) (*Server, *gitFactice, *creatorFactice, *frappeurFactice) {
+	t.Helper()
+
+	g := &gitFactice{
+		mainline: shaMain,
+		parRef: map[string]string{
+			// Le commit d'audit d'Alice, sous SON namespace (utilisateur 1).
+			core.AuditRefFor(1, runAlice): shaAlice,
+			// Celui de Bob, sous le sien (utilisateur 2).
+			core.AuditRefFor(2, "01JZQ000000000000000000BCD"): shaBob,
+		},
+	}
+	c := &creatorFactice{}
+	f := &frappeurFactice{}
+
+	s, err := New(&Config{Addr: "127.0.0.1:0"}, Deps{
+		Runs: stubPort{}, Users: stubPort{}, Diffs: stubPort{}, Events: stubPort{},
+		Repos: &magasinFactice{repos: []core.Repo{{
+			Name: "depot", RemoteURL: "https://forge.invalid/x.git", MainlineRef: "refs/heads/main",
+		}}},
+		Creator: c, Mirrors: g, Refs: g, Grants: f,
+	})
+	if err != nil {
+		t.Fatalf("api.New : %v", err)
+	}
+	return s, g, c, f
+}
+
+func posterRun(t *testing.T, s *Server, user *core.User, corps string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.HandleCreateRun(w, requete(t, http.MethodPost, "/runs", user, corps))
+	return w
+}
+
+// TestLeCommitDAuditNestJamaisCeluiQueLeClientDeclare est LA raison d'être de ce
+// fichier.
+//
+// La fuite fermée ici n'emprunte pas le protocole git mais le modèle de données :
+// le diff du §6.5 compare `mainline_sha` à `audit_sha` sans se demander à qui ce
+// dernier appartient, et `CanViewRun` autorise le propriétaire du run. Un
+// utilisateur déclarant l'`audit_sha` d'un autre lisait donc le code de cet autre
+// à travers le diff de SON PROPRE run.
+//
+// Le test le vérifie par ce que le serveur DEMANDE, pas seulement par ce qu'il
+// enregistre : la seule ref résolue doit être celle d'Alice, composée par le
+// serveur.
+func TestLeCommitDAuditNestJamaisCeluiQueLeClientDeclare(t *testing.T) {
+	s, g, c, _ := monterEcriture(t)
+
+	// Le corps porte tout ce qu'un client malveillant voudrait glisser. Les champs
+	// inconnus sont refusés par le décodeur, ce qui est déjà la moitié du travail.
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"environment":"prod",
+		"inventory":"inv",
+		"playbook":"site.yml",
+		"base_sha":"`+shaMain+`"
+	}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d, attendu 201 : %s", w.Code, w.Body.String())
+	}
+
+	if len(g.refsDemandees) != 1 {
+		t.Fatalf("%d ref(s) résolue(s), attendu 1 : %v", len(g.refsDemandees), g.refsDemandees)
+	}
+	attendue := core.AuditRefFor(1, runAlice)
+	if g.refsDemandees[0] != attendue {
+		t.Errorf("ref résolue %q, attendue %q", g.refsDemandees[0], attendue)
+	}
+
+	if len(c.recus) != 1 {
+		t.Fatalf("%d run(s) créé(s)", len(c.recus))
+	}
+	if c.recus[0].AuditSHA != shaAlice {
+		t.Errorf("audit_sha enregistré %q, attendu celui de la ref d'alice %q",
+			c.recus[0].AuditSHA, shaAlice)
+	}
+	if c.recus[0].AuditSHA == shaBob {
+		t.Fatal("FUITE : le commit d'audit de bob a été enregistré comme celui d'alice")
+	}
+	// L'utilisateur vient de l'authentification, pas du corps.
+	if c.recus[0].UserID != 1 {
+		t.Errorf("user_id %d, attendu 1", c.recus[0].UserID)
+	}
+	// La principale est celle de la configuration serveur, figée à la création.
+	if c.recus[0].MainlineSHA != shaMain || c.recus[0].MainlineRef != "refs/heads/main" {
+		t.Errorf("principale non figée depuis la configuration : %+v", c.recus[0])
+	}
+}
+
+// TestUnAuditSHAGlisseDansLeCorpsEstRefuse : le champ n'existe pas, et le
+// décodeur le dit.
+//
+// `DisallowUnknownFields` transforme une tentative en 400 explicite plutôt qu'en
+// silence. Un client qui essaie doit l'apprendre, pas croire que ça a marché.
+func TestUnAuditSHAGlisseDansLeCorpsEstRefuse(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`","repo":"depot","audit_sha":"`+shaBob+`"
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", w.Code)
+	}
+	if len(c.recus) != 0 {
+		t.Error("un run a été créé malgré le champ refusé")
+	}
+}
+
+// TestUnRunSansPushEstRefuse : déclarer un run sans avoir poussé ne crée rien.
+//
+// C'est le corollaire direct de la résolution : si la ref n'existe pas, il n'y a
+// pas d'`audit_sha` à inventer, et le produit refuse plutôt que d'enregistrer une
+// ligne dont l'artefact est introuvable.
+func TestUnRunSansPushEstRefuse(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"01JZQ000000000000000000ZZZ","repo":"depot"
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", w.Code)
+	}
+	if len(c.recus) != 0 {
+		t.Error("un run a été créé sans commit d'audit")
+	}
+}
+
+// TestUnRunRefMalformeEstRefuseAvantToutUsage : le ULID compose un nom de ref et
+// une URL, et il est tiré par la CLI — donc c'est de l'entrée non fiable.
+func TestUnRunRefMalformeEstRefuseAvantToutUsage(t *testing.T) {
+	s, g, _, _ := monterEcriture(t)
+
+	for _, ref := range []string{
+		"", "trop-court", "../../../etc/passwd",
+		"01JZQ000000000000000000AB",  // 25 caractères
+		"01JZQ000000000000000000ABU", // U est exclu du base32 de Crockford
+	} {
+		t.Run(ref, func(t *testing.T) {
+			w := posterRun(t, s, administrateur(), `{"run_ref":"`+ref+`","repo":"depot"}`)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("statut %d, attendu 400", w.Code)
+			}
+		})
+	}
+	if len(g.refsDemandees) != 0 {
+		t.Errorf("une ref a été composée à partir d'un identifiant refusé : %v", g.refsDemandees)
+	}
+}
+
+// TestUnDepotNonConfigureLeDit : un 404 parlant plutôt qu'une panne.
+func TestUnDepotNonConfigureLeDit(t *testing.T) {
+	s, _, _, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"inconnu"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("statut %d, attendu 404", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "configuration") {
+		t.Errorf("message peu actionnable : %s", w.Body.String())
+	}
+}
+
+// TestLeJetonOuvreLeNamespaceDeSonPorteur : le préfixe est dérivé de l'identité,
+// jamais demandé.
+func TestLeJetonOuvreLeNamespaceDeSonPorteur(t *testing.T) {
+	s, _, _, f := monterEcriture(t)
+
+	w := httptest.NewRecorder()
+	r := requete(t, http.MethodPost, "/repos/depot/push-grant", utilisateurNormal(), "")
+	r.SetPathValue("repo", "depot")
+	s.HandleIssuePushGrant(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu 200 : %s", w.Code, w.Body.String())
+	}
+	if len(f.prefixes) != 1 || f.prefixes[0] != core.AuditPrefixFor(2) {
+		t.Fatalf("préfixe frappé %v, attendu %q", f.prefixes, core.AuditPrefixFor(2))
+	}
+
+	var out pushGrantResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("réponse illisible : %v", err)
+	}
+	if out.ExpiresAt <= time.Now().Unix() {
+		t.Error("le jeton naît expiré")
+	}
+	// Un jeton porteur n'a rien à faire dans un cache, ni intermédiaire ni local.
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("Cache-Control %q", w.Header().Get("Cache-Control"))
+	}
+}

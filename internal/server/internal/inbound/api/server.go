@@ -66,6 +66,14 @@ type Deps struct {
 	// d'administration répond 501. Un déploiement qui ne sert que la consultation
 	// d'audit reste valide.
 	Repos core.RepoStore
+
+	// Les quatre suivants forment le chemin d'écriture. Facultatifs ensemble :
+	// leur absence rend `POST /runs` et la frappe de jetons indisponibles, ce qui
+	// est le mode d'un déploiement en lecture seule.
+	Creator core.RunCreator
+	Mirrors core.MirrorRefresher
+	Refs    core.RefResolver
+	Grants  core.PushGrantIssuer
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -119,6 +127,8 @@ func (a *Server) Run(ctx context.Context) error {
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
+	router.HandleFunc("POST /runs", a.HandleCreateRun)
+	router.HandleFunc("POST /repos/{repo}/push-grant", a.HandleIssuePushGrant)
 
 	// Administration. Sous un préfixe distinct pour que la NetworkPolicy et
 	// l'ingress puissent la traiter à part — l'autorisation est portée par la

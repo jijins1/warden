@@ -57,3 +57,33 @@ const (
 	// couvre désormais aussi la disponibilité de celle-ci.
 	CodeMirrorFailed Code = "mirror_failed"
 )
+
+// ResolvePath rend le SHA d'une ref nommée, sur le listener INTERNE.
+//
+// Il existe pour fermer une fuite qui n'a rien à voir avec le protocole git.
+// `audit_sha` était destiné à venir du corps de `POST /runs`, donc du client — et
+// le diff d'audit du §6.5 compare `mainline_sha` à `audit_sha` sans se demander à
+// qui ce dernier appartient. Un utilisateur déclarant l'`audit_sha` d'un autre
+// lisait le code de cet autre à travers le diff de SON PROPRE run, auquel la
+// politique d'accès lui donne légitimement droit.
+//
+// Le serveur ne l'accepte donc plus : il DÉRIVE la ref de (utilisateur, run),
+// deux valeurs qu'il détient, et demande ici sa position. Rien à croire sur
+// parole.
+const ResolvePath = "/internal/v1/resolve"
+
+// ResolveRequest demande la position d'une ref.
+//
+// Le rôle `git` ne se demande pas si l'appelant a le droit de la connaître : la
+// politique d'accès vit chez `api`, qui compose la ref avant d'appeler. Un `gitd`
+// qui trancherait lui-même court-circuiterait cette politique — c'est le même
+// raisonnement que pour DiffRequest.
+type ResolveRequest struct {
+	Repo string `json:"repo"`
+	Ref  string `json:"ref"`
+}
+
+// ResolveResponse rend la position de la ref.
+type ResolveResponse struct {
+	SHA string `json:"sha"`
+}

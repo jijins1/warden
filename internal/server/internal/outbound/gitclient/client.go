@@ -222,3 +222,50 @@ func (c *Client) RefreshMirror(ctx context.Context, repo, remote, ref string) (s
 	}
 	return out.SHA, nil
 }
+
+// ResolveRef rend la position d'une ref dans un dépôt.
+//
+// L'appelant compose la ref à partir de ce qu'il détient — l'identité
+// authentifiée et l'identifiant du run — et non de ce que le client a envoyé.
+// C'est ce qui empêche un utilisateur de faire enregistrer comme sien le commit
+// d'audit d'un autre, et de le lire ensuite par le diff de son propre run.
+func (c *Client) ResolveRef(ctx context.Context, repo, ref string) (string, error) {
+	if repo == "" || ref == "" {
+		return "", fmt.Errorf("résolution de ref : dépôt et ref sont obligatoires")
+	}
+
+	ctx, annuler := context.WithTimeout(ctx, c.timeout)
+	defer annuler()
+
+	corps, err := json.Marshal(gitwire.ResolveRequest{Repo: repo, Ref: ref})
+	if err != nil {
+		return "", fmt.Errorf("encodage de la requête: %w", err)
+	}
+
+	cible := c.base.JoinPath(gitwire.ResolvePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cible.String(), bytes.NewReader(corps))
+	if err != nil {
+		return "", fmt.Errorf("construction de la requête: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("appel du rôle git: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", c.erreur(resp)
+	}
+
+	var out gitwire.ResolveResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&out); err != nil {
+		return "", fmt.Errorf("lecture de la réponse: %w", err)
+	}
+	if out.SHA == "" {
+		return "", fmt.Errorf("le rôle git n'a rendu aucune position")
+	}
+	return out.SHA, nil
+}

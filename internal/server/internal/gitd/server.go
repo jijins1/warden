@@ -218,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+gitwire.DiffPath, s.handleDiff)
 	mux.HandleFunc("POST "+gitwire.MirrorPath, s.handleMirror)
+	mux.HandleFunc("POST "+gitwire.ResolvePath, s.handleResolve)
 	return s.auth.middleware(mux)
 }
 

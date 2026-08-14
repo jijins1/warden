@@ -10,47 +10,10 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
-// NewRun porte ce qu'on connaît d'un run au moment de l'insérer, c'est-à-dire
-// AVANT que le pod existe.
-//
-// On y trouve ce que git ne conserve PAS (ADR-0021) : le contenu à un SHA est
-// figé par git et n'a pas à être recopié ici, mais la position d'une branche à
-// une date ne l'est pas — les reflogs expirent et sont locaux au miroir.
-type NewRun struct {
-	// RunRef est un ULID, sûr comme nom de ref git (ADR-0007) et dans une URL.
-	// C'est l'identifiant qui sort du produit ; l'id bigint reste interne.
-	RunRef string
-	UserID int64
-
-	// Repo est le dépôt d'où vient le run. Le rôle `git` en déduit le bare repo
-	// à ouvrir : l'ADR-0006 veut tous les runs d'un dépôt dans le même, et les
-	// diffs du §6.5 en dépendent.
-	Repo string
-
-	Environment string
-	Inventory   string
-	Playbook    string
-
-	AuditSHA string // le commit d'audit poussé par la CLI (§5.2)
-	BaseSHA  string // son parent (ADR-0003)
-
-	// MainlineRef et MainlineSHA figent le point de comparaison. Sans eux, le
-	// diff « run contre branche principale » du §6.5 se calcule contre la
-	// branche telle qu'elle est AUJOURD'HUI, et change donc à chaque
-	// consultation. Le nom de la ref accompagne le SHA parce que la branche de
-	// référence est une configuration par environnement (§3.2) : un SHA seul
-	// cesse d'être interprétable si elle change.
-	MainlineRef string
-	MainlineSHA string
-
-	// Flags tels qu'exécutés (§5.5). Il n'y a pas de colonne « demandé » en
-	// face : la politique serveur étant mise de côté, demandé et effectif
-	// coïncident (ADR-0021).
-	Flags json.RawMessage
-
-	RunnerImage       string // ADR-0014
-	RunnerImageDigest string
-}
+// NewRun vit désormais dans le cœur : la création d'un run est une opération
+// du domaine, et son port doit pouvoir être déclaré sans connaître PostgreSQL
+// (ADR-0019). L'alias garde les appelants existants intacts.
+type NewRun = core.NewRun
 
 // CreateRun insère la line de run et renvoie son identifiant technique.
 //

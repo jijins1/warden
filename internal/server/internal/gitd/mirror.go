@@ -96,3 +96,52 @@ func (s *Server) handleMirror(w http.ResponseWriter, r *http.Request) {
 		slog.Error("réponse du miroir non écrite", slog.String("error", err.Error()))
 	}
 }
+
+// handleResolve rend la position d'une ref nommée.
+//
+// Volontairement sans notion de run ni d'utilisateur : le rôle `api` compose la
+// ref à partir de ce qu'il détient — l'identité authentifiée et l'identifiant du
+// run — puis demande où elle pointe. C'est ce qui empêche un client de faire
+// enregistrer comme sien le commit d'audit d'un autre.
+func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
+	var req gitwire.ResolveRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tailleMaxRequete))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeBadRequest,
+			Message: "corps de requête illisible",
+		})
+		return
+	}
+
+	ref, err := git.NewRef(req.Ref)
+	if err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "ref invalide"})
+		return
+	}
+
+	dir, errDepot := s.depots.dir(req.Repo)
+	if errDepot != nil {
+		repondreErreur(w, errDepot)
+		return
+	}
+
+	sha, err := git.New(dir).Resolve(r.Context(), ref.String())
+	if err != nil {
+		// Une ref absente n'est pas une panne : c'est un push qui n'a pas eu lieu,
+		// et l'appelant doit pouvoir le dire à l'utilisateur plutôt que de rendre
+		// une erreur interne.
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeUnknownObject,
+			Message: "cette ref n'existe pas dans ce dépôt",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", gitwire.ContentTypeError)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := json.NewEncoder(w).Encode(gitwire.ResolveResponse{SHA: sha.String()}); err != nil {
+		slog.Error("réponse de résolution non écrite", slog.String("error", err.Error()))
+	}
+}

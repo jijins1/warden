@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,7 +37,10 @@ func (m *magasinFactice) GetRepo(_ context.Context, name string) (core.Repo, err
 			return r, nil
 		}
 	}
-	return core.Repo{}, errors.New("absent")
+	// Enveloppé comme le fait le vrai magasin : le handler distingue « dépôt non
+	// configuré » d'une panne, et un faux qui ne respecte pas ce contrat testerait
+	// un chemin que la production n'emprunte jamais.
+	return core.Repo{}, fmt.Errorf("dépôt %q non configuré: %w", name, core.ErrNotFound)
 }
 
 func (m *magasinFactice) ListRepos(_ context.Context) ([]core.Repo, error) {
