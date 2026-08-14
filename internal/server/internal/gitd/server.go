@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jijins1/warden/internal/server/internal/gitwire"
@@ -37,6 +38,33 @@ type Config struct {
 	// repository to whoever asks.
 	Authorizer Authorizer
 
+	// PushAddr est l'adresse du smart HTTP EN ÉCRITURE, servi à la CLI.
+	//
+	// Un troisième port, et non un chemin de plus sur le second. Les deux
+	// appelants sont réellement distincts — le runner est intra-cluster, la CLI
+	// est un poste de développement — donc leurs NetworkPolicy et leurs règles
+	// d'ingress diffèrent. C'est le contrôle n°3 de la conjonction de l'ADR-0027.
+	PushAddr string
+
+	// PushAuthorizer resolves a CLI token into the push scope it opens. Required
+	// as soon as PushAddr is set.
+	PushAuthorizer PushAuthorizer
+
+	// HooksDir is where the pre-receive hook is installed. Defaults to a
+	// directory under the OS temporary space, owned by this process.
+	//
+	// It must never sit under Racine: the whole point is that it is a path no
+	// pushed content can reach.
+	HooksDir string
+
+	// HookExecutable overrides the binary the hook symlink points at. Empty means
+	// this process's own executable, which is the production case; tests set it
+	// so the hook logic runs under the test binary.
+	HookExecutable string
+
+	// MaxPushBytes bounds a push body. Zero means DefaultMaxPushBytes.
+	MaxPushBytes int64
+
 	GracefulShutdown time.Duration
 }
 
@@ -48,6 +76,8 @@ type Server struct {
 	srv      *http.Server
 	smart    *smartHTTP
 	smartSrv *http.Server
+	push     *smartPush
+	pushSrv  *http.Server
 }
 
 // New construit le service et échoue à froid plutôt qu'à la première requête.
@@ -69,6 +99,9 @@ func New(cfg Config) (*Server, error) {
 	// code.
 	if cfg.SmartAddr != "" && cfg.Authorizer == nil {
 		return nil, errors.New("adresse smart HTTP fournie sans port d'autorisation : la surface serait ouverte")
+	}
+	if cfg.PushAddr != "" && cfg.PushAuthorizer == nil {
+		return nil, errors.New("adresse d'écriture fournie sans port d'autorisation : n'importe qui écrirait dans l'audit")
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = ":8081"
@@ -115,7 +148,45 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 
+	if cfg.PushAuthorizer != nil {
+		hooks := cfg.HooksDir
+		if hooks == "" {
+			// Sous l'espace temporaire et non sous la racine des dépôts : ce
+			// répertoire doit rester un chemin qu'aucun contenu poussé n'atteint.
+			tmp, err := os.MkdirTemp("", "warden-hooks-")
+			if err != nil {
+				return nil, fmt.Errorf("création du répertoire de hooks : %w", err)
+			}
+			hooks = tmp
+		}
+		if err := prepareHooks(hooks, cfg.HookExecutable); err != nil {
+			return nil, err
+		}
+
+		push, err := newSmartPush(cfg.Racine, hooks, cfg.MaxPushBytes, cfg.PushAuthorizer, nil)
+		if err != nil {
+			return nil, err
+		}
+		s.push = push
+		s.pushSrv = &http.Server{
+			Addr:              cfg.PushAddr,
+			ReadHeaderTimeout: 10 * time.Second,
+			Handler:           push,
+			// Pas de WriteTimeout, même raison que pour la lecture : la durée d'un
+			// push dépend de l'historique transporté, que l'ADR-0003 ne borne pas.
+		}
+	}
+
 	return s, nil
+}
+
+// PushHandler rend le routeur du smart HTTP en écriture, ou nil s'il n'est pas
+// servi. Même contrat que SmartHandler : un nil est une réponse.
+func (s *Server) PushHandler() http.Handler {
+	if s.push == nil {
+		return nil
+	}
+	return s.push
 }
 
 // SmartHandler rend le routeur du smart HTTP, ou nil s'il n'est pas servi.
@@ -162,6 +233,9 @@ func (s *Server) Run(ctx context.Context) error {
 	surfaces := []surface{{nom: "API interne", srv: s.srv}}
 	if s.smartSrv != nil {
 		surfaces = append(surfaces, surface{nom: "smart HTTP", srv: s.smartSrv})
+	}
+	if s.pushSrv != nil {
+		surfaces = append(surfaces, surface{nom: "écriture", srv: s.pushSrv})
 	}
 
 	// Les écoutes sont ouvertes AVANT de servir quoi que ce soit : un échec de

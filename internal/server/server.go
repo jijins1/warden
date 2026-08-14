@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -187,6 +188,23 @@ const (
 	EnvGitInternalURL   = "WARDEN_GIT_INTERNAL_URL"   // côté `api` : où joindre gitd
 	EnvGitInternalToken = "WARDEN_GIT_INTERNAL_TOKEN" // partagé par les deux
 )
+
+// HookName est le nom sous lequel git invoque ce binaire comme hook.
+//
+// Le rôle `git` installe un lien symbolique portant ce nom vers son propre
+// exécutable (ADR-0027). Le dispatch se fait sur argv[0] : pas de script shell,
+// donc pas d'interpréteur à supposer présent dans l'image ni de citation à rater
+// entre nous et un contrôle de sécurité.
+const HookName = "pre-receive"
+
+// PreReceiveHook exécute le hook et rend le code de sortie du processus.
+//
+// Exposé ici parce que `cmd/wardend` ne peut atteindre que ce paquet
+// (ADR-0011) : il n'a pas le droit d'importer `internal/server/internal/gitd`,
+// et c'est bien ainsi.
+func PreReceiveHook(ctx context.Context, stdin io.Reader, stderr io.Writer) int {
+	return gitd.PreReceive(ctx, stdin, stderr)
+}
 
 // Migrate applique les migrations de schéma en attente.
 //

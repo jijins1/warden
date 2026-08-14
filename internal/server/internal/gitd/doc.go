@@ -23,21 +23,35 @@
 // contrat `gitwire` qu'il partage avec `outbound/gitclient`. Ce paquet n'importe
 // ni `core`, ni `inbound`, ni les autres adaptateurs.
 //
-// ÉTAT : l'API interne de diff (ADR-0024) et le smart HTTP EN LECTURE sont
-// implémentés. La quarantaine, le scan de secrets, la promotion, l'ancestry et
-// le cycle de vie des espaces de noms restent à écrire.
+// ÉTAT : l'API interne de diff (ADR-0024), le smart HTTP en LECTURE et le smart
+// HTTP en ÉCRITURE sont implémentés. Le scan de secrets, la promotion,
+// l'ancestry et le cycle de vie des espaces de noms restent à écrire.
 //
-// Le smart HTTP ne sert que `upload-pack`. L'écriture est refusée par un 403
-// explicite tant que l'autorisation par REF n'existe pas : un push autorisé au
-// seul niveau du dépôt laisserait n'importe quel porteur de jeton écrire sur la
-// ref d'audit d'autrui, ce qui est précisément ce qu'un journal d'audit ne doit
-// pas permettre. Elle viendra avec la quarantaine.
+// Trois surfaces, trois ports d'écoute : l'API interne joignable du seul rôle
+// `api`, la lecture joignable des pods runner, l'écriture joignable de la CLI.
+// La séparation est portée par le PORT et non par le chemin, ce qui la rend
+// exprimable en NetworkPolicy — et, pour l'écriture, elle est le contrôle n°3 de
+// la conjonction de l'ADR-0027.
 //
-// L'autorisation est un PORT (`Authorizer`) et n'a pas d'implémentation ici. Le
-// jeton de run de l'ADR-0007 n'existe encore nulle part — la migration 00003 dit
-// explicitement qu'elle ne porte jamais « le jeton git de l'ADR-0007 » — et où
-// vit son état est une décision ouverte, contrainte par le fait que ce paquet ne
-// parle pas à PostgreSQL.
+// L'écriture est servie contre une quarantaine native et un hook `pre-receive`
+// qui est CE BINAIRE, atteint par un lien symbolique. C'est le seul endroit du
+// produit où les hooks ne sont pas neutralisés ; l'exception est bornée par
+// construction, `core.hooksPath` pointant vers un répertoire détenu par le rôle,
+// hors de la racine des dépôts, posé par l'environnement — donc insurchargeable
+// par la config d'un dépôt.
+//
+// Les DEUX autorisations sont des PORTS (`Authorizer`, `PushAuthorizer`) et
+// n'ont pas d'implémentation ici. Ni le jeton de run de l'ADR-0007 ni le jeton
+// de push n'existent encore — la migration 00003 dit explicitement qu'elle ne
+// porte jamais « le jeton git de l'ADR-0007 » — et où vit leur état reste une
+// décision ouverte, contrainte par le fait que ce paquet ne parle pas à
+// PostgreSQL.
+//
+// Conséquence à tenir : le chemin d'écriture ne doit PAS être câblé dans
+// l'assembleur tant que le miroir de la principale n'est pas alimenté par le
+// serveur depuis la forge. Le contrôle de fraîcheur s'ancre sur ce miroir ; un
+// miroir écrit par le client retournerait le contrôle en attaque. Jusque-là,
+// l'absence de câblage est ce qui tient la propriété.
 //
 // AVERTISSEMENT sur la propriété d'isolation, tranché par l'ADR-0026 qui amende
 // l'ADR-0007 sur ce point. L'ADR-0007 fait reposer la
@@ -55,6 +69,11 @@
 //     un client qui nomme un objet non annoncé par son SHA le reçoit, namespace
 //     ou non. Le transport retire donc l'en-tête `Git-Protocol` pour figer la
 //     négociation en v0, où le refus fonctionne.
+//  3. L'ADR-0027 a découvert une SECONDE forme du vecteur n°1, qui ne demande
+//     aucune requête forgée : un commit d'audit neuf portant l'ARBRE d'autrui.
+//     La conjonction compte donc cinq termes, dont deux vivent sur l'arête
+//     d'ÉCRITURE — l'allowlist de refs et le contrôle de fraîcheur de
+//     `prereceive.go`. La propriété d'isolation en LECTURE dépend d'eux.
 //
 // Il ne parle pas à PostgreSQL, et c'est délibéré. L'endpoint de diff reçoit
 // deux objets et le dépôt où les trouver, jamais un run : « quel est le run

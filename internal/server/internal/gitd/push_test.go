@@ -1,0 +1,715 @@
+// Stage 1 of ADR-0010, write edge. Real bare repositories, a real git client,
+// and — where a stock client refuses to express the attack — hand-built
+// receive-pack requests.
+//
+// The forged requests are not a contrivance. §2 states the threat model as
+// arbitrary code, and ADR-0027 measured that git in default configuration
+// accepts a ref pointing at an object the client never sent. A test suite that
+// only drove `git push` would conclude the product is safe because the honest
+// client is honest.
+
+package gitd_test
+
+import (
+	"bytes"
+	"compress/zlib"
+	"context"
+	"crypto/sha1" // #nosec G505 -- git's pack format is defined in terms of SHA-1
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jijins1/warden/internal/git"
+	"github.com/jijins1/warden/internal/server/internal/gitd"
+)
+
+// TestMain lets this binary act as the pre-receive hook.
+//
+// The hook is a separate process by nature, so testing its logic through
+// anything other than a real process would test something else. git invokes it
+// through a symlink named pre-receive; dispatching on argv[0] here is the same
+// mechanism wardend uses in production, exercised by the same code path.
+func TestMain(m *testing.M) {
+	if filepath.Base(os.Args[0]) == "pre-receive" {
+		os.Exit(gitd.PreReceive(context.Background(), os.Stdin, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
+
+const (
+	mainlineRef = "refs/heads/main"
+	aliceRef    = "refs/audit/alice/01JZQ0000000000000000ALIC"
+	bobRef      = "refs/audit/bob/01JZQ00000000000000000BOB"
+	pushToken   = "alice-push-token"
+)
+
+// fixedPushAuthorizer hands out one scope, for one token.
+type fixedPushAuthorizer struct {
+	token string
+	scope gitd.PushScope
+}
+
+func (a fixedPushAuthorizer) AuthorizePush(_ context.Context, token string) (gitd.PushScope, error) {
+	if token != a.token {
+		return gitd.PushScope{}, errors.New("unknown token")
+	}
+	return a.scope, nil
+}
+
+// writeWorld builds the situation every write test starts from.
+//
+// One repository holding the mainline and BOB's audit ref, and a client that has
+// the mainline only. Bob's tree is the thing Alice must never obtain, and she
+// legitimately knows its SHA — ADR-0026 established that a SHA is not a secret.
+func writeWorld(t *testing.T) (root, bare, alice, mainSHA, bobTree string) {
+	t.Helper()
+
+	root = t.TempDir()
+	bare = filepath.Join(root, "depot.git")
+	mustGit(t, root, "init", "--bare", "--initial-branch=main", bare)
+
+	seed := t.TempDir()
+	mustGit(t, seed, "init", "--initial-branch=main", ".")
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(seed, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	write("playbook.yml", "- hosts: all")
+	mustGit(t, seed, "add", ".")
+	mustGit(t, seed, "commit", "-m", "mainline")
+	mainSHA = strings.TrimSpace(mustGit(t, seed, "rev-parse", "HEAD"))
+	mustGit(t, seed, "push", bare, mainSHA+":"+mainlineRef)
+
+	// Bob's audit commit: a tree Alice has never seen and must not obtain.
+	write("bob-secret-inventory.ini", "[prod]\ndb-01 ansible_host=10.0.0.9")
+	mustGit(t, seed, "add", ".")
+	mustGit(t, seed, "commit", "-m", "bob's run")
+	bobSHA := strings.TrimSpace(mustGit(t, seed, "rev-parse", "HEAD"))
+	bobTree = strings.TrimSpace(mustGit(t, seed, "rev-parse", "HEAD^{tree}"))
+	mustGit(t, seed, "push", bare, bobSHA+":"+bobRef)
+
+	// Alice clones the mainline only, which is all the server would ever serve
+	// her.
+	alice = t.TempDir()
+	mustGit(t, alice, "init", "--initial-branch=main", ".")
+	mustGit(t, alice, "fetch", bare, mainlineRef)
+	mustGit(t, alice, "reset", "--hard", "FETCH_HEAD")
+
+	return root, bare, alice, mainSHA, bobTree
+}
+
+// servePush mounts the write transport with a scope granting exactly one ref.
+func servePush(t *testing.T, root string, scope gitd.PushScope) string {
+	t.Helper()
+	gitBinary(t)
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locating the test binary: %v", err)
+	}
+
+	s, err := gitd.New(gitd.Config{
+		Racine:         root,
+		Jeton:          jetonDeTest,
+		PushAuthorizer: fixedPushAuthorizer{token: pushToken, scope: scope},
+		HooksDir:       filepath.Join(t.TempDir(), "hooks"),
+		HookExecutable: exe,
+	})
+	if err != nil {
+		t.Fatalf("gitd.New: %v", err)
+	}
+
+	srv := httptest.NewServer(s.PushHandler())
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func aliceScope() gitd.PushScope {
+	return gitd.PushScope{Repo: "depot", Ref: aliceRef, Mainline: mainlineRef}
+}
+
+// --- the honest path -------------------------------------------------------
+
+// TestPushNominal: a real client, a real audit commit, accepted.
+//
+// It matters as much as the refusals. A control that refuses everything is not a
+// control, and the freshness check runs on this path too — every object Alice
+// sends is genuinely new to the server.
+func TestPushNominal(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte("[dev]\nlocalhost"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "alice's run 01JZQ0000000000000000ALIC")
+	auditSHA := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", auditSHA+":"+aliceRef)
+	if err != nil {
+		t.Fatalf("the honest push was refused: %v\n%s", err, out)
+	}
+
+	got := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", aliceRef))
+	if got != auditSHA {
+		t.Errorf("ref points at %s, want %s", got, auditSHA)
+	}
+}
+
+// --- the first form: claim an object without sending it --------------------
+
+// TestCraftedClaimIsRefused is the mirror of probe A3.
+//
+// The probe measures that git alone accepts this. This asserts that warden does
+// not. The pair is the entire justification of the freshness control: neither
+// half means anything without the other.
+func TestCraftedClaimIsRefused(t *testing.T) {
+	root, bare, _, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	bobSHA := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", bobRef))
+
+	status, answer := rawReceivePack(t, url+"/depot.git", pushToken,
+		receiveCommand(zeroOID, bobSHA, aliceRef), emptyPack())
+	t.Logf("server answered %d: %q", status, answer)
+
+	if refExists(t, bare, aliceRef) {
+		t.Fatal("LEAK: the audit ref was created pointing at an object the client never sent")
+	}
+	if !strings.Contains(answer, "did not send") && !strings.Contains(answer, "ng ") {
+		t.Errorf("refused, but not by the freshness control — the message was %q", answer)
+	}
+}
+
+// --- the second form: a fresh commit carrying someone else's tree ----------
+
+// TestStealingAnotherTreeIsRefused is the attack ADR-0027 discovered, and the
+// reason the control speaks of EVERY reachable object rather than of the tip.
+//
+// Alice builds a genuinely new commit — new SHA, so it travels — whose tree is
+// Bob's. The tree does not travel, because she does not have it. A check on the
+// tip alone sees a brand new object and waves it through; the audit ref then
+// points at Bob's code, which Alice reads back through the diff of her own run.
+func TestStealingAnotherTreeIsRefused(t *testing.T) {
+	root, bare, _, mainSHA, bobTree := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	// A commit object naming a tree the sender does not hold. Stock git will not
+	// build this, which is exactly why it is built here.
+	commit := fmt.Sprintf("tree %s\nparent %s\n"+
+		"author Alice <alice@invalid> 1700000000 +0000\n"+
+		"committer Alice <alice@invalid> 1700000000 +0000\n\nalice's run\n", bobTree, mainSHA)
+	oid := objectID("commit", commit)
+
+	status, answer := rawReceivePack(t, url+"/depot.git", pushToken,
+		receiveCommand(zeroOID, oid, aliceRef), packWith(packEntry{kind: objCommit, body: commit}))
+	t.Logf("server answered %d: %q", status, answer)
+
+	if refExists(t, bare, aliceRef) {
+		t.Fatalf("LEAK: alice's audit ref was created carrying bob's tree %s", bobTree)
+	}
+}
+
+// --- write-once and the ref allowlist --------------------------------------
+
+// TestAuditRefIsWrittenOnce: the property §6.1 asks of an audit log.
+func TestAuditRefIsWrittenOnce(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	commitAndPush := func(content string) (string, error) {
+		if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte(content), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		mustGit(t, alice, "add", ".")
+		mustGit(t, alice, "commit", "-m", content)
+		sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+		out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+aliceRef)
+		return out, err
+	}
+
+	if out, err := commitAndPush("first"); err != nil {
+		t.Fatalf("the first push must succeed: %v\n%s", err, out)
+	}
+	first := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", aliceRef))
+
+	out, err := commitAndPush("second, overwriting the record of the first")
+	if err == nil {
+		t.Fatalf("a second push overwrote an audit ref:\n%s", out)
+	}
+
+	if now := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", aliceRef)); now != first {
+		t.Errorf("the audit ref moved from %s to %s", first, now)
+	}
+}
+
+// TestRefOutsideScopeIsRefused: the credential names one ref, not a prefix.
+func TestRefOutsideScopeIsRefused(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "aiming elsewhere")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	for _, target := range []string{
+		bobRef, // someone else's audit ref
+		"refs/audit/alice/01JZQ000000000000000OTHR", // her own namespace, wrong run
+		mainlineRef,                             // the mainline itself
+		"refs/namespaces/runs/x/refs/heads/run", // a run's namespace
+	} {
+		t.Run(target, func(t *testing.T) {
+			out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+target)
+			if err == nil {
+				t.Fatalf("push to %s was accepted:\n%s", target, out)
+			}
+		})
+	}
+
+	if refExists(t, bare, "refs/namespaces/runs/x/refs/heads/run") {
+		t.Error("a namespace ref was created by a client")
+	}
+}
+
+// TestDeletionIsRefused: an audit log does not lose entries on request.
+func TestDeletionIsRefused(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "to be deleted")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+	if out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+aliceRef); err != nil {
+		t.Fatalf("setup push: %v\n%s", err, out)
+	}
+
+	out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", ":"+aliceRef)
+	if err == nil {
+		t.Fatalf("the ref was deleted:\n%s", out)
+	}
+	if !refExists(t, bare, aliceRef) {
+		t.Error("the audit ref is gone")
+	}
+}
+
+// --- what the pusher may see ------------------------------------------------
+
+// TestPusherCannotSeeOthersAuditRefs closes enumeration on the write edge.
+//
+// The read transport hides other runs behind GIT_NAMESPACE. receive-pack has no
+// namespace, so the advertisement would otherwise hand Alice every audit ref in
+// the organisation — and ADR-0026 established that knowing a SHA is the whole
+// prerequisite of the attacks above.
+func TestPusherCannotSeeOthersAuditRefs(t *testing.T) {
+	root, _, _, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		url+"/depot.git/info/refs?service=git-receive-pack", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pushToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("advertisement: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if strings.Contains(string(body), "refs/audit/bob") {
+		t.Errorf("LEAK: bob's audit ref is advertised to alice:\n%s", body)
+	}
+	if !strings.Contains(string(body), mainlineRef) {
+		t.Errorf("the mainline is not advertised; the pusher cannot build on it:\n%s", body)
+	}
+}
+
+// --- the hooks exception stays bounded --------------------------------------
+
+// TestRepositoryHooksAreNotExecuted guards the one place the product stops
+// neutralising hooks.
+//
+// core.hooksPath is set through the environment, so a hooks/ directory inside a
+// bare repository is never consulted. If that ever stops being true, anything
+// written into a repository becomes code the role executes.
+func TestRepositoryHooksAreNotExecuted(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+
+	witness := filepath.Join(t.TempDir(), "executed")
+	repoHooks := filepath.Join(bare, "hooks")
+	if err := os.MkdirAll(repoHooks, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// #nosec G306 -- a hook must be executable to prove it is not executed
+	if err := os.WriteFile(filepath.Join(repoHooks, "pre-receive"),
+		[]byte("#!/bin/sh\ntouch "+witness+"\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("writing the repository hook: %v", err)
+	}
+
+	url := servePush(t, root, aliceScope())
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "run")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+	_, _ = gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+aliceRef)
+
+	if _, err := os.Stat(witness); err == nil {
+		t.Fatal("the repository's own pre-receive hook was executed")
+	}
+}
+
+// --- startup ----------------------------------------------------------------
+
+// TestPushAddrWithoutAuthorizerRefusesToStart: an open write surface is not a
+// degradation.
+func TestPushAddrWithoutAuthorizerRefusesToStart(t *testing.T) {
+	_, err := gitd.New(gitd.Config{
+		Racine:   t.TempDir(),
+		Jeton:    jetonDeTest,
+		PushAddr: ":0",
+	})
+	if err == nil {
+		t.Fatal("a write address without an authorizer started")
+	}
+}
+
+// TestPushScopeWithoutRefIsRefused: the zero value fails closed, as Scope does.
+func TestPushScopeWithoutRefIsRefused(t *testing.T) {
+	root, _, _, _, _ := writeWorld(t)
+	url := servePush(t, root, gitd.PushScope{Repo: "depot"})
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		url+"/depot.git/info/refs?service=git-receive-pack", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pushToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status %d, want 403", resp.StatusCode)
+	}
+}
+
+// --- wire helpers ------------------------------------------------------------
+
+const zeroOID = "0000000000000000000000000000000000000000"
+
+func refExists(t *testing.T, bare, ref string) bool {
+	t.Helper()
+	_, err := runGit(t, bare, "rev-parse", "--verify", "--quiet", ref)
+	return err == nil
+}
+
+// receiveCommand builds the single pkt-line command of a receive-pack request.
+func receiveCommand(old, new, ref string) string {
+	line := fmt.Sprintf("%s %s %s\x00report-status\n", old, new, ref)
+	return fmt.Sprintf("%04x%s", len(line)+4, line) + "0000"
+}
+
+// rawReceivePack posts a hand-built receive-pack request.
+func rawReceivePack(t *testing.T, url, token, command string, pack []byte) (int, string) {
+	t.Helper()
+	payload := append([]byte(command), pack...)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		url+"/git-receive-pack", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-git-receive-pack-request")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+// git object types as the pack format numbers them.
+const (
+	objCommit = 1
+	objTree   = 2
+	objBlob   = 3
+)
+
+type packEntry struct {
+	kind int
+	body string
+}
+
+// objectID computes the id git would give an object, without writing it.
+func objectID(kind, body string) string {
+	h := sha1.New() // #nosec G401 -- git object ids are SHA-1 by definition
+	_, _ = fmt.Fprintf(h, "%s %d\x00", kind, len(body))
+	_, _ = io.WriteString(h, body)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// emptyPack is a valid packfile carrying no objects at all.
+func emptyPack() []byte { return packWith() }
+
+// packWith builds a packfile from raw object bodies.
+//
+// Written out rather than driven through git because the whole point is to send
+// something git would refuse to construct: a commit whose tree is absent.
+func packWith(entries ...packEntry) []byte {
+	var b bytes.Buffer
+	b.WriteString("PACK")
+	_ = binary.Write(&b, binary.BigEndian, uint32(2))
+	_ = binary.Write(&b, binary.BigEndian, uint32(len(entries)))
+
+	for _, e := range entries {
+		size := len(e.body)
+		// Type and size share the first byte: 3 bits of type, 4 low bits of size,
+		// then 7 bits per continuation byte, MSB marking "more".
+		first := byte(e.kind<<4) | byte(size&0x0f)
+		size >>= 4
+		for size > 0 {
+			b.WriteByte(first | 0x80)
+			first = byte(size & 0x7f)
+			size >>= 7
+		}
+		b.WriteByte(first)
+
+		zw := zlib.NewWriter(&b)
+		_, _ = io.WriteString(zw, e.body)
+		_ = zw.Close()
+	}
+
+	sum := sha1.Sum(b.Bytes()) // #nosec G401 -- the pack trailer is defined as SHA-1
+	b.Write(sum[:])
+	return b.Bytes()
+}
+
+// ensure the plumbing types stay referenced even as tests come and go
+var _ = git.Ref(mainlineRef)
+var _ = objTree
+var _ = objBlob
+
+// --- the hook's own rules, asserted by reason ------------------------------
+
+// TestPreReceiveRefusesForTheRightReason closes a gap the end-to-end tests
+// cannot.
+//
+// Over HTTP the client is told only "pre-receive hook declined": the detailed
+// message travels on a sideband the raw requests above do not request. So those
+// tests prove a refusal happened, not WHICH rule produced it — and a refusal by
+// the wrong rule is how a control rots unnoticed. This one drives the hook
+// directly and asserts the reason.
+//
+// The freshness case needs no quarantine to be realistic: with no
+// GIT_OBJECT_DIRECTORY set, every object named is already in the store, which is
+// precisely the shape of "you claimed what you did not send".
+func TestPreReceiveRefusesForTheRightReason(t *testing.T) {
+	_, bare, _, _, _ := writeWorld(t)
+	bobSHA := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", bobRef))
+
+	cases := []struct {
+		name    string
+		ref     string
+		stdin   string
+		wantMsg string
+	}{
+		{
+			name:    "a ref the credential does not name",
+			ref:     aliceRef,
+			stdin:   zeroOID + " " + bobSHA + " " + bobRef + "\n",
+			wantMsg: "does not authorize the ref",
+		},
+		{
+			name:    "two refs in one push",
+			ref:     aliceRef,
+			stdin:   zeroOID + " " + bobSHA + " " + aliceRef + "\n" + zeroOID + " " + bobSHA + " " + bobRef + "\n",
+			wantMsg: "exactly one ref",
+		},
+		{
+			name:    "deleting a ref",
+			ref:     aliceRef,
+			stdin:   bobSHA + " " + zeroOID + " " + aliceRef + "\n",
+			wantMsg: "deleting a ref is not permitted",
+		},
+		{
+			name:    "overwriting an existing audit ref",
+			ref:     aliceRef,
+			stdin:   bobSHA + " " + bobSHA + " " + aliceRef + "\n",
+			wantMsg: "written once",
+		},
+		{
+			name:    "claiming objects it did not send",
+			ref:     aliceRef,
+			stdin:   zeroOID + " " + bobSHA + " " + aliceRef + "\n",
+			wantMsg: "did not send",
+		},
+		{
+			name:    "a namespace ref, even if the authorizer allowed it",
+			ref:     "refs/namespaces/runs/x/refs/heads/run",
+			stdin:   zeroOID + " " + bobSHA + " refs/namespaces/runs/x/refs/heads/run\n",
+			wantMsg: "never writable",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Chdir(bare)
+			t.Setenv(gitd.EnvPushRef, c.ref)
+			t.Setenv(gitd.EnvPushMainline, mainlineRef)
+			t.Setenv("GIT_OBJECT_DIRECTORY", "")
+			t.Setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", "")
+
+			var stderr bytes.Buffer
+			code := gitd.PreReceive(t.Context(), strings.NewReader(c.stdin), &stderr)
+
+			if code == 0 {
+				t.Fatalf("accepted, want refusal:\n%s", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), c.wantMsg) {
+				t.Errorf("refused for the wrong reason.\n got: %s\nwant to contain: %q",
+					strings.TrimSpace(stderr.String()), c.wantMsg)
+			}
+		})
+	}
+}
+
+// TestPreReceiveWithoutScopeRefuses: reaching the hook by any path that does not
+// set the scope is, by itself, a reason to refuse.
+func TestPreReceiveWithoutScopeRefuses(t *testing.T) {
+	_, bare, _, _, _ := writeWorld(t)
+	t.Chdir(bare)
+	t.Setenv(gitd.EnvPushRef, "")
+
+	var stderr bytes.Buffer
+	if code := gitd.PreReceive(t.Context(), strings.NewReader(zeroOID+" "+zeroOID+" "+aliceRef+"\n"), &stderr); code == 0 {
+		t.Fatal("a push with no authorization scope was accepted")
+	}
+	if !strings.Contains(stderr.String(), "no authorization scope") {
+		t.Errorf("unexpected reason: %s", stderr.String())
+	}
+}
+
+// --- the mandatory secret scan (§5.3) --------------------------------------
+
+// leakedToken is shaped like a GitHub personal access token and is not one.
+//
+// Chosen after measuring rather than by intuition: gitleaks 8.30 does not report
+// a bare AKIA-prefixed AWS key, and allowlists Amazon's documentation example
+// outright. A test written around those fails while the scanner works — see the
+// note on fakePAT in the secrets package.
+const leakedToken = "ghp_016C7ce0e4bA8Fc4b1a7fD9C0f8E5d3B2a1908"
+
+// TestSecretInAPushIsRefused: §5.3, "obligatoire côté serveur avant
+// persistance".
+//
+// It also pins the rule that is easiest to break by accident: the refusal names
+// the rule, the file and the line, and NEVER the value. A scanner that echoes
+// what it finds has moved the leak into the pusher's terminal and the server's
+// logs rather than stopped it.
+func TestSecretInAPushIsRefused(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	if err := os.WriteFile(filepath.Join(alice, "group_vars_all.yml"),
+		[]byte("github_token: "+leakedToken+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "a run that leaks")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+aliceRef)
+	if err == nil {
+		t.Fatalf("a push carrying a credential was accepted:\n%s", out)
+	}
+	if refExists(t, bare, aliceRef) {
+		t.Fatal("the audit ref was created despite the secret")
+	}
+
+	if strings.Contains(out, leakedToken) {
+		t.Errorf("THE REFUSAL ECHOED THE SECRET back to the client:\n%s", out)
+	}
+	if !strings.Contains(out, "group_vars_all.yml") {
+		t.Errorf("the refusal does not say which file to look in:\n%s", out)
+	}
+}
+
+// TestSecretAlreadyInTheMainlineDoesNotBlock is the test that proves the scan's
+// PERIMETER, and it is the reason the perimeter is what it is.
+//
+// The scan covers the objects a push ADDS, not everything reachable. Were it the
+// whole tree, one credential committed to the protected branch — long before
+// warden existed — would refuse every run in that repository for ever, and the
+// only escape would be rewriting the mainline's history.
+func TestSecretAlreadyInTheMainlineDoesNotBlock(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "depot.git")
+	mustGit(t, root, "init", "--bare", "--initial-branch=main", bare)
+
+	seed := t.TempDir()
+	mustGit(t, seed, "init", "--initial-branch=main", ".")
+	if err := os.WriteFile(filepath.Join(seed, "legacy.yml"),
+		[]byte("github_token: "+leakedToken+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, seed, "add", ".")
+	mustGit(t, seed, "commit", "-m", "a credential that predates the product")
+	mainSHA := strings.TrimSpace(mustGit(t, seed, "rev-parse", "HEAD"))
+	mustGit(t, seed, "push", bare, mainSHA+":"+mainlineRef)
+
+	alice := t.TempDir()
+	mustGit(t, alice, "init", "--initial-branch=main", ".")
+	mustGit(t, alice, "fetch", bare, mainlineRef)
+	mustGit(t, alice, "reset", "--hard", "FETCH_HEAD")
+
+	url := servePush(t, root, aliceScope())
+
+	// Alice adds something innocuous on top. The old credential is still
+	// reachable from her commit — and must not be looked at again.
+	if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte("[dev]\nlocalhost"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "an honest run")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	if out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+aliceRef); err != nil {
+		t.Fatalf("a pre-existing mainline secret blocked an honest run — the scan "+
+			"perimeter is the whole tree instead of the new objects: %v\n%s", err, out)
+	}
+}
+
+// TestSecretInACommitMessageIsRefused closes the hole with a well-known shape.
+//
+// A token pasted into a commit message is exactly as leaked as one in a file,
+// and scanning blobs alone would miss it while looking thorough.
+func TestSecretInACommitMessageIsRefused(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "ran with token "+leakedToken)
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+aliceRef)
+	if err == nil {
+		t.Fatalf("a credential in a commit message was accepted:\n%s", out)
+	}
+	if refExists(t, bare, aliceRef) {
+		t.Fatal("the audit ref was created despite the secret in the message")
+	}
+	if strings.Contains(out, leakedToken) {
+		t.Errorf("the refusal echoed the secret:\n%s", out)
+	}
+}

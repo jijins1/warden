@@ -12,12 +12,21 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/jijins1/warden/internal/server"
 )
 
 func main() {
+	// git invoque ce binaire par un lien symbolique nommé `pre-receive`. Le test
+	// vient AVANT toute analyse d'arguments : le hook n'en reçoit aucun, il lit
+	// stdin, et un usage() affiché à cet endroit refuserait tous les push avec un
+	// message parfaitement incompréhensible côté client.
+	if filepath.Base(os.Args[0]) == server.HookName {
+		os.Exit(server.PreReceiveHook(context.Background(), os.Stdin, os.Stderr))
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wardend:", err)
 		os.Exit(1)

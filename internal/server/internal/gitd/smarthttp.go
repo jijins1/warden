@@ -295,8 +295,14 @@ func (h *smartHTTP) env(ns git.Namespace) []string {
 // overrides. The suffix returned is the literal from `allowed`, never the
 // client's bytes.
 func match(r *http.Request) (service, bool) {
+	return matchIn(allowed, r)
+}
+
+// matchIn is match against an explicit allowlist, so the read and write
+// transports share one matcher instead of two that could drift apart.
+func matchIn(list []service, r *http.Request) (service, bool) {
 	path := strings.Trim(r.URL.Path, "/")
-	for _, svc := range allowed {
+	for _, svc := range list {
 		if r.Method != svc.method {
 			continue
 		}
