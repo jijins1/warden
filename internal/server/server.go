@@ -133,7 +133,13 @@ func runAPI(ctx context.Context) error {
 	// Le type est celui du PORT et non *gitclient.Client : une valeur nulle de
 	// type concret rangée dans un champ d'interface n'est pas nil, et la branche
 	// qui répond 501 se transformerait en déréférencement de pointeur nul.
-	var repo core.RepoDiffer
+	var (
+		repo    core.RepoDiffer
+		mirrors core.MirrorRefresher
+		refs    core.RefResolver
+		grants  core.PushGrantIssuer
+		creator core.RunCreator
+	)
 	if adresse := os.Getenv(EnvGitInternalURL); adresse != "" {
 		jeton := os.Getenv(EnvGitInternalToken)
 		if jeton == "" {
@@ -146,15 +152,37 @@ func runAPI(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("client du rôle git: %w", err)
 		}
-		repo = gc
+		repo, mirrors, refs = gc, gc, gc
+
+		// Le frappeur de jetons est construit à part du client HTTP : signer ne
+		// fait AUCUN appel réseau, et les mêler donnerait à une opération
+		// purement locale l'apparence de dépendre de la disponibilité du rôle
+		// `git` (ADR-0028).
+		gi, err := gitclient.NewGrantIssuer(jeton)
+		if err != nil {
+			return fmt.Errorf("frappeur de jetons de push: %w", err)
+		}
+		grants = gi
+
+		// La création de run n'est branchée QUE si le rôle `git` est joignable.
+		// Sans lui, `POST /runs` ne peut ni rafraîchir le miroir ni résoudre la
+		// ref d'audit, et enregistrerait donc un run dont l'artefact est
+		// introuvable — exactement ce que la résolution côté serveur existe pour
+		// empêcher.
+		creator = st
 	}
 
 	server, err := api.New(cfg, api.Deps{
-		Runs:   st,
-		Users:  st,
-		Diffs:  dr,
-		Events: f,
-		Repo:   repo,
+		Runs:    st,
+		Users:   st,
+		Diffs:   dr,
+		Events:  f,
+		Repo:    repo,
+		Repos:   st,
+		Creator: creator,
+		Mirrors: mirrors,
+		Refs:    refs,
+		Grants:  grants,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
@@ -182,11 +210,13 @@ const (
 // par le rôle `api` (ADR-0006). Les séparer dès maintenant rend la NetworkPolicy
 // exprimable par port, sans changement de code le jour où le smart HTTP existera.
 const (
-	EnvGitAddr          = "WARDEN_GIT_ADDR"           // smart HTTP — pas encore servi
+	EnvGitAddr          = "WARDEN_GIT_ADDR"           // smart HTTP en lecture — pas encore servi, attend le jeton de run de l'ADR-0007
 	EnvGitInternalAddr  = "WARDEN_GIT_INTERNAL_ADDR"  // API interne, servie par gitd
 	EnvGitRoot          = "WARDEN_GIT_ROOT"           // racine des dépôts bare
 	EnvGitInternalURL   = "WARDEN_GIT_INTERNAL_URL"   // côté `api` : où joindre gitd
-	EnvGitInternalToken = "WARDEN_GIT_INTERNAL_TOKEN" // partagé par les deux
+	EnvGitInternalToken = "WARDEN_GIT_INTERNAL_TOKEN" // partagé par les deux, et clé de signature des jetons de push
+	EnvGitPushAddr      = "WARDEN_GIT_PUSH_ADDR"      // smart HTTP en écriture, servi à la CLI
+	EnvForgeToken       = "WARDEN_FORGE_TOKEN"        // lecture sur la forge, pour le miroir de la principale
 )
 
 // HookName est le nom sous lequel git invoque ce binaire comme hook.
@@ -232,10 +262,12 @@ func databaseURL(name string) (string, error) {
 	return dsn, nil
 }
 
-// runGit sert l'API interne du rôle `git` (ADR-0024).
+// runGit sert l'API interne du rôle `git` (ADR-0024) et son smart HTTP en
+// ÉCRITURE (ADR-0027, ADR-0028).
 //
-// Le smart HTTP n'est pas encore servi : ce rôle se réduit pour l'instant aux
-// diffs d'audit du §6.5.
+// Le smart HTTP en LECTURE n'est toujours pas servi : il attend le jeton de run
+// de l'ADR-0007, qui n'existe nulle part. Son port d'autorisation reste donc sans
+// implémentation, et `gitd` ne monte pas cette surface.
 func runGit(ctx context.Context) error {
 	// ADR-0005 : le moteur est le binaire git, et sa version est une condition
 	// de correction, pas une préférence. Le contrôle est ici, au démarrage du
@@ -245,12 +277,27 @@ func runGit(ctx context.Context) error {
 		return fmt.Errorf("rôle git: %w", err)
 	}
 
-	srv, err := gitd.New(gitd.Config{
+	cfg := gitd.Config{
 		Addr:             os.Getenv(EnvGitInternalAddr),
 		Racine:           os.Getenv(EnvGitRoot),
 		Jeton:            os.Getenv(EnvGitInternalToken),
+		ForgeToken:       os.Getenv(EnvForgeToken),
 		GracefulShutdown: 30 * time.Second,
-	})
+	}
+
+	// L'écriture n'est servie que si une adresse lui est donnée. Son port
+	// d'autorisation vérifie des jetons signés avec le secret interne
+	// (ADR-0028) : pas d'état, donc rien à provisionner ni à purger.
+	if adresse := os.Getenv(EnvGitPushAddr); adresse != "" {
+		authz, err := gitd.NewGrantAuthorizer(cfg.Jeton)
+		if err != nil {
+			return fmt.Errorf("rôle git: %w", err)
+		}
+		cfg.PushAddr = adresse
+		cfg.PushAuthorizer = authz
+	}
+
+	srv, err := gitd.New(cfg)
 	if err != nil {
 		return fmt.Errorf("rôle git: %w", err)
 	}
