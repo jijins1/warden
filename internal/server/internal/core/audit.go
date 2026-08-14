@@ -48,6 +48,12 @@ type User struct {
 	// Disabled est rendu à l'appelant plutôt qu'appliqué au stockage : refuser
 	// ou non est une décision d'autorisation, elle appartient au cœur.
 	Disabled bool
+
+	// IsAdmin ouvre l'administration de la configuration des dépôts, et rien
+	// d'autre. Il n'élargit PAS la lecture de l'audit : un administrateur ne voit
+	// pas les runs des autres, parce qu'administrer la politique et lire le code
+	// d'autrui sont deux capacités distinctes qu'il n'y a aucune raison de lier.
+	IsAdmin bool
 }
 
 // Run est un run tel que lu.

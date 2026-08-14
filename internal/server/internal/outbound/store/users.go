@@ -42,11 +42,11 @@ ON CONFLICT (type, subject) DO UPDATE
    SET display_name = excluded.display_name,
        email        = excluded.email,
        last_seen_at = now()
-RETURNING id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT NULL`
+RETURNING id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT NULL, is_admin`
 
 	var u User
 	err := s.pool.QueryRow(ctx, q, string(id.Type), id.Subject, id.DisplayName, id.Email).
-		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled)
+		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled, &u.IsAdmin)
 	if err != nil {
 		return User{}, fmt.Errorf("provisionnement de l'utilisateur %s/%s: %w", id.Type, id.Subject, err)
 	}
@@ -64,13 +64,13 @@ func (s *Store) UserBySubject(ctx context.Context, typ core.UserType, subject st
 	}
 
 	const q = `
-SELECT id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT NULL
+SELECT id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT NULL, is_admin
   FROM users
  WHERE type = $1 AND subject = $2`
 
 	var u User
 	err := s.pool.QueryRow(ctx, q, string(typ), subject).
-		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled)
+		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled, &u.IsAdmin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, fmt.Errorf("utilisateur %s/%s: %w", typ, subject, ErrNotFound)
 	}
