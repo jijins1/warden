@@ -47,6 +47,7 @@ func TestMain(m *testing.M) {
 
 const (
 	mainlineRef = "refs/heads/main"
+	alicePrefix = "refs/audit/alice/"
 	aliceRef    = "refs/audit/alice/01JZQ0000000000000000ALIC"
 	bobRef      = "refs/audit/bob/01JZQ00000000000000000BOB"
 	pushToken   = "alice-push-token"
@@ -136,7 +137,7 @@ func servePush(t *testing.T, root string, scope gitd.PushScope) string {
 }
 
 func aliceScope() gitd.PushScope {
-	return gitd.PushScope{Repo: "depot", Ref: aliceRef, Mainline: mainlineRef}
+	return gitd.PushScope{Repo: "depot", RefPrefix: alicePrefix}
 }
 
 // --- the honest path -------------------------------------------------------
@@ -255,7 +256,14 @@ func TestAuditRefIsWrittenOnce(t *testing.T) {
 	}
 }
 
-// TestRefOutsideScopeIsRefused: the credential names one ref, not a prefix.
+// TestRefOutsideScopeIsRefused: the credential names one namespace, and stops
+// there.
+//
+// Note what is NOT in this list: another ref under refs/audit/alice/. ADR-0028
+// deliberately traded the exact-ref scope for a prefix, which is what lets the
+// CLI mint its own run identifier and removes the reservation round trip. The
+// case below named "alicia" is what the trailing slash buys — without it,
+// refs/audit/alice would also cover refs/audit/alicia/.
 func TestRefOutsideScopeIsRefused(t *testing.T) {
 	root, bare, alice, _, _ := writeWorld(t)
 	url := servePush(t, root, aliceScope())
@@ -264,10 +272,11 @@ func TestRefOutsideScopeIsRefused(t *testing.T) {
 	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
 
 	for _, target := range []string{
-		bobRef, // someone else's audit ref
-		"refs/audit/alice/01JZQ000000000000000OTHR", // her own namespace, wrong run
+		bobRef,                                  // someone else's audit ref
 		mainlineRef,                             // the mainline itself
+		"refs/warden/mainline",                  // the freshness anchor
 		"refs/namespaces/runs/x/refs/heads/run", // a run's namespace
+		"refs/audit/alicia/01JZQ0000000000000000X", // a namespace whose name merely starts like hers
 	} {
 		t.Run(target, func(t *testing.T) {
 			out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+target)
@@ -279,6 +288,29 @@ func TestRefOutsideScopeIsRefused(t *testing.T) {
 
 	if refExists(t, bare, "refs/namespaces/runs/x/refs/heads/run") {
 		t.Error("a namespace ref was created by a client")
+	}
+}
+
+// TestAnyRefInOwnNamespaceIsAllowed states the relaxation ADR-0028 accepted,
+// rather than leaving it to be discovered.
+//
+// A prefix scope means the holder may create arbitrary refs under their OWN
+// audit namespace. They still cannot read or overwrite anyone else's: the
+// freshness control, write-once and hidden refs are untouched. What it buys is
+// the removal of an entire round trip and of two-phase run creation.
+func TestAnyRefInOwnNamespaceIsAllowed(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	mustGit(t, alice, "commit", "--allow-empty", "-m", "a run alice named herself")
+	sha := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	const own = "refs/audit/alice/01JZQ000000000000000OTHR"
+	if out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", sha+":"+own); err != nil {
+		t.Fatalf("alice was refused a ref in her own namespace: %v\n%s", err, out)
+	}
+	if !refExists(t, bare, own) {
+		t.Error("the ref was not created")
 	}
 }
 
@@ -523,53 +555,52 @@ func TestPreReceiveRefusesForTheRightReason(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		ref     string
+		prefix  string
 		stdin   string
 		wantMsg string
 	}{
 		{
 			name:    "a ref the credential does not name",
-			ref:     aliceRef,
+			prefix:  alicePrefix,
 			stdin:   zeroOID + " " + bobSHA + " " + bobRef + "\n",
 			wantMsg: "does not authorize the ref",
 		},
 		{
 			name:    "two refs in one push",
-			ref:     aliceRef,
+			prefix:  alicePrefix,
 			stdin:   zeroOID + " " + bobSHA + " " + aliceRef + "\n" + zeroOID + " " + bobSHA + " " + bobRef + "\n",
 			wantMsg: "exactly one ref",
 		},
 		{
 			name:    "deleting a ref",
-			ref:     aliceRef,
+			prefix:  alicePrefix,
 			stdin:   bobSHA + " " + zeroOID + " " + aliceRef + "\n",
 			wantMsg: "deleting a ref is not permitted",
 		},
 		{
 			name:    "overwriting an existing audit ref",
-			ref:     aliceRef,
+			prefix:  alicePrefix,
 			stdin:   bobSHA + " " + bobSHA + " " + aliceRef + "\n",
 			wantMsg: "written once",
 		},
 		{
 			name:    "claiming objects it did not send",
-			ref:     aliceRef,
+			prefix:  alicePrefix,
 			stdin:   zeroOID + " " + bobSHA + " " + aliceRef + "\n",
 			wantMsg: "did not send",
 		},
 		{
-			name:    "a namespace ref, even if the authorizer allowed it",
-			ref:     "refs/namespaces/runs/x/refs/heads/run",
+			name:    "a namespace prefix, even if the authorizer allowed it",
+			prefix:  "refs/namespaces/runs/x/",
 			stdin:   zeroOID + " " + bobSHA + " refs/namespaces/runs/x/refs/heads/run\n",
-			wantMsg: "never writable",
+			wantMsg: "no usable authorization scope",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Chdir(bare)
-			t.Setenv(gitd.EnvPushRef, c.ref)
-			t.Setenv(gitd.EnvPushMainline, mainlineRef)
+			t.Setenv(gitd.EnvPushPrefix, c.prefix)
 			t.Setenv("GIT_OBJECT_DIRECTORY", "")
 			t.Setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", "")
 
@@ -592,13 +623,13 @@ func TestPreReceiveRefusesForTheRightReason(t *testing.T) {
 func TestPreReceiveWithoutScopeRefuses(t *testing.T) {
 	_, bare, _, _, _ := writeWorld(t)
 	t.Chdir(bare)
-	t.Setenv(gitd.EnvPushRef, "")
+	t.Setenv(gitd.EnvPushPrefix, "")
 
 	var stderr bytes.Buffer
 	if code := gitd.PreReceive(t.Context(), strings.NewReader(zeroOID+" "+zeroOID+" "+aliceRef+"\n"), &stderr); code == 0 {
 		t.Fatal("a push with no authorization scope was accepted")
 	}
-	if !strings.Contains(stderr.String(), "no authorization scope") {
+	if !strings.Contains(stderr.String(), "no usable authorization scope") {
 		t.Errorf("unexpected reason: %s", stderr.String())
 	}
 }
@@ -751,10 +782,9 @@ func TestGrantAuthorizerDrivesARealPush(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	grant, err := gitwire.SignPushGrant(gitwire.PushGrant{
-		Repo:     "depot",
-		Ref:      aliceRef,
-		Mainline: mainlineRef,
-		Expires:  time.Now().Add(time.Hour).Unix(),
+		Repo:      "depot",
+		RefPrefix: alicePrefix,
+		Expires:   time.Now().Add(time.Hour).Unix(),
 	}, jetonDeTest)
 	if err != nil {
 		t.Fatalf("SignPushGrant: %v", err)
@@ -809,10 +839,9 @@ func TestAForgedGrantIsRefused(t *testing.T) {
 
 	// Signed with a secret the attacker chose, naming a scope they wish they had.
 	forged, err := gitwire.SignPushGrant(gitwire.PushGrant{
-		Repo:     "depot",
-		Ref:      bobRef,
-		Mainline: mainlineRef,
-		Expires:  time.Now().Add(time.Hour).Unix(),
+		Repo:      "depot",
+		RefPrefix: "refs/audit/bob/",
+		Expires:   time.Now().Add(time.Hour).Unix(),
 	}, "a-secret-the-attacker-picked")
 	if err != nil {
 		t.Fatalf("SignPushGrant: %v", err)
@@ -828,5 +857,57 @@ func TestAForgedGrantIsRefused(t *testing.T) {
 	before := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", bobRef))
 	if before == sha {
 		t.Fatal("bob's audit ref was overwritten with a forged grant")
+	}
+}
+
+// TestBuildingOnAnythingVisibleIsAccepted pins the invariant that broke first,
+// and would break silently again.
+//
+// Git NEGOTIATES: a client does not resend objects the server advertised as
+// having. So the set excluded by the freshness control must match exactly what
+// receive.hideRefs leaves visible. Any ref that is advertised but not excluded
+// looks, to the check, like an object claimed and not sent — and the honest push
+// is refused with a message about theft.
+//
+// The reasoning that got this wrong was "a smaller excluded set only makes the
+// check stricter, and an honest pusher holds its own history anyway". True about
+// holding it, false about sending it.
+//
+// This exercises the third glob: the pusher's own audit namespace, which is
+// un-hidden so that they can write in it, and therefore also visible to
+// negotiation.
+func TestBuildingOnAnythingVisibleIsAccepted(t *testing.T) {
+	root, bare, alice, _, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	// A first run, which lands in alice's namespace and becomes visible to her.
+	if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte("[dev]\nlocalhost"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "first run")
+	first := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+	if out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", first+":"+aliceRef); err != nil {
+		t.Fatalf("first push: %v\n%s", err, out)
+	}
+
+	// A second run on top of it. Its parent is now on the server, so git will not
+	// resend those objects — which is exactly the situation the excluded set has
+	// to account for.
+	if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte("[dev]\nlocalhost\nweb-01"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "second run")
+	second := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	const secondRef = "refs/audit/alice/01JZQ0000000000000SECND"
+	out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", second+":"+secondRef)
+	if err != nil {
+		t.Fatalf("a run built on the pusher's own previous audit commit was refused — "+
+			"the visible set and receive.hideRefs have diverged: %v\n%s", err, out)
+	}
+	if !refExists(t, bare, secondRef) {
+		t.Error("the second audit ref was not created")
 	}
 }

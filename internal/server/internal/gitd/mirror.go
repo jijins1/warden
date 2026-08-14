@@ -9,6 +9,9 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/gitwire"
 )
 
+// gitMainlinePointer est MainlinePointer typé pour le socle.
+var gitMainlinePointer = git.Ref(MainlinePointer)
+
 // handleMirror rafraîchit le miroir de la branche protégée d'un dépôt.
 //
 // Servi sur le listener INTERNE, jamais sur le smart HTTP. La distinction n'est
@@ -54,7 +57,8 @@ func (s *Server) handleMirror(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sha, err := git.New(dir).Fetch(r.Context(), req.Remote, s.cfg.ForgeToken, ref)
+	depot := git.New(dir)
+	sha, err := depot.Fetch(r.Context(), req.Remote, s.cfg.ForgeToken, ref)
 	if err != nil {
 		// La stderr de git n'entre PAS dans la réponse : elle cite volontiers
 		// l'URL, et une URL de forge dans un message d'erreur finit dans un
@@ -65,6 +69,23 @@ func (s *Server) handleMirror(w http.ResponseWriter, r *http.Request) {
 		repondreErreur(w, &gitwire.Error{
 			Code:    gitwire.CodeMirrorFailed,
 			Message: "la branche protégée n'a pas pu être rafraîchie depuis la forge",
+		})
+		return
+	}
+
+	// Le pointeur que le hook `pre-receive` lira comme ancre du contrôle de
+	// fraîcheur. Un nom FIXE plutôt qu'un paramètre porté par chaque jeton : la
+	// principale est une propriété du dépôt, elle ne varie pas d'un push à
+	// l'autre, et deux sources pour un même fait finissent par diverger.
+	//
+	// Il vit sous `refs/warden/`, que le hook n'admet jamais en écriture — seul
+	// `refs/audit/` l'est. Un client ne peut donc pas déplacer l'ancre.
+	if err := depot.UpdateRef(r.Context(), gitMainlinePointer, sha); err != nil {
+		slog.Error("pointeur de principale non écrit",
+			slog.String("repo", req.Repo), slog.String("error", err.Error()))
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeInternal,
+			Message: "le miroir a été rafraîchi mais son pointeur n'a pas pu être écrit",
 		})
 		return
 	}

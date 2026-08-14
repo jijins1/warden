@@ -25,10 +25,18 @@ import (
 // header into an HTTP_<NAME> variable, so anything the hook trusts must be
 // impossible to forge from a header. These names cannot be produced that way, and
 // the transport sets them unconditionally rather than passing them through.
-const (
-	EnvPushRef      = "WARDEN_PUSH_REF"
-	EnvPushMainline = "WARDEN_PUSH_MAINLINE"
-)
+const EnvPushPrefix = "WARDEN_PUSH_PREFIX"
+
+// MainlinePointer is where the mirror refresh records the protected branch.
+//
+// A fixed name rather than a per-push parameter. The mainline anchors the
+// freshness control, and it is a property of the REPOSITORY: it does not vary
+// between two pushes to the same repo. Carrying it in every grant made one fact
+// have two sources, and two sources of one fact eventually disagree.
+//
+// Under refs/warden/ so a client can never write it: the hook only admits refs
+// under the grant's prefix, which is always below refs/audit/.
+const MainlinePointer = "refs/warden/mainline"
 
 // zeroSHA is what git sends for "no value" on either side of an update.
 const zeroSHA = "0000000000000000000000000000000000000000"
@@ -62,12 +70,12 @@ func PreReceive(ctx context.Context, stdin io.Reader, stderr io.Writer) int {
 }
 
 func preReceive(ctx context.Context, stdin io.Reader) error {
-	allowed, err := git.NewRef(os.Getenv(EnvPushRef))
-	if err != nil {
-		// The transport sets this on every request it lets through. Its absence
-		// means the hook was reached by some other path, and the only safe
-		// reading of that is refusal.
-		return errors.New("this push carries no authorization scope")
+	prefix := os.Getenv(EnvPushPrefix)
+	// The transport sets this on every request it lets through. Its absence means
+	// the hook was reached by some other path, and the only safe reading of that
+	// is refusal.
+	if prefix == "" || !strings.HasSuffix(prefix, "/") || !strings.HasPrefix(prefix, "refs/audit/") {
+		return errors.New("this push carries no usable authorization scope")
 	}
 
 	updates, err := readUpdates(stdin)
@@ -83,16 +91,16 @@ func preReceive(ctx context.Context, stdin io.Reader) error {
 	}
 	u := updates[0]
 
-	if u.ref != allowed.String() {
+	if !strings.HasPrefix(u.ref, prefix) {
 		return errors.New("this credential does not authorize the ref being pushed")
 	}
-
-	// Belt and braces over whatever the authorizer said. A namespace ref is how
-	// a run reaches its own code (ADR-0007); letting a client create one is the
-	// first attack vector of gitnamespaces(7), and it must be impossible here
-	// even if an implementation of PushAuthorizer returns one.
-	if strings.HasPrefix(allowed.String(), "refs/namespaces/") {
-		return errors.New("refs under refs/namespaces/ are never writable by a client")
+	// `..` cannot appear in a ref name git accepts, but the check costs nothing
+	// and closes the class rather than trusting the parser above it.
+	if strings.Contains(u.ref, "..") {
+		return errors.New("the ref name contains a parent traversal")
+	}
+	if _, err := git.NewRef(u.ref); err != nil {
+		return errors.New("malformed ref name")
 	}
 
 	if u.new == zeroSHA {
@@ -111,7 +119,24 @@ func preReceive(ctx context.Context, stdin io.Reader) error {
 		return errors.New("malformed object id in the push")
 	}
 
-	return checkFreshness(ctx, tip)
+	return checkFreshness(ctx, tip, prefix)
+}
+
+// visibleGlobs lists what the pusher could already see, and therefore what it is
+// entitled not to retransmit.
+//
+// This has to agree EXACTLY with receive.hideRefs on the transport, and the
+// agreement is load-bearing in a way that is easy to miss. Git negotiates: the
+// client does not resend objects the server advertised as having. So anything
+// visible but missing from this list looks, to the freshness check, like an
+// object the client claimed without sending — and an honest push is refused.
+//
+// The mirror of a protected branch, the mainline pointer, and the pusher's own
+// audit namespace. Nothing else: refs/audit/ of OTHERS and refs/namespaces/ are
+// hidden, never advertised, and therefore always transmitted if referenced —
+// which is precisely what catches the attack.
+func visibleGlobs(prefix string) []string {
+	return []string{"refs/heads/", MainlinePointer, prefix}
 }
 
 // checkFreshness enforces the control ADR-0027 added to close the second form of
@@ -126,7 +151,7 @@ func preReceive(ctx context.Context, stdin io.Reader) error {
 // someone else's. The tip is new so it travels; the tree is not, so it does not;
 // and the audit ref then points at another user's code, which its owner reads
 // back through the diff of their own run.
-func checkFreshness(ctx context.Context, tip git.SHA) error {
+func checkFreshness(ctx context.Context, tip git.SHA, prefix string) error {
 	// Two views of the same repository, and the difference between them IS the
 	// control:
 	//
@@ -141,20 +166,11 @@ func checkFreshness(ctx context.Context, tip git.SHA) error {
 		os.Getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES"),
 	)
 
-	var excludes []git.Ref
-	if raw := os.Getenv(EnvPushMainline); raw != "" {
-		mainline, err := git.NewRef(raw)
-		if err != nil {
-			return errors.New("the configured mainline ref is malformed")
-		}
-		excludes = append(excludes, mainline)
-	}
-
-	// The mainline is the ONLY anchor, and it is written by the server from the
-	// forge — never by a client (ADR-0027). Were a client able to set it, it
-	// would name a commit holding the tree it covets, see it excluded here, and
-	// escape both this control and the secret scan that shares the set.
-	arriving, err := both.RevListObjects(ctx, tip, excludes)
+	// The excluded set is read from the REPOSITORY, never from anything the client
+	// sent (ADR-0027). A client able to widen it would name a commit holding the
+	// tree it covets, see it excluded here, and escape both this control and the
+	// secret scan that shares the set.
+	arriving, err := both.RevListObjects(ctx, tip, visibleGlobs(prefix))
 	if err != nil {
 		return errors.New("the pushed history could not be read")
 	}

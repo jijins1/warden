@@ -15,8 +15,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/jijins1/warden/internal/git"
 )
 
 // PushScope is what a push credential opens, and nothing more.
@@ -29,14 +27,21 @@ type PushScope struct {
 	// transport and the internal API use.
 	Repo string
 
-	// Ref is THE single ref this credential may CREATE. Not a prefix, not a
-	// pattern: the exact name, checked again in the hook.
-	Ref git.Ref
-
-	// Mainline is the only ref the pusher may build upon — the server's mirror of
-	// the protected branch. It anchors the freshness control of ADR-0027, which
-	// is why it must never be derived from anything the client sent.
-	Mainline git.Ref
+	// RefPrefix bounds the refs this credential may create, e.g.
+	// "refs/audit/alice/".
+	//
+	// A prefix rather than one exact ref, which is what lets the CLI mint its own
+	// run identifier instead of asking for one — no reservation call, no two-phase
+	// run creation, and §5.2 keeps its original order.
+	//
+	// The trailing slash is mandatory and checked: "refs/audit/bob" would also
+	// cover "refs/audit/bobby/...".
+	//
+	// The mainline is deliberately NOT here. It is a property of the repository,
+	// not of the grant: it never varies between two pushes to the same repo, and
+	// putting it in every token created a second source of truth for one fact. The
+	// hook reads it from the repository, where the mirror refresh writes it.
+	RefPrefix string
 }
 
 // PushAuthorizer resolves a presented token into the push scope it opens.
@@ -154,22 +159,21 @@ func validPushScope(s PushScope) error {
 	if s.Repo == "" {
 		return fmt.Errorf("no repository")
 	}
-	if s.Ref == "" {
-		return fmt.Errorf("no ref")
+	if s.RefPrefix == "" {
+		return fmt.Errorf("no ref prefix")
 	}
-	if _, err := git.NewRef(string(s.Ref)); err != nil {
-		return fmt.Errorf("malformed ref")
+	if !strings.HasSuffix(s.RefPrefix, "/") {
+		return fmt.Errorf("ref prefix without a trailing slash would spill into neighbouring namespaces")
 	}
-	// A namespace ref is how a run reaches its own code (ADR-0007). A client that
-	// could create one could make the server believe it holds an object it
-	// covets — the first attack vector of gitnamespaces(7). Never writable.
-	if strings.HasPrefix(string(s.Ref), "refs/namespaces/") {
-		return fmt.Errorf("refs/namespaces/ is not writable by a client")
+	if !strings.HasPrefix(s.RefPrefix, "refs/audit/") {
+		// The only namespace a client writes. In particular NOT refs/namespaces/,
+		// which is how a run reaches its own code (ADR-0007): a client able to
+		// create one could make the server believe it holds an object it covets —
+		// the first attack vector of gitnamespaces(7).
+		return fmt.Errorf("only refs/audit/ is writable by a client")
 	}
-	if s.Mainline != "" {
-		if _, err := git.NewRef(string(s.Mainline)); err != nil {
-			return fmt.Errorf("malformed mainline ref")
-		}
+	if strings.Contains(s.RefPrefix, "..") {
+		return fmt.Errorf("ref prefix contains a parent traversal")
 	}
 	return nil
 }
@@ -215,11 +219,10 @@ func (h *smartPush) env(scope PushScope) []string {
 		"GIT_COMMITTER_NAME=warden",
 		"GIT_COMMITTER_EMAIL=warden@invalid",
 
-		// The scope, carried to the hook process. See the comment on EnvPushRef:
-		// these names cannot be forged from a request header, and they are set
-		// unconditionally rather than passed through.
-		EnvPushRef + "=" + string(scope.Ref),
-		EnvPushMainline + "=" + string(scope.Mainline),
+		// The scope, carried to the hook process. See the comment on EnvPushPrefix:
+		// this name cannot be forged from a request header, and the transport sets
+		// it unconditionally rather than passing it through.
+		EnvPushPrefix + "=" + scope.RefPrefix,
 	}
 
 	overrides := [][2]string{
@@ -252,7 +255,7 @@ func (h *smartPush) env(scope PushScope) []string {
 		// freshness control is never reached. A green suite, a false one. The
 		// negation is what puts the control back on the path it is supposed to
 		// guard.
-		{"receive.hideRefs", "!" + string(scope.Ref)},
+		{"receive.hideRefs", "!" + scope.RefPrefix},
 
 		{"receive.denyDeletes", "true"},
 		{"receive.denyNonFastForwards", "true"},

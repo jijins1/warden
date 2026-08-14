@@ -13,10 +13,9 @@ const secretDeTest = "secret-interne-partage-de-test"
 
 func porteeValide() gitwire.PushGrant {
 	return gitwire.PushGrant{
-		Repo:     "depot",
-		Ref:      "refs/audit/alice/01JZQ0000000000000000ALIC",
-		Mainline: "refs/heads/main",
-		Expires:  time.Now().Add(time.Hour).Unix(),
+		Repo:      "depot",
+		RefPrefix: "refs/audit/alice/",
+		Expires:   time.Now().Add(time.Hour).Unix(),
 	}
 }
 
@@ -31,7 +30,7 @@ func TestAllerRetour(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParsePushGrant : %v", err)
 	}
-	if relu.Repo != "depot" || relu.Ref != porteeValide().Ref || relu.Mainline != "refs/heads/main" {
+	if relu.Repo != "depot" || relu.RefPrefix != porteeValide().RefPrefix {
 		t.Errorf("portée altérée à l'aller-retour : %+v", relu)
 	}
 }
@@ -107,9 +106,12 @@ func TestSignatureRefuseUnePorteeIncomplete(t *testing.T) {
 		nom    string
 		portee gitwire.PushGrant
 	}{
-		{"sans dépôt", gitwire.PushGrant{Ref: "refs/audit/a/b", Expires: 1 << 40}},
-		{"sans ref", gitwire.PushGrant{Repo: "depot", Expires: 1 << 40}},
-		{"sans expiration", gitwire.PushGrant{Repo: "depot", Ref: "refs/audit/a/b"}},
+		{"sans dépôt", gitwire.PushGrant{RefPrefix: "refs/audit/a/", Expires: 1 << 40}},
+		{"sans préfixe", gitwire.PushGrant{Repo: "depot", Expires: 1 << 40}},
+		{"sans expiration", gitwire.PushGrant{Repo: "depot", RefPrefix: "refs/audit/a/"}},
+		// `refs/audit/bob` couvrirait aussi `refs/audit/bobby/...` : la barre
+		// finale est ce qui borne le namespace au sien.
+		{"préfixe sans barre finale", gitwire.PushGrant{Repo: "depot", RefPrefix: "refs/audit/bob", Expires: 1 << 40}},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {

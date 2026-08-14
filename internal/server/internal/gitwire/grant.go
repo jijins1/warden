@@ -23,24 +23,34 @@ import (
 // laisse `gitd` sans état.
 //
 // Ce que le format ne fait pas, et qui est assumé : il n'y a **aucune
-// révocation** avant expiration. La contrepartie qui rend cela tenable n'est pas
-// une intention mais une propriété déjà démontrée — la portée vaut UNE ref, et
-// une ref d'audit est écrite une fois (ADR-0027). Rejouer un jeton après le
-// premier push réussi n'obtient donc rien : le second push est refusé par le
-// hook, quel que soit le porteur.
+// révocation** avant expiration. Ce qui rend cela tenable n'est pas une intention
+// mais deux propriétés déjà imposées ailleurs — la portée est bornée au namespace
+// d'audit de son porteur, et une ref d'audit est écrite une fois (ADR-0027). Un
+// jeton rejoué ne peut donc ni lire ni écraser le travail d'autrui ; il peut
+// seulement créer des refs inertes chez lui.
 type PushGrant struct {
 	// Repo est l'identifiant de dépôt, tel que le rôle `git` le résout.
 	Repo string `json:"r"`
 
-	// Ref est LA ref que ce jeton autorise à créer. Une seule, exacte.
-	Ref string `json:"f"`
-
-	// Mainline est la ref sur laquelle le pousseur peut s'appuyer. Elle ancre le
-	// contrôle de fraîcheur de l'ADR-0027 : c'est pourquoi elle est SIGNÉE et non
-	// déclarée à côté. Un client qui pourrait la choisir désignerait un commit
-	// portant l'arbre convoité, l'exclurait du périmètre, et échapperait du même
-	// coup au contrôle et au scan de secrets.
-	Mainline string `json:"m"`
+	// RefPrefix borne les refs que ce jeton autorise à créer, typiquement
+	// `refs/audit/<utilisateur>/`.
+	//
+	// Un PRÉFIXE et non une ref exacte, et c'est ce qui permet à la CLI de tirer
+	// son propre identifiant de run au lieu d'aller le demander. L'appel de
+	// réservation disparaît, et avec lui la création de run en deux temps et le
+	// réordonnancement du §5.2.
+	//
+	// Ce que le relâchement coûte, dit franchement : un jeton rejoué laisse créer
+	// des refs arbitraires DANS LE NAMESPACE DE SON PROPRE PORTEUR. Il ne permet
+	// toujours ni de lire ni d'écraser celui d'autrui — le contrôle de fraîcheur,
+	// l'écriture unique et le masquage des refs tiennent tous trois sans
+	// changement (ADR-0027).
+	//
+	// La principale n'est PAS ici. C'est une propriété du dépôt, pas de l'octroi :
+	// elle ne varie jamais d'un push à l'autre, et l'inscrire dans chaque jeton
+	// créait une seconde source de vérité pour la même chose. Le rôle `git` la lit
+	// dans le dépôt, où le rafraîchissement du miroir l'écrit.
+	RefPrefix string `json:"p"`
 
 	// Expires est une date Unix en secondes.
 	Expires int64 `json:"x"`
@@ -67,8 +77,14 @@ func SignPushGrant(g PushGrant, secret string) (string, error) {
 	if secret == "" {
 		return "", errors.New("secret de signature absent : le jeton serait forgeable")
 	}
-	if g.Repo == "" || g.Ref == "" {
-		return "", errors.New("portée incomplète : dépôt et ref sont obligatoires")
+	if g.Repo == "" || g.RefPrefix == "" {
+		return "", errors.New("portée incomplète : dépôt et préfixe de ref sont obligatoires")
+	}
+	// Un préfixe qui ne finit pas par `/` autorise plus que ce que son auteur
+	// croit : `refs/audit/bob` couvrirait `refs/audit/bobby/...`. Le refus est ici
+	// plutôt qu'à la vérification, du côté où la faute se corrige.
+	if !strings.HasSuffix(g.RefPrefix, "/") {
+		return "", errors.New("préfixe de ref sans barre finale : il déborderait sur les namespaces voisins")
 	}
 	if g.Expires <= 0 {
 		return "", errors.New("portée sans expiration : le jeton serait éternel")
@@ -125,7 +141,7 @@ func ParsePushGrant(token, secret string) (PushGrant, error) {
 		return PushGrant{}, ErrGrantInvalid
 	}
 
-	if g.Repo == "" || g.Ref == "" {
+	if g.Repo == "" || g.RefPrefix == "" || !strings.HasSuffix(g.RefPrefix, "/") {
 		return PushGrant{}, ErrGrantInvalid
 	}
 	if time.Now().Unix() >= g.Expires {

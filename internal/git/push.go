@@ -152,3 +152,24 @@ func (g *Git) Fetch(ctx context.Context, remote, token string, ref Ref) (SHA, er
 	}
 	return sha, nil
 }
+
+// UpdateRef points a ref at a commit, in this repository only.
+//
+// No network, no negotiation: this is a local ref write, used where the server
+// records something about its own state. Kept separate from Fetch because the two
+// fail for entirely different reasons — one because a forge is unreachable, the
+// other because a repository is broken — and a caller needs to tell them apart.
+func (g *Git) UpdateRef(ctx context.Context, ref Ref, commit SHA) error {
+	if _, err := NewRef(string(ref)); err != nil {
+		return err
+	}
+	if !commit.Valid() {
+		return fmt.Errorf("invalid commit SHA: %q", commit)
+	}
+
+	// `--` so a ref named like an option cannot be read as one.
+	if _, stderr, err := g.run(ctx, "update-ref", "--", ref.String(), commit.String()); err != nil {
+		return fmt.Errorf("git update-ref %s: %w: %s", ref, err, strings.TrimSpace(stderr))
+	}
+	return nil
+}

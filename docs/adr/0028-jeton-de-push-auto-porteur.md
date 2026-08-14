@@ -43,19 +43,69 @@ sur son PVC.
   vaut pas la révocation de trois positions tenues.
 
 ### Option C — Le jeton porte sa portée, signée ✅ (retenue)
-`api` frappe un jeton qui **contient** la portée — dépôt, ref, principale,
+`api` frappe un jeton qui **contient** la portée — dépôt, préfixe de ref,
 expiration — et la signe en HMAC-SHA256 avec le secret déjà partagé par les deux
 rôles (ADR-0024). `gitd` vérifie la signature et lit la portée.
 - **Choisie parce que** : elle **supprime l'état** au lieu de le déplacer. Rien à
   stocker, rien à synchroniser, rien à purger, rien à perdre au redémarrage, et
   `gitd` reste sans base. Le secret existe déjà : aucun composant nouveau.
 
+## Amendement du même jour — la portée est un PRÉFIXE, pas une ref exacte
+
+Le premier jet scopait le jeton à UNE ref exacte, ce qui imposait à la CLI de
+demander son identifiant de run au serveur avant de pousser. Une question a
+suffi à défaire ce raisonnement : à quoi sert cet aller-retour ?
+
+Il ne servait qu'à faire attribuer le ULID par le serveur. En scopant le jeton à
+`refs/audit/<utilisateur>/`, la CLI tire le sien, et disparaissent d'un coup :
+
+- l'endpoint de réservation ;
+- la création de run en deux temps en base ;
+- l'amendement du §5.2, dont la séquence « push d'audit puis `POST /runs` »
+  redevient valable telle quelle.
+
+**Ce que le relâchement coûte, sans l'enrober** : un jeton rejoué permet de créer
+des refs arbitraires dans le namespace d'audit de son porteur. Il ne permet
+toujours ni de lire ni d'écraser celui d'autrui — le contrôle de fraîcheur,
+l'écriture unique et le masquage des refs tiennent tous trois sans changement. Une
+ref d'audit sans ligne de run est inerte, et l'était déjà.
+
+La barre finale du préfixe est obligatoire et vérifiée aux deux bouts :
+`refs/audit/bob` couvrirait aussi `refs/audit/bobby/`.
+
+**Le champ `Mainline` disparaît du jeton.** C'est une propriété du dépôt et non
+de l'octroi : elle ne varie pas d'un push à l'autre, et la porter dans chaque
+jeton donnait deux sources de vérité au même fait. Le rafraîchissement du miroir
+l'écrit désormais dans `refs/warden/mainline`, que le hook lit — un chemin
+serveur-vers-serveur, sans passage par le client, donc à propriété de sécurité
+identique.
+
+### Ce que cet amendement a fait découvrir
+
+Le raisonnement qui justifiait de retirer l'ancre du jeton était : « une ancre
+absente exclut moins d'objets, donc rend le contrôle plus strict, et un pousseur
+honnête détient de toute façon son propre historique ». **La seconde moitié est
+fausse**, et un test l'a montré immédiatement.
+
+Git NÉGOCIE : un client ne renvoie pas les objets que le serveur a annoncé
+détenir. Une ref annoncée mais non exclue ressemble donc, pour le contrôle, à un
+objet revendiqué sans être transmis — et le push honnête est refusé avec un
+message parlant de vol.
+
+**L'invariant exact** : l'ensemble exclu doit coïncider avec ce que
+`receive.hideRefs` laisse visible. Ni plus — ce serait un trou — ni moins — ce
+serait un refus injustifié. Trois familles : le miroir des branches protégées, le
+pointeur de principale, et le namespace d'audit du pousseur lui-même. C'est le
+risque de divergence que le plan initial avait classé « élevé » et que j'avais
+cru supprimer en simplifiant l'ancre ; il est épinglé par
+`TestBuildingOnAnythingVisibleIsAccepted`.
+
 ## Décision
 
 ### 1. La portée voyage dans le jeton, signée
 
 Format : `wpg1.<base64url(corps)>.<base64url(HMAC)>`, le corps portant
-`{dépôt, ref, principale, expiration}`.
+`{dépôt, préfixe de ref, expiration}`.
 
 Quatre points de conception, chacun couvert par un test :
 
@@ -74,20 +124,33 @@ Quatre points de conception, chacun couvert par un test :
   distinction dit au sondeur laquelle de ses hypothèses est la bonne.
 
 **Authentique n'est pas bien formé.** Une signature prouve l'origine, pas la
-validité : `gitd` revalide la ref par `git.NewRef` en convertissant le jeton en
-portée. Le contrat de fil ne peut pas le faire — `gitwire` n'a le droit
+validité : `gitd` revalide le préfixe en lui adjoignant une feuille plausible et
+en vérifiant le tout par `git.NewRef` — valider le préfixe seul manquerait
+l'essentiel, puisqu'il finit par une barre et n'est donc pas un nom de ref, alors
+que les règles qui rendent une ref sûre portent sur des noms complets. Le contrat de fil ne peut pas le faire — `gitwire` n'a le droit
 d'importer aucun paquet du produit, et c'est ce qui le tient à l'état de contrat.
 
 ### 2. Aucune révocation avant expiration, et pourquoi c'est tenable
 
 C'est la contrepartie de l'option C, et elle est assumée plutôt que minimisée.
 
-Ce qui la rend acceptable n'est pas un pari mais une propriété **déjà imposée
-deux couches plus bas** : la portée vaut UNE ref, et une ref d'audit est écrite
-une fois (ADR-0027). Rejouer un jeton capturé après le push pour lequel il a été
-frappé n'obtient donc rien — le second push est refusé par le hook, quel que soit
-le porteur. La fenêtre réellement exploitable est celle entre la frappe et le
-premier push, et elle est bornée par l'expiration.
+Ce qui la rend acceptable n'est pas un pari mais deux propriétés **déjà imposées
+ailleurs** : la portée est bornée au namespace d'audit de son porteur, et une ref
+d'audit est écrite une fois (ADR-0027). Un jeton rejoué ne peut donc ni lire ni
+écraser le travail d'autrui ; il peut seulement créer des refs inertes chez lui.
+
+### 2 bis. L'option écartée qui manquait à cette ADR
+
+Faire transiter le push **par le rôle `api`**, en simple tuyau d'octets : `api`
+authentifie, connaît la ref, et injecte la portée en en-têtes vers `gitd`, qui lui
+fait confiance parce que le port ne lui est joignable que par lui. Aucune
+cryptographie, aucun format, aucune expiration.
+
+- **Rejetée parce que** : la simplification du modèle git faite en amont a
+  transformé le push d'historique complet en CAS NORMAL. Chaque run ferait donc
+  transiter un pack potentiellement énorme par un tier répliqué et dimensionné
+  pour du JSON, avant d'atteindre le composant qui détient le disque. Le jeton
+  existe pour que ces octets aillent en ligne droite.
 
 ### 3. Le secret partagé devient une clé de signature
 
@@ -159,9 +222,9 @@ rendue à l'appelant finit recopiée dans un ticket.
     URL de forge et quelle branche protégée correspondent à quel dépôt : il
     manque une table et sa surface d'administration. Tant qu'elle n'existe pas,
     `RefreshMirror` n'a pas d'appelant.
-  - **La réservation de run n'existe pas.** Le §5.2 ordonne « push d'audit puis
-    `POST /runs` », alors qu'un jeton scopé à une ref suppose que le serveur
-    connaisse cette ref AVANT le push. `POST /runs` n'existe pas davantage.
+  - ~~La réservation de run n'existe pas.~~ **Supprimée du besoin** par
+    l'amendement ci-dessus : la CLI tire son propre identifiant, et la séquence du
+    §5.2 tient telle quelle. Il reste que `POST /runs` n'existe pas.
   - Le chemin d'écriture **reste donc non câblé**, mais la raison a changé : ce
     n'est plus une propriété de sécurité manquante, c'est de la plomberie
     absente.

@@ -63,27 +63,29 @@ func (g *Git) WithObjectDirs(primary, alternates string) *Git {
 // two enumerations that could drift apart would be a hole rather than a
 // redundancy.
 //
-// Excludes that do not resolve are skipped rather than fatal. A repository whose
-// mainline mirror does not exist yet is a real state, and the safe reading of it
-// is "excludes nothing", which makes the caller's checks stricter rather than
-// weaker.
-func (g *Git) RevListObjects(ctx context.Context, tip SHA, excludes []Ref) ([]Object, error) {
+// Exclusions are GLOB PATTERNS rather than exact refs, and a pattern matching
+// nothing is not an error. That shape is what the caller needs: the set to
+// exclude is "everything the pusher could already see", which is a family of
+// refs and not a list — and a repository that holds none of them yet is a real
+// state, not a failure.
+func (g *Git) RevListObjects(ctx context.Context, tip SHA, excludeGlobs []string) ([]Object, error) {
 	if !tip.Valid() {
 		return nil, fmt.Errorf("invalid tip SHA: %q", tip)
 	}
 
 	args := []string{"rev-list", "--objects", tip.String()}
-	for _, ref := range excludes {
-		if _, err := NewRef(string(ref)); err != nil {
-			return nil, fmt.Errorf("invalid exclude ref %q: %w", ref, err)
+	for _, glob := range excludeGlobs {
+		// These patterns become arguments to git and decide what a security
+		// control excludes. They are validated rather than trusted: `--not` is
+		// positional, so a pattern that looked like an option would silently
+		// change the meaning of everything after it.
+		if !strings.HasPrefix(glob, "refs/") {
+			return nil, fmt.Errorf("exclude pattern %q must start with refs/", glob)
 		}
-		present, err := g.hasRef(ctx, ref)
-		if err != nil {
-			return nil, err
+		if strings.ContainsAny(glob, " \t\n~^:?[\\") || strings.Contains(glob, "..") {
+			return nil, fmt.Errorf("exclude pattern %q contains a forbidden character", glob)
 		}
-		if present {
-			args = append(args, "--not", ref.String())
-		}
+		args = append(args, "--not", "--glob="+glob)
 	}
 
 	// `--` terminates the revision list. Without it a ref named like an option
@@ -276,19 +278,4 @@ func (g *Git) PresentAmong(ctx context.Context, objects []SHA) ([]SHA, error) {
 		present = append(present, sha)
 	}
 	return present, nil
-}
-
-// hasRef reports whether a ref resolves in this repository.
-func (g *Git) hasRef(ctx context.Context, ref Ref) (bool, error) {
-	_, _, err := g.run(ctx, "rev-parse", "--verify", "--quiet", ref.String()+"^{commit}")
-	if err == nil {
-		return true, nil
-	}
-	// --quiet makes a missing ref exit 1 with no output, which is the answer
-	// rather than a failure. Anything else is a real error and must not be read
-	// as "absent" — that would silently widen the object set.
-	if isExitCode(err, 1) {
-		return false, nil
-	}
-	return false, fmt.Errorf("resolving ref %s: %w", ref, err)
 }
