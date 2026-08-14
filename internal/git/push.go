@@ -15,6 +15,34 @@ import (
 // retrying.
 var ErrRemoteRejected = fmt.Errorf("remote rejected the ref update")
 
+// rejected classifies a push failure as a refusal by the remote.
+//
+// The distinction decides what the caller does next: a refusal will not succeed
+// on retry, a transport failure very well might. Getting it backwards means a
+// client retrying a push the server has definitively declined.
+//
+// "[remote rejected]" is listed explicitly, and it is the case this function
+// exists for. It does NOT contain the substring "[rejected]" — the two words sit
+// between the bracket and "rejected" — so the obvious single test silently
+// misses every hook refusal, which is precisely the shape a pre-receive decline
+// takes (measured, ADR-0027 probe A4: "! [remote rejected] ... (deny updating a
+// hidden ref)"). Before ADR-0027 that made a server's deliberate "no" look like
+// a network glitch.
+func rejected(msg string) bool {
+	for _, marker := range []string{
+		"[remote rejected]",
+		"[rejected]",
+		"[remote failure]",
+		"non-fast-forward",
+		"pre-receive hook declined",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseRemote validates the URL of our git server.
 //
 // Only http and https are accepted, and the refusal of everything else is a
@@ -76,7 +104,7 @@ func (g *Git) Push(ctx context.Context, remote string, commit SHA, ref Ref) erro
 		adresse, commit.String()+":"+string(ref))
 	if err != nil {
 		msg := strings.TrimSpace(stderr)
-		if strings.Contains(msg, "[rejected]") || strings.Contains(msg, "non-fast-forward") {
+		if rejected(msg) {
 			return fmt.Errorf("%w: %s", ErrRemoteRejected, msg)
 		}
 		return fmt.Errorf("git push: %w: %s", err, msg)

@@ -265,12 +265,21 @@ func (g *Git) HasObject(ctx context.Context, s SHA) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+	if isExitCode(err, 1) {
 		return false, nil
 	}
 	return false, fmt.Errorf("git cat-file %s: %w: %s", s, err, strings.TrimSpace(stderr))
+}
+
+// isExitCode reports whether err is a command failure carrying the given status.
+//
+// Shared by the predicates that must distinguish "git answered no" from "git
+// broke". Collapsing the two would be a silent widening: an engine failure read
+// as "absent" makes an object look new, and ADR-0027 rests a security control on
+// that exact distinction.
+func isExitCode(err error, code int) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == code
 }
 
 // Diff returns the unified diff between two tree-ish objects, capped at
