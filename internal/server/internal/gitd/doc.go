@@ -40,18 +40,23 @@
 // hors de la racine des dépôts, posé par l'environnement — donc insurchargeable
 // par la config d'un dépôt.
 //
-// Les DEUX autorisations sont des PORTS (`Authorizer`, `PushAuthorizer`) et
-// n'ont pas d'implémentation ici. Ni le jeton de run de l'ADR-0007 ni le jeton
-// de push n'existent encore — la migration 00003 dit explicitement qu'elle ne
-// porte jamais « le jeton git de l'ADR-0007 » — et où vit leur état reste une
-// décision ouverte, contrainte par le fait que ce paquet ne parle pas à
-// PostgreSQL.
+// `PushAuthorizer` a une implémentation depuis l'ADR-0028 : `GrantAuthorizer`,
+// qui ne conserve AUCUN état. La portée voyage dans le jeton, signée par le rôle
+// `api` avec le secret déjà partagé — rien à stocker, rien à synchroniser, rien
+// à perdre au redémarrage d'une instance unique. `Authorizer`, lui, reste sans
+// implémentation : le jeton de run de l'ADR-0007 n'existe toujours pas, et la
+// migration 00003 dit explicitement qu'elle ne le porte jamais.
 //
-// Conséquence à tenir : le chemin d'écriture ne doit PAS être câblé dans
-// l'assembleur tant que le miroir de la principale n'est pas alimenté par le
-// serveur depuis la forge. Le contrôle de fraîcheur s'ancre sur ce miroir ; un
-// miroir écrit par le client retournerait le contrôle en attaque. Jusque-là,
-// l'absence de câblage est ce qui tient la propriété.
+// Le miroir de la principale est servi par `MirrorPath` sur le listener INTERNE,
+// jamais sur le smart HTTP : cet endpoint fait SORTIR une connexion vers une
+// adresse figurant dans la requête, et l'exposer à un pod runner donnerait à du
+// code arbitraire un moyen d'émettre des requêtes depuis le détenteur du volume.
+//
+// Le chemin d'écriture n'est TOUJOURS pas câblé, mais la raison a changé : ce
+// n'est plus une propriété de sécurité manquante, c'est de la plomberie absente.
+// Il manque la configuration de dépôt — quelle forge, quelle branche protégée —
+// et la réservation de run, sans laquelle le serveur ne connaît pas la ref
+// AVANT le push qu'il doit autoriser.
 //
 // AVERTISSEMENT sur la propriété d'isolation, tranché par l'ADR-0026 qui amende
 // l'ADR-0007 sur ce point. L'ADR-0007 fait reposer la

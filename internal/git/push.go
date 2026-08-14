@@ -111,3 +111,44 @@ func (g *Git) Push(ctx context.Context, remote string, commit SHA, ref Ref) erro
 	}
 	return nil
 }
+
+// Fetch updates one ref of this repository from a remote, and returns where it
+// lands.
+//
+// The mirror of the protected branch, and the reason ADR-0027 insists the SERVER
+// writes it: this ref anchors the freshness control of the write path. A client
+// able to choose it would name a commit holding the tree it covets, see it
+// excluded from the checked set, and slip past both that control and the secret
+// scan.
+//
+// The update is forced, deliberately. The forge is authoritative for the
+// protected branch, so a rebase or a rollback there must be reflected rather
+// than refused. The safety of that rests on which direction the risk runs: a
+// mirror that moves backwards makes the excluded set SMALLER, which makes the
+// freshness control stricter, never looser.
+func (g *Git) Fetch(ctx context.Context, remote, token string, ref Ref) (SHA, error) {
+	adresse, err := ParseRemote(remote)
+	if err != nil {
+		return "", err
+	}
+	if _, err := NewRef(string(ref)); err != nil {
+		return "", err
+	}
+
+	// --no-tags because a tag namespace from the forge has no business in the
+	// mirror: nothing reads it, and tags are a second way for refs to appear in
+	// a repository whose ref layout is otherwise entirely ours.
+	//
+	// `--` so neither the URL nor the refspec can be read as an option.
+	_, stderr, err := g.WithAuth(token).run(ctx, "fetch", "--no-tags", "--force", "--",
+		adresse, "+"+ref.String()+":"+ref.String())
+	if err != nil {
+		return "", fmt.Errorf("git fetch %s: %w: %s", ref, err, strings.TrimSpace(stderr))
+	}
+
+	sha, err := g.Resolve(ctx, ref.String())
+	if err != nil {
+		return "", fmt.Errorf("resolving %s after fetch: %w", ref, err)
+	}
+	return sha, nil
+}

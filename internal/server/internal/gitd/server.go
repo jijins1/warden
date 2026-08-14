@@ -65,6 +65,15 @@ type Config struct {
 	// MaxPushBytes bounds a push body. Zero means DefaultMaxPushBytes.
 	MaxPushBytes int64
 
+	// ForgeToken authentifie le rafraîchissement du miroir auprès de la forge.
+	//
+	// Il vit ICI et ne transite jamais dans une requête : un credential dans un
+	// corps de requête finit dans un journal au premier incident. Un seul
+	// credential pour tout le déploiement en v1 — c'est la posture que l'ADR-0020
+	// a déjà constatée faute de gestionnaire de secrets, et la rotation reste le
+	// seul mécanisme de révocation.
+	ForgeToken string
+
 	GracefulShutdown time.Duration
 }
 
@@ -208,6 +217,7 @@ func (s *Server) SmartHandler() http.Handler {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+gitwire.DiffPath, s.handleDiff)
+	mux.HandleFunc("POST "+gitwire.MirrorPath, s.handleMirror)
 	return s.auth.middleware(mux)
 }
 

@@ -1,0 +1,77 @@
+package gitd
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+
+	"github.com/jijins1/warden/internal/git"
+	"github.com/jijins1/warden/internal/server/internal/gitwire"
+)
+
+// handleMirror rafraîchit le miroir de la branche protégée d'un dépôt.
+//
+// Servi sur le listener INTERNE, jamais sur le smart HTTP. La distinction n'est
+// pas de rangement : cet endpoint fait SORTIR une connexion du rôle `git` vers
+// une adresse qui figure dans la requête. Exposé à un pod runner, il donnerait à
+// du code arbitraire un moyen de faire émettre des requêtes par le composant qui
+// détient le volume des dépôts.
+//
+// C'est aussi le premier endpoint à ouvrir un egress. L'ADR-0027 le dit : « pendant
+// son indisponibilité, aucun run ne démarre dans l'organisation » couvre
+// désormais la disponibilité de la forge.
+func (s *Server) handleMirror(w http.ResponseWriter, r *http.Request) {
+	var req gitwire.MirrorRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tailleMaxRequete))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeBadRequest,
+			Message: "corps de requête illisible",
+		})
+		return
+	}
+
+	ref, err := git.NewRef(req.Ref)
+	if err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "ref de branche invalide"})
+		return
+	}
+
+	// Revalidée ici bien que l'appelant soit le rôle `api`. `ParseRemote` refuse
+	// tout ce qui n'est pas http/https, donc `ext::` — qui prend une commande
+	// shell et l'exécute — et `file://`, qui atteindrait les dépôts voisins sur
+	// le volume. L'URL vient de la configuration serveur, mais elle traverse une
+	// requête, et le contrôle coûte une ligne.
+	if _, err := git.ParseRemote(req.Remote); err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "URL de forge refusée"})
+		return
+	}
+
+	dir, errDepot := s.depots.dir(req.Repo)
+	if errDepot != nil {
+		repondreErreur(w, errDepot)
+		return
+	}
+
+	sha, err := git.New(dir).Fetch(r.Context(), req.Remote, s.cfg.ForgeToken, ref)
+	if err != nil {
+		// La stderr de git n'entre PAS dans la réponse : elle cite volontiers
+		// l'URL, et une URL de forge dans un message d'erreur finit dans un
+		// ticket. Elle est journalisée côté serveur, où elle a sa place.
+		slog.Error("rafraîchissement du miroir en échec",
+			slog.String("repo", req.Repo), slog.String("ref", req.Ref),
+			slog.String("error", err.Error()))
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeMirrorFailed,
+			Message: "la branche protégée n'a pas pu être rafraîchie depuis la forge",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", gitwire.ContentTypeError)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := json.NewEncoder(w).Encode(gitwire.MirrorResponse{SHA: sha.String()}); err != nil {
+		slog.Error("réponse du miroir non écrite", slog.String("error", err.Error()))
+	}
+}

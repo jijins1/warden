@@ -46,6 +46,11 @@ func (c Code) HTTPStatus() int {
 		return 400
 	case CodeUnknownRepo, CodeUnknownObject:
 		return 404
+	case CodeMirrorFailed:
+		// 502 et non 500 : la panne est CHEZ LA FORGE, pas chez nous. La
+		// distinction est ce qui évite qu'un opérateur passe une heure dans les
+		// journaux du rôle `git` alors que c'est le dépôt amont qui répond mal.
+		return 502
 	default:
 		return 500
 	}
@@ -60,6 +65,8 @@ func CodeFromStatus(status int) Code {
 		return CodeBadRequest
 	case 404:
 		return CodeUnknownObject
+	case 502:
+		return CodeMirrorFailed
 	default:
 		return CodeInternal
 	}
