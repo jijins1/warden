@@ -42,3 +42,21 @@ func (g *GrantIssuer) IssuePushGrant(_ context.Context, repo, refPrefix string, 
 		Expires:   expires.Unix(),
 	}, g.secret)
 }
+
+// IssueFetchGrant frappe le jeton de run de l'ADR-0007.
+//
+// Le porteur est un pod runner, et l'ADR-0007 dit sans détour que ce jeton lui
+// est lisible — donc lisible par le playbook, donc par du code arbitraire (§2).
+// C'est acceptable parce que ce qu'il ouvre est minuscule : un espace de noms, en
+// lecture, sur un transport dont le côté écriture refuse ce genre de jeton par
+// construction.
+//
+// La durée doit tenir un run et pas davantage. Un jeton de lecture qui survit à
+// son run est un jeton qui traîne dans l'image d'un pod terminé.
+func (g *GrantIssuer) IssueFetchGrant(_ context.Context, repo, namespace string, expires time.Time) (string, error) {
+	return gitwire.SignFetchGrant(gitwire.FetchGrant{
+		Repo:      repo,
+		Namespace: namespace,
+		Expires:   expires.Unix(),
+	}, g.secret)
+}

@@ -87,3 +87,31 @@ type ResolveRequest struct {
 type ResolveResponse struct {
 	SHA string `json:"sha"`
 }
+
+// NamespacePath crée la ref d'espace de noms d'un run, sur le listener INTERNE.
+//
+// C'est ce que l'ADR-0007 appelle la réduction de portée « structurelle » : au
+// claim, le rôle `git` crée pour le run une ref unique dans un espace dédié, et
+// l'`upload-pack` servi au runner est lancé avec ce `GIT_NAMESPACE`. Le runner ne
+// voit alors qu'une seule ref, la sienne.
+//
+// La ref est créée par le SERVEUR et jamais poussée par un client : c'est le
+// point 4 de la conjonction de l'ADR-0027, et le hook refuse d'ailleurs
+// catégoriquement toute écriture sous `refs/namespaces/`. Un client qui pourrait
+// en créer une ferait croire au serveur qu'il détient un objet qu'il convoite —
+// le premier vecteur de gitnamespaces(7).
+const NamespacePath = "/internal/v1/namespace"
+
+// NamespaceRequest demande la création de la ref d'un run.
+type NamespaceRequest struct {
+	Repo string `json:"repo"`
+
+	// Namespace est la valeur de GIT_NAMESPACE, par exemple `runs/<run-id>`. Le
+	// rôle `git` compose lui-même le chemin réel, imbrication comprise : la
+	// composition naïve produit un chemin qui n'est jamais annoncé, sans erreur
+	// ni trace (ADR-0026).
+	Namespace string `json:"namespace"`
+
+	// SHA est le commit que le runner doit matérialiser.
+	SHA string `json:"sha"`
+}

@@ -210,7 +210,7 @@ const (
 // par le rôle `api` (ADR-0006). Les séparer dès maintenant rend la NetworkPolicy
 // exprimable par port, sans changement de code le jour où le smart HTTP existera.
 const (
-	EnvGitAddr          = "WARDEN_GIT_ADDR"           // smart HTTP en lecture — pas encore servi, attend le jeton de run de l'ADR-0007
+	EnvGitAddr          = "WARDEN_GIT_ADDR"           // smart HTTP en lecture, servi aux pods runner
 	EnvGitInternalAddr  = "WARDEN_GIT_INTERNAL_ADDR"  // API interne, servie par gitd
 	EnvGitRoot          = "WARDEN_GIT_ROOT"           // racine des dépôts bare
 	EnvGitInternalURL   = "WARDEN_GIT_INTERNAL_URL"   // côté `api` : où joindre gitd
@@ -262,12 +262,12 @@ func databaseURL(name string) (string, error) {
 	return dsn, nil
 }
 
-// runGit sert l'API interne du rôle `git` (ADR-0024) et son smart HTTP en
-// ÉCRITURE (ADR-0027, ADR-0028).
+// runGit sert l'API interne du rôle `git` (ADR-0024) et ses deux smart HTTP :
+// la LECTURE aux pods runner (ADR-0007) et l'ÉCRITURE à la CLI (ADR-0027).
 //
-// Le smart HTTP en LECTURE n'est toujours pas servi : il attend le jeton de run
-// de l'ADR-0007, qui n'existe nulle part. Son port d'autorisation reste donc sans
-// implémentation, et `gitd` ne monte pas cette surface.
+// Trois surfaces, trois ports d'écoute. La séparation est portée par le PORT et
+// non par le chemin, ce qui la rend exprimable en NetworkPolicy — et pour
+// l'écriture, c'est le contrôle n°3 de la conjonction de l'ADR-0027.
 func runGit(ctx context.Context) error {
 	// ADR-0005 : le moteur est le binaire git, et sa version est une condition
 	// de correction, pas une préférence. Le contrôle est ici, au démarrage du
@@ -283,6 +283,19 @@ func runGit(ctx context.Context) error {
 		Jeton:            os.Getenv(EnvGitInternalToken),
 		ForgeToken:       os.Getenv(EnvForgeToken),
 		GracefulShutdown: 30 * time.Second,
+	}
+
+	// La LECTURE, servie aux pods runner (ADR-0007). Son port d'autorisation
+	// vérifie le jeton de run, signé du même secret et d'un GENRE distinct de
+	// celui de l'écriture — un pod runner porte du code arbitraire et ne doit pas
+	// pouvoir présenter son jeton comme une autorisation d'écrire.
+	if adresse := os.Getenv(EnvGitAddr); adresse != "" {
+		authz, err := gitd.NewFetchAuthorizer(cfg.Jeton)
+		if err != nil {
+			return fmt.Errorf("rôle git: %w", err)
+		}
+		cfg.SmartAddr = adresse
+		cfg.Authorizer = authz
 	}
 
 	// L'écriture n'est servie que si une adresse lui est donnée. Son port

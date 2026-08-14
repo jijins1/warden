@@ -19,9 +19,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/server/internal/gitd"
+	"github.com/jijins1/warden/internal/server/internal/gitwire"
 )
 
 const (
@@ -458,5 +460,101 @@ func TestWithoutSmartHTTPTheServiceStillWorks(t *testing.T) {
 	}
 	if s.SmartHandler() != nil {
 		t.Error("a smart HTTP handler is mounted although no authorizer was provided")
+	}
+}
+
+// --- the run token, end to end ---------------------------------------------
+
+// TestFetchAuthorizerIsolatesRunsForReal closes the last gap of ADR-0007.
+//
+// The read transport shipped in ADR-0026 against an Authorizer that had no
+// implementation, so it was never actually served: every isolation test until now
+// used a hand-made table. This one mints the token the way the control plane
+// will, and lets the transport verify it — signature, namespace conversion and
+// ref confinement meeting on one real fetch.
+func TestFetchAuthorizerIsolatesRunsForReal(t *testing.T) {
+	root, shaA, shaB := twoRuns(t)
+
+	authz, err := gitd.NewFetchAuthorizer(jetonDeTest)
+	if err != nil {
+		t.Fatalf("NewFetchAuthorizer: %v", err)
+	}
+	s, err := gitd.New(gitd.Config{Racine: root, Jeton: jetonDeTest, Authorizer: authz})
+	if err != nil {
+		t.Fatalf("gitd.New: %v", err)
+	}
+	srv := httptest.NewServer(s.SmartHandler())
+	t.Cleanup(srv.Close)
+
+	grant, err := gitwire.SignFetchGrant(gitwire.FetchGrant{
+		Repo:      "depot",
+		Namespace: namespaceA,
+		Expires:   time.Now().Add(time.Hour).Unix(),
+	}, jetonDeTest)
+	if err != nil {
+		t.Fatalf("SignFetchGrant: %v", err)
+	}
+
+	client := t.TempDir()
+	out, err := gitWithToken(t, client, grant, "ls-remote", srv.URL+"/depot.git")
+	if err != nil {
+		t.Fatalf("ls-remote with a signed run token: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, shaA) {
+		t.Errorf("run A cannot see its own ref:\n%s", out)
+	}
+	if strings.Contains(out, shaB) {
+		t.Errorf("LEAK: run A sees run B's ref:\n%s", out)
+	}
+}
+
+// TestAPushGrantIsNotAFetchGrant pins the domain separation.
+//
+// One secret now signs three things: internal API authentication, write
+// authorization, and read authorization. The bearer of a read grant is a runner
+// pod — arbitrary code, by §2. If the kinds were interchangeable it could present
+// its token to the write transport, and the whole conjunction of ADR-0027 would
+// rest on a prefix nobody checks.
+func TestAPushGrantIsNotAFetchGrant(t *testing.T) {
+	root, _, _ := twoRuns(t)
+
+	fetchAuthz, err := gitd.NewFetchAuthorizer(jetonDeTest)
+	if err != nil {
+		t.Fatalf("NewFetchAuthorizer: %v", err)
+	}
+	s, err := gitd.New(gitd.Config{Racine: root, Jeton: jetonDeTest, Authorizer: fetchAuthz})
+	if err != nil {
+		t.Fatalf("gitd.New: %v", err)
+	}
+	srv := httptest.NewServer(s.SmartHandler())
+	t.Cleanup(srv.Close)
+
+	// A perfectly valid PUSH grant, signed with the real secret.
+	push, err := gitwire.SignPushGrant(gitwire.PushGrant{
+		Repo:      "depot",
+		RefPrefix: "refs/audit/1/",
+		Expires:   time.Now().Add(time.Hour).Unix(),
+	}, jetonDeTest)
+	if err != nil {
+		t.Fatalf("SignPushGrant: %v", err)
+	}
+
+	resp := rawCall(t, http.MethodGet,
+		srv.URL+"/depot.git/info/refs?service=git-upload-pack", push)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a push grant was accepted on the read transport: status %d", resp.StatusCode)
+	}
+
+	// And the reverse: swapping the kind prefix must not convert one into the
+	// other, because the kind is inside the signature.
+	_, reste, _ := strings.Cut(push, ".")
+	if resp2 := rawCall(t, http.MethodGet,
+		srv.URL+"/depot.git/info/refs?service=git-upload-pack", "wfg1."+reste); resp2.StatusCode != http.StatusUnauthorized {
+		_ = resp2.Body.Close()
+		t.Fatal("relabelling a push grant as a fetch grant was accepted")
+	} else {
+		_ = resp2.Body.Close()
 	}
 }

@@ -132,3 +132,28 @@ func itoa(n int64) string {
 type PushGrantIssuer interface {
 	IssuePushGrant(ctx context.Context, repo, refPrefix string, expires time.Time) (string, error)
 }
+
+// RunNamespacer prépare l'accès du runner à son code.
+//
+// Deux opérations qui vont ensemble et n'ont de sens qu'ensemble : créer la ref
+// dans l'espace de noms du run, et frapper le jeton qui ouvre cet espace. Les
+// séparer laisserait exister une moitié inutile — une ref que personne ne peut
+// lire, ou un jeton qui n'ouvre rien.
+//
+// Aucun appelant pour l'instant : le claim vit dans le contrôleur, qui reste à
+// écrire (§8.4).
+type RunNamespacer interface {
+	// CreateRunNamespace crée la ref que le runner verra comme sa seule ref.
+	CreateRunNamespace(ctx context.Context, repo, namespace, sha string) error
+
+	// IssueFetchGrant frappe le jeton de run de l'ADR-0007.
+	IssueFetchGrant(ctx context.Context, repo, namespace string, expires time.Time) (string, error)
+}
+
+// RunNamespaceFor compose la valeur de GIT_NAMESPACE d'un run.
+//
+// ATTENTION au chemin réel : git IMBRIQUE chaque composant, donc `runs/<id>`
+// résout `refs/namespaces/runs/refs/namespaces/<id>/`. La composition du chemin
+// appartient au rôle `git`, qui la fait par `git.NamespacedRef` — l'écrire à la
+// main est l'erreur que l'ADR-0026 a mesurée, et elle échoue sans bruit.
+func RunNamespaceFor(runRef string) string { return "runs/" + runRef }

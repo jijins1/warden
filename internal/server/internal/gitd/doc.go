@@ -40,23 +40,25 @@
 // hors de la racine des dépôts, posé par l'environnement — donc insurchargeable
 // par la config d'un dépôt.
 //
-// `PushAuthorizer` a une implémentation depuis l'ADR-0028 : `GrantAuthorizer`,
-// qui ne conserve AUCUN état. La portée voyage dans le jeton, signée par le rôle
-// `api` avec le secret déjà partagé — rien à stocker, rien à synchroniser, rien
-// à perdre au redémarrage d'une instance unique. `Authorizer`, lui, reste sans
-// implémentation : le jeton de run de l'ADR-0007 n'existe toujours pas, et la
-// migration 00003 dit explicitement qu'elle ne le porte jamais.
+// LES DEUX ports d'autorisation ont une implémentation depuis l'ADR-0028, et
+// aucun ne conserve d'état : `GrantAuthorizer` pour l'écriture, `FetchAuthorizer`
+// pour la lecture. La portée voyage dans le jeton, signée par le rôle `api` avec
+// le secret déjà partagé — rien à stocker, rien à synchroniser, rien à perdre au
+// redémarrage d'une instance unique.
+//
+// Les deux genres de jeton ne sont pas interchangeables : le genre entre dans le
+// calcul de la signature. C'est ce qui empêche un pod runner — du code arbitraire
+// (§2) — de présenter son jeton de lecture comme une autorisation d'écrire.
 //
 // Le miroir de la principale est servi par `MirrorPath` sur le listener INTERNE,
 // jamais sur le smart HTTP : cet endpoint fait SORTIR une connexion vers une
 // adresse figurant dans la requête, et l'exposer à un pod runner donnerait à du
 // code arbitraire un moyen d'émettre des requêtes depuis le détenteur du volume.
 //
-// Le chemin d'écriture n'est TOUJOURS pas câblé, mais la raison a changé : ce
-// n'est plus une propriété de sécurité manquante, c'est de la plomberie absente.
-// Il manque la configuration de dépôt — quelle forge, quelle branche protégée —
-// et la réservation de run, sans laquelle le serveur ne connaît pas la ref
-// AVANT le push qu'il doit autoriser.
+// Les deux chemins sont câblés. Ce qui manque est ailleurs : le CLAIM, qui doit
+// créer la ref d'espace de noms du run et frapper son jeton de lecture, vit dans
+// le contrôleur et reste à écrire (§8.4). `CreateRunNamespace` et
+// `IssueFetchGrant` existent et n'ont donc pas encore d'appelant.
 //
 // AVERTISSEMENT sur la propriété d'isolation, tranché par l'ADR-0026 qui amende
 // l'ADR-0007 sur ce point. L'ADR-0007 fait reposer la

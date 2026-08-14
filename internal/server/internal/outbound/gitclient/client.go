@@ -269,3 +269,46 @@ func (c *Client) ResolveRef(ctx context.Context, repo, ref string) (string, erro
 	}
 	return out.SHA, nil
 }
+
+// CreateRunNamespace crée la ref d'espace de noms d'un run.
+//
+// C'est la réduction de portée « structurelle » de l'ADR-0007 : la ref est créée
+// par le SERVEUR au claim, et l'`upload-pack` servi au runner est lancé avec le
+// `GIT_NAMESPACE` correspondant, si bien qu'il ne voit qu'une seule ref.
+//
+// Elle n'a pas encore d'appelant : le claim vit dans le contrôleur, qui reste à
+// écrire. La poser ici plutôt que plus tard évite qu'on la redécouvre en la
+// réimplémentant, et surtout qu'on recompose le chemin naïvement — l'imbrication
+// des espaces de noms échoue en silence (ADR-0026).
+func (c *Client) CreateRunNamespace(ctx context.Context, repo, namespace, sha string) error {
+	if repo == "" || namespace == "" || sha == "" {
+		return fmt.Errorf("création d'espace de noms : dépôt, espace et SHA sont obligatoires")
+	}
+
+	ctx, annuler := context.WithTimeout(ctx, c.timeout)
+	defer annuler()
+
+	corps, err := json.Marshal(gitwire.NamespaceRequest{Repo: repo, Namespace: namespace, SHA: sha})
+	if err != nil {
+		return fmt.Errorf("encodage de la requête: %w", err)
+	}
+
+	cible := c.base.JoinPath(gitwire.NamespacePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cible.String(), bytes.NewReader(corps))
+	if err != nil {
+		return fmt.Errorf("construction de la requête: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return fmt.Errorf("appel du rôle git: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.erreur(resp)
+	}
+	return nil
+}

@@ -29,6 +29,10 @@ type GrantAuthorizer struct {
 	secret string
 }
 
+// errGrantSecretAbsent est partagée par les deux autorisations : sans secret,
+// leurs jetons sont forgeables, et l'échec doit être au démarrage.
+var errGrantSecretAbsent = errors.New("secret de vérification des jetons absent : ils seraient forgeables")
+
 // NewGrantAuthorizer builds the authorizer around the shared internal secret.
 //
 // The same secret that authenticates the internal API (ADR-0024) now also signs
@@ -40,7 +44,7 @@ type GrantAuthorizer struct {
 // signature keeps the two uses from being interchangeable.
 func NewGrantAuthorizer(secret string) (*GrantAuthorizer, error) {
 	if secret == "" {
-		return nil, errors.New("secret de vérification des jetons de push absent : ils seraient forgeables")
+		return nil, errGrantSecretAbsent
 	}
 	return &GrantAuthorizer{secret: secret}, nil
 }

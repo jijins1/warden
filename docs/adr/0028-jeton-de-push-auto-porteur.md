@@ -1,4 +1,4 @@
-# ADR-0028 — Le jeton de push porte sa propre portée, et le serveur écrit le miroir
+# ADR-0028 — Les jetons git portent leur propre portée, et le serveur écrit le miroir
 
 **Date** : 2026-08-14
 **Statut** : Accepted
@@ -23,7 +23,11 @@ L'ADR-0027 a par ailleurs laissé une dette bloquante :
 > Le chemin d'écriture ne doit pas être câblé tant que le miroir de la principale
 > n'est pas alimenté par le serveur.
 
-Cette ADR tranche les deux.
+Cette ADR tranche les deux, et le format retenu s'est révélé assez général pour
+servir aussi la LECTURE : le jeton de run de l'ADR-0007, qui n'existait nulle
+part, est le même mécanisme sous un genre distinct. Les deux ports
+d'autorisation ont donc désormais une implémentation, et aucun ne conserve
+d'état.
 
 ## Solutions envisagées — l'état d'autorisation
 
@@ -218,6 +222,11 @@ rendue à l'appelant finit recopiée dans un ticket.
     démarrer, couvre maintenant celle de la forge.
 
 - **Dette technique éventuelle** :
+  - ~~Le jeton de run de l'ADR-0007 n'existe pas.~~ **Frappé depuis** : le même
+    format signé sert la lecture, sous un GENRE distinct. Le genre entre dans le
+    calcul de la signature, donc un jeton de lecture ne peut pas être relabellisé
+    en jeton d'écriture — ce qui compte, puisque le porteur d'un jeton de lecture
+    est un pod runner, c'est-à-dire du code arbitraire (§2).
   - **La configuration de dépôt n'existe pas.** Personne ne sait encore quelle
     URL de forge et quelle branche protégée correspondent à quel dépôt : il
     manque une table et sa surface d'administration. Tant qu'elle n'existe pas,

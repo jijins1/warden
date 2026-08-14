@@ -145,3 +145,73 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 		slog.Error("réponse de résolution non écrite", slog.String("error", err.Error()))
 	}
 }
+
+// RunBranch est la ref que le runner voit dans son espace de noms (ADR-0007).
+const RunBranch = "refs/heads/run"
+
+// handleNamespace crée la ref d'espace de noms d'un run.
+//
+// Servi sur le listener interne, comme le reste : un pod runner qui pourrait
+// appeler cet endpoint se créerait une ref vers l'objet de son choix, ce qui est
+// exactement le premier vecteur de gitnamespaces(7).
+func (s *Server) handleNamespace(w http.ResponseWriter, r *http.Request) {
+	var req gitwire.NamespaceRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tailleMaxRequete))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "corps de requête illisible"})
+		return
+	}
+
+	ns, err := git.NewNamespace(req.Namespace)
+	if err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "espace de noms invalide"})
+		return
+	}
+	sha, err := git.NewSHA(req.SHA)
+	if err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "SHA invalide"})
+		return
+	}
+
+	dir, errDepot := s.depots.dir(req.Repo)
+	if errDepot != nil {
+		repondreErreur(w, errDepot)
+		return
+	}
+	depot := git.New(dir)
+
+	// L'objet doit exister AVANT que la ref le désigne. Une ref vers un objet
+	// absent ne serait pas seulement inutile : elle ferait échouer le fetch du
+	// runner avec un message parlant de dépôt corrompu, très loin de la cause.
+	present, err := depot.HasObject(r.Context(), sha)
+	if err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeInternal, Message: "dépôt illisible"})
+		return
+	}
+	if !present {
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeUnknownObject,
+			Message: "ce commit n'est pas dans le dépôt",
+		})
+		return
+	}
+
+	// La composition passe par le socle : elle imbrique `refs/namespaces/` devant
+	// CHAQUE composant, ce que la forme naïve ne fait pas — et son échec est
+	// silencieux (ADR-0026).
+	cible, err := git.NamespacedRef(ns, RunBranch)
+	if err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "espace de noms invalide"})
+		return
+	}
+
+	if err := depot.UpdateRef(r.Context(), cible, sha); err != nil {
+		slog.Error("création de la ref d'espace de noms en échec",
+			slog.String("repo", req.Repo), slog.String("error", err.Error()))
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeInternal, Message: "la ref du run n'a pas pu être créée"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

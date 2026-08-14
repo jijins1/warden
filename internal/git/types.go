@@ -127,3 +127,32 @@ func NewNamespace(ns string) (Namespace, error) {
 func (n Namespace) String() string {
 	return string(n)
 }
+
+// NamespacedRef composes the real path a ref takes inside a namespace.
+//
+// It exists because the obvious composition is WRONG, and wrongly in the worst
+// way: git NESTS every slash-separated component of a namespace. A namespace of
+// "runs/<id>" resolves to refs/namespaces/runs/refs/namespaces/<id>/, not
+// refs/namespaces/runs/<id>/ — which is what ADR-0007 wrote and ADR-0026
+// measured and corrected.
+//
+// The failure mode is why this is a function rather than a comment somewhere: a
+// ref written at the guessed path is simply never advertised. No error, exit code
+// zero, an empty advertisement — a runner with no code and nothing in the logs.
+func NamespacedRef(ns Namespace, ref Ref) (Ref, error) {
+	if _, err := NewNamespace(string(ns)); err != nil {
+		return "", err
+	}
+	if _, err := NewRef(string(ref)); err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	for _, component := range strings.Split(string(ns), "/") {
+		b.WriteString("refs/namespaces/")
+		b.WriteString(component)
+		b.WriteString("/")
+	}
+	b.WriteString(string(ref))
+	return NewRef(b.String())
+}
