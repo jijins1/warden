@@ -61,6 +61,11 @@ type Deps struct {
 	// répondent 501 plutôt que de lire un dépôt local, ce que le rôle `api`
 	// n'a pas le droit de faire (ADR-0006).
 	Repo core.RepoDiffer
+
+	// Repos est facultatif au même titre : sans lui, la surface
+	// d'administration répond 501. Un déploiement qui ne sert que la consultation
+	// d'audit reste valide.
+	Repos core.RepoStore
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -114,6 +119,13 @@ func (a *Server) Run(ctx context.Context) error {
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
+
+	// Administration. Sous un préfixe distinct pour que la NetworkPolicy et
+	// l'ingress puissent la traiter à part — l'autorisation est portée par la
+	// politique, mais un chemin séparé la rend restreignable sans changement de
+	// code.
+	router.HandleFunc("GET /admin/repos", a.HandleListRepos)
+	router.HandleFunc("PUT /admin/repos/{repo}", a.HandlePutRepo)
 
 	// Apply authentication middleware to all routes
 	a.srv.Handler = a.AuthnMiddleware(router)

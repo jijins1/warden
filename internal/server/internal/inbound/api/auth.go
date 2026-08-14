@@ -82,10 +82,27 @@ type Policy struct{}
 // NewPolicy creates a new authorization policy.
 func NewPolicy() *Policy { return &Policy{} }
 
+// CanAdministerRepos reports whether the user may read and write the per-repo
+// server policy.
+//
+// A SEPARATE question from CanViewRun, and the separation is deliberate: an
+// administrator does not thereby gain the right to read other people's runs.
+// Administering the policy and reading someone else's code are different
+// capabilities, and there is no reason to bundle them — §2 treats a playbook as
+// code, and an audit tree is that code.
+//
+// Nobody is born an administrator: the flag defaults to false and no endpoint
+// grants it. The first one is set by hand in SQL by whoever operates the
+// deployment, because any other bootstrap would mean the first person to log in
+// on a fresh instance owns the whole organisation's configuration.
+func (p *Policy) CanAdministerRepos(_ context.Context, user *core.User) bool {
+	return user != nil && !user.Disabled && user.IsAdmin
+}
+
 // CanViewRun reports whether the user may read a run and everything hanging off
 // it (events, diffs, git diffs).
 //
-// TODO: admins, and users who own the hosts a run touched.
+// TODO: users who own the hosts a run touched.
 func (p *Policy) CanViewRun(ctx context.Context, user *core.User, run *core.Run) bool {
 	if user == nil || run == nil {
 		return false
