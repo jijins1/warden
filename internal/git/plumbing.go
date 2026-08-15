@@ -300,3 +300,64 @@ func splitNUL(s string) []string {
 	}
 	return out
 }
+
+// Init creates a repository in the directory, which must already exist.
+//
+// Idempotent: git re-initialises an existing repository without touching its
+// objects or refs. The runner relies on that — a pod restarted by the kubelet
+// finds its workspace as it left it.
+func (g *Git) Init(ctx context.Context) error {
+	if _, err := g.output(ctx, "init", "--quiet", "--initial-branch=run", "."); err != nil {
+		return fmt.Errorf("git init: %w", err)
+	}
+	return nil
+}
+
+// FetchShallowRef fetches one ref from a remote at depth 1, into FETCH_HEAD.
+//
+// Depth 1 is a BANDWIDTH optimisation and never a security control — ADR-0007 is
+// explicit, and the distinction matters: what bounds the runner is GIT_NAMESPACE
+// on the server side, not what the client asks for. A runner asking for full
+// depth would get its own namespace in full, and nothing else.
+//
+// It fetches a REF and not a SHA, and that is not a preference either. The read
+// transport pins the protocol to v0 precisely so that an unadvertised object
+// cannot be requested by its identifier (ADR-0026); asking for a SHA would be
+// refused. The namespace makes exactly one ref visible, so the ref is all the
+// runner needs to name.
+func (g *Git) FetchShallowRef(ctx context.Context, remote, token string, ref Ref) error {
+	adresse, err := ParseRemote(remote)
+	if err != nil {
+		return err
+	}
+	if _, err := NewRef(string(ref)); err != nil {
+		return err
+	}
+
+	// --no-tags: the namespace should expose nothing else, and asking for less is
+	// one fewer thing to be surprised by.
+	_, stderr, err := g.WithAuth(token).run(ctx, "fetch", "--depth=1", "--no-tags", "--",
+		adresse, ref.String())
+	if err != nil {
+		return fmt.Errorf("git fetch %s: %w: %s", ref, err, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// CheckoutDetached puts the working tree at a commit, detached.
+//
+// Detached on purpose: a branch would suggest the workspace is a place to work
+// from, and it is not — it is a materialisation of one commit, thrown away with
+// the pod.
+//
+// --force because the workspace may hold leftovers from a restarted container,
+// and the only correct state here is "exactly this commit".
+func (g *Git) CheckoutDetached(ctx context.Context, commit SHA) error {
+	if !commit.Valid() {
+		return fmt.Errorf("invalid commit SHA: %q", commit)
+	}
+	if _, err := g.output(ctx, "checkout", "--force", "--detach", commit.String()); err != nil {
+		return fmt.Errorf("git checkout %s: %w", commit, err)
+	}
+	return nil
+}
