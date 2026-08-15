@@ -75,18 +75,25 @@ test-e2e: ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée des na
 # des binaires établit.
 # ---------------------------------------------------------------------------
 
+# Le chemin d'un paquet Gitea est `<hôte>/<propriétaire>/<image>`, et le
+# propriétaire doit EXISTER — un utilisateur ou une organisation. Un propriétaire
+# inventé ne produit pas une erreur d'autorisation mais un 404 à l'envoi du
+# premier blob, ce qui se lit comme une panne de registre.
 REGISTRY ?= gitea.ruokki.ovh
+REGISTRY_OWNER ?= ruokki
 IMAGE_TAG ?= dev
+
+IMAGE_BASE := $(REGISTRY)/$(REGISTRY_OWNER)
 
 .PHONY: images
 images: ## Construit les deux images en local, sans rien pousser
-	docker build -f build/wardend.Dockerfile -t $(REGISTRY)/warden/wardend:$(IMAGE_TAG) .
-	docker build -f build/runner.Dockerfile  -t $(REGISTRY)/warden/warden-runner:$(IMAGE_TAG) .
+	docker build -f build/wardend.Dockerfile -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) .
+	docker build -f build/runner.Dockerfile  -t $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) .
 
 .PHONY: images-push
 images-push: images ## Pousse les images (exige un `docker login $(REGISTRY)` préalable)
-	docker push $(REGISTRY)/warden/wardend:$(IMAGE_TAG)
-	docker push $(REGISTRY)/warden/warden-runner:$(IMAGE_TAG)
+	docker push $(IMAGE_BASE)/wardend:$(IMAGE_TAG)
+	docker push $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG)
 
 # ---------------------------------------------------------------------------
 # Base de développement.
