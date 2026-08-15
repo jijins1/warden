@@ -28,7 +28,7 @@ type RunByIDReader interface {
 // décide qu'il le recevra.
 type OrderBuilder struct {
 	runs    RunByIDReader
-	grants  RunNamespacer
+	grants  FetchGrantIssuer
 	gitURL  string
 	fetchTL time.Duration
 }
@@ -46,7 +46,7 @@ type OrderBuilder struct {
 const FetchGrantTTL = 4 * time.Hour
 
 // NewOrderBuilder construit le composeur d'ordres.
-func NewOrderBuilder(runs RunByIDReader, grants RunNamespacer, gitURL string) (*OrderBuilder, error) {
+func NewOrderBuilder(runs RunByIDReader, grants FetchGrantIssuer, gitURL string) (*OrderBuilder, error) {
 	if runs == nil || grants == nil {
 		return nil, fmt.Errorf("construction des ordres : lecture des runs et frappe des jetons sont requises")
 	}

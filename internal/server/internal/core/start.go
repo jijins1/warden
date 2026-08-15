@@ -68,12 +68,12 @@ type PodRegistry interface {
 type RunStarter struct {
 	pods     PodRegistry
 	launcher PodLauncher
-	spaces   RunNamespacer
+	spaces   RunNamespaceCreator
 	image    string
 }
 
 // NewRunStarter construit le démarreur.
-func NewRunStarter(pods PodRegistry, launcher PodLauncher, spaces RunNamespacer, image string) (*RunStarter, error) {
+func NewRunStarter(pods PodRegistry, launcher PodLauncher, spaces RunNamespaceCreator, image string) (*RunStarter, error) {
 	if pods == nil || launcher == nil || spaces == nil {
 		return nil, fmt.Errorf("démarrage de run : registre, lanceur et espaces de noms sont requis")
 	}

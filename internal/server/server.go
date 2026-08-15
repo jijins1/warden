@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/gitd"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
+	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
@@ -134,6 +137,9 @@ func runAPI(ctx context.Context) error {
 	// type concret rangée dans un champ d'interface n'est pas nil, et la branche
 	// qui répond 501 se transformerait en déréférencement de pointeur nul.
 	var (
+		dispatcher   *dispatch.Dispatcher
+		dispatchAddr string
+
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
 		refs    core.RefResolver
@@ -170,6 +176,27 @@ func runAPI(ctx context.Context) error {
 		// introuvable — exactement ce que la résolution côté serveur existe pour
 		// empêcher.
 		creator = st
+
+		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
+		// donnée. Son composeur d'ordres a besoin du frappeur de jetons — c'est
+		// lui qui met le jeton de lecture de l'ADR-0007 dans la main du runner —
+		// donc il partage la même condition que le reste.
+		if adresse := os.Getenv(EnvDispatchAddr); adresse != "" {
+			origine := os.Getenv(EnvGitRunnerURL)
+			if origine == "" {
+				// L'ordre partirait avec une origine vide, et le runner échouerait
+				// sur un message de git parlant d'URL malformée — très loin de la
+				// cause. C'est une DEUXIÈME adresse du rôle `git`, distincte de
+				// celle de la CLI : lecture et écriture sont deux ports (ADR-0027).
+				return fmt.Errorf("%s est définie sans %s", EnvDispatchAddr, EnvGitRunnerURL)
+			}
+			ob, err := core.NewOrderBuilder(st, gi, origine)
+			if err != nil {
+				return fmt.Errorf("composeur d'ordres: %w", err)
+			}
+			dispatcher = dispatch.New(st, ob)
+			dispatchAddr = adresse
+		}
 	}
 
 	server, err := api.New(cfg, api.Deps{
@@ -189,7 +216,12 @@ func runAPI(ctx context.Context) error {
 	}
 	defer func() { _ = server.Close() }()
 
-	return server.Run(ctx)
+	if dispatcher == nil {
+		return server.Run(ctx)
+	}
+	return servirDeux(ctx, server.Run, func(ctx context.Context) error {
+		return servirDispatch(ctx, dispatchAddr, dispatcher)
+	})
 }
 
 // Variables d'environnement portant les chaînes de connexion.
@@ -216,6 +248,8 @@ const (
 	EnvGitInternalURL   = "WARDEN_GIT_INTERNAL_URL"   // côté `api` : où joindre gitd
 	EnvGitInternalToken = "WARDEN_GIT_INTERNAL_TOKEN" // partagé par les deux, et clé de signature des jetons de push
 	EnvGitPushAddr      = "WARDEN_GIT_PUSH_ADDR"      // smart HTTP en écriture, servi à la CLI
+	EnvDispatchAddr     = "WARDEN_DISPATCH_ADDR"      // canal de dispatch SSE, servi aux pods runner
+	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
 	EnvForgeToken       = "WARDEN_FORGE_TOKEN"        // lecture sur la forge, pour le miroir de la principale
 )
 
@@ -268,6 +302,64 @@ func databaseURL(name string) (string, error) {
 // Trois surfaces, trois ports d'écoute. La séparation est portée par le PORT et
 // non par le chemin, ce qui la rend exprimable en NetworkPolicy — et pour
 // l'écriture, c'est le contrôle n°3 de la conjonction de l'ADR-0027.
+// servirDispatch sert le canal de dispatch sur son propre port.
+//
+// Un port DISTINCT de celui de l'API et de celui de l'ingestion, chacun avec sa
+// règle d'ingress. C'est la troisième surface joignable depuis du code arbitraire
+// (§2), et la seule qui distribue des credentials : la séparer par le port et non
+// par le chemin est ce qui la rend restreignable sans changement de code.
+func servirDispatch(ctx context.Context, addr string, d *dispatch.Dispatcher) error {
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: d,
+		// Sans délai sur la lecture des en-têtes, une connexion qui les envoie
+		// octet par octet immobilise un handler indéfiniment (Slowloris).
+		ReadHeaderTimeout: 10 * time.Second,
+		// Pas de WriteTimeout : SSE est un flux qui dure toute la vie du pod, et
+		// un délai d'écriture le couperait au milieu d'un run.
+	}
+
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("écoute du dispatch sur %s: %w", addr, err)
+	}
+
+	// #nosec G118 -- l'arrêt gracieux part d'un contexte neuf par nécessité :
+	// celui-ci vient d'être annulé, et c'est ce qui déclenche l'arrêt.
+	go func() {
+		<-ctx.Done()
+		arret, annuler := context.WithTimeout(context.Background(), 30*time.Second)
+		defer annuler()
+		_ = srv.Shutdown(arret)
+	}()
+
+	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("service de dispatch: %w", err)
+	}
+	return nil
+}
+
+// servirDeux fait tourner deux services et rend la première erreur.
+//
+// La première erreur fait tomber l'autre : continuer à distribuer des ordres
+// alors que l'API est morte laisserait des runs démarrer sans que personne
+// puisse les suivre.
+func servirDeux(ctx context.Context, a, b func(context.Context) error) error {
+	ctx, annuler := context.WithCancel(ctx)
+	defer annuler()
+
+	erreurs := make(chan error, 2)
+	for _, servir := range []func(context.Context) error{a, b} {
+		go func() { erreurs <- servir(ctx) }()
+	}
+
+	premiere := <-erreurs
+	annuler()
+	<-erreurs
+	return premiere
+}
+
 func runGit(ctx context.Context) error {
 	// ADR-0005 : le moteur est le binaire git, et sa version est une condition
 	// de correction, pas une préférence. Le contrôle est ici, au démarrage du

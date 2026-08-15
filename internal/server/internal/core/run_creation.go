@@ -133,20 +133,23 @@ type PushGrantIssuer interface {
 	IssuePushGrant(ctx context.Context, repo, refPrefix string, expires time.Time) (string, error)
 }
 
-// RunNamespacer prépare l'accès du runner à son code.
+// RunNamespaceCreator crée la ref que le runner verra comme sa seule ref.
 //
-// Deux opérations qui vont ensemble et n'ont de sens qu'ensemble : créer la ref
-// dans l'espace de noms du run, et frapper le jeton qui ouvre cet espace. Les
-// séparer laisserait exister une moitié inutile — une ref que personne ne peut
-// lire, ou un jeton qui n'ouvre rien.
-//
-// Aucun appelant pour l'instant : le claim vit dans le contrôleur, qui reste à
-// écrire (§8.4).
-type RunNamespacer interface {
-	// CreateRunNamespace crée la ref que le runner verra comme sa seule ref.
+// SÉPARÉ de la frappe du jeton, alors que les deux préparent le même accès. Le
+// premier jet les réunissait au motif qu'ils « n'ont de sens qu'ensemble » —
+// c'était faux, et le compilateur l'a dit : ils sont implémentés par deux
+// adaptateurs différents, l'un qui appelle le rôle `git` par le réseau, l'autre
+// qui signe localement. Un port qui force un adaptateur à porter une méthode
+// dont il n'a que faire n'est plus une couture, c'est une contrainte.
+type RunNamespaceCreator interface {
 	CreateRunNamespace(ctx context.Context, repo, namespace, sha string) error
+}
 
-	// IssueFetchGrant frappe le jeton de run de l'ADR-0007.
+// FetchGrantIssuer frappe le jeton de run de l'ADR-0007.
+//
+// Aucune écriture, aucun réseau : signer est une opération locale, et le port le
+// dit en ne demandant rien d'autre.
+type FetchGrantIssuer interface {
 	IssueFetchGrant(ctx context.Context, repo, namespace string, expires time.Time) (string, error)
 }
 
