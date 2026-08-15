@@ -22,6 +22,7 @@ package e2e_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/cgi"
@@ -40,11 +41,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/jijins1/warden/internal/cli"
-	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/server"
 )
 
@@ -89,7 +91,7 @@ func run(t *testing.T, dir string, args ...string) string {
 // Une vraie forge derrière `git http-backend` : le rafraîchissement du miroir
 // doit réellement sortir sur le réseau, sans quoi on testerait que notre code
 // appelle notre code.
-func forge(t *testing.T) (url, mainSHA string) {
+func forge(t *testing.T) (urlHote string, port int, mainSHA string) {
 	t.Helper()
 	racine := t.TempDir()
 	bare := filepath.Join(racine, "projet.git")
@@ -113,7 +115,146 @@ func forge(t *testing.T) (url, mainSHA string) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(backend.ServeHTTP))
 	t.Cleanup(srv.Close)
-	return srv.URL + "/projet.git", mainSHA
+
+	// Le port est rendu à part : le rôle `git` tourne dans un CONTENEUR et ne
+	// joint pas la forge par `127.0.0.1`. Il passe par l'hôte que testcontainers
+	// expose, ce qui suppose de connaître le port pour l'y publier.
+	adresse := srv.Listener.Addr().(*net.TCPAddr)
+	return srv.URL + "/projet.git", adresse.Port, mainSHA
+}
+
+// roleGitEnConteneur démarre le rôle `git` DEPUIS L'IMAGE.
+//
+// C'est le point de ce fichier. Le lancer en-processus faisait passer une
+// exigence de DÉPLOIEMENT pour une exigence de poste : le rôle refuse de démarrer
+// sous git 2.45 (ADR-0005), et le poste de développement n'a que 2.43. L'image,
+// elle, embarque une version conforme — c'est même sa raison d'être.
+//
+// Le test exerce donc l'image qu'on déploie réellement, et non un binaire
+// compilé à la volée dans un environnement qui n'est celui de personne.
+// initialiserDepotBare crée le dépôt bare avec le bon propriétaire.
+func initialiserDepotBare(t *testing.T, racine string) {
+	t.Helper()
+	if err := os.Chmod(racine, 0o777); err != nil { // #nosec G302 -- temporaire de test
+		t.Fatalf("droits du volume : %v", err)
+	}
+
+	cmd := exec.CommandContext(t.Context(), "docker", "run", "--rm",
+		"-u", "0:0", "-v", racine+":/depots", "--entrypoint", "sh", imageWardend(),
+		"-c", "git init --bare --initial-branch=main /depots/"+depot+
+			".git >/dev/null && chown -R 65532:65532 /depots")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("initialisation du dépôt bare impossible : %v\n%s", err, out)
+	}
+
+	// Le volume appartient maintenant à l'uid de l'image. Sans cette remise, le
+	// nettoyage de t.TempDir() échoue sur « permission denied » et laisse des
+	// répertoires derrière lui à chaque exécution.
+	t.Cleanup(func() {
+		c := exec.Command("docker", "run", "--rm", "-u", "0:0", // #nosec G204 -- arguments littéraux
+			"-v", racine+":/depots", "--entrypoint", "sh", imageWardend(),
+			"-c", fmt.Sprintf("chown -R %d:%d /depots", os.Getuid(), os.Getgid()))
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Logf("remise des droits du volume : %v\n%s", err, out)
+		}
+	})
+}
+
+// gitDansLeVolume exécute git SUR le dépôt bare, depuis l'image.
+//
+// Depuis l'hôte, git refuse : le dépôt appartient à l'uid de l'image, et
+// « dubious ownership » est une protection, pas une gêne. Le contourner par
+// `safe.directory` reviendrait à désactiver dans le test ce qui protège en
+// production.
+func gitDansLeVolume(t *testing.T, racine string, args ...string) string {
+	t.Helper()
+	// En tant que PROPRIÉTAIRE du dépôt, et non root : c'est exactement ce que la
+	// protection « dubious ownership » demande, et la satisfaire vaut mieux que
+	// la désactiver.
+	complet := append([]string{"run", "--rm", "-u", "65532:65532",
+		"-v", racine + ":/depots", "--entrypoint", "git", imageWardend(),
+		"-C", "/depots/" + depot + ".git"}, args...)
+
+	cmd := exec.CommandContext(t.Context(), "docker", complet...) // #nosec G204 -- arguments littéraux
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s dans le volume : %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+func imageWardend() string {
+	if v := os.Getenv("WARDEN_E2E_IMAGE"); v != "" {
+		return v
+	}
+	return "gitea.ruokki.ovh/ruokki/wardend:dev"
+}
+
+func roleGitEnConteneur(t *testing.T, racineDepots string, portForge int) (interne, push, lecture string) {
+	t.Helper()
+	ctx := context.Background()
+
+	req := testcontainers.ContainerRequest{
+		Image:        imageWardend(),
+		Cmd:          []string{"git"},
+		ExposedPorts: []string{"8081/tcp", "8082/tcp", "8083/tcp"},
+		Env: map[string]string{
+			"WARDEN_GIT_ROOT":           "/depots",
+			"WARDEN_GIT_INTERNAL_ADDR":  ":8081",
+			"WARDEN_GIT_PUSH_ADDR":      ":8082",
+			"WARDEN_GIT_ADDR":           ":8083",
+			"WARDEN_GIT_INTERNAL_TOKEN": secretGit,
+		},
+		Files: nil,
+		HostConfigModifier: func(hc *container.HostConfig) {
+			hc.Binds = append(hc.Binds, racineDepots+":/depots")
+		},
+		// Sans cela, le conteneur ne joint pas la forge servie sur l'hôte : le
+		// rafraîchissement du miroir échouerait sur une résolution de nom, très
+		// loin de la cause.
+		HostAccessPorts: []int{portForge},
+		WaitingFor: wait.ForAll(
+			wait.ForListeningPort("8081/tcp"),
+			wait.ForListeningPort("8082/tcp"),
+		).WithDeadline(2 * time.Minute),
+	}
+
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req, Started: true,
+	})
+	if err != nil {
+		t.Skipf("image %s indisponible ou rôle git non démarré : %v", imageWardend(), err)
+	}
+	// Les journaux du conteneur sont rendus quand le test ÉCHOUE, et seulement
+	// alors. Sans eux, une panne du rôle `git` se présente à l'autre bout comme un
+	// « HTTP 500 » sur un push — un message qui ne nomme rien.
+	t.Cleanup(func() {
+		if t.Failed() {
+			if r, err := c.Logs(context.Background()); err == nil {
+				defer func() { _ = r.Close() }()
+				if b, err := io.ReadAll(io.LimitReader(r, 32<<10)); err == nil {
+					t.Logf("journaux du rôle git :\n%s", b)
+				}
+			}
+		}
+		_ = testcontainers.TerminateContainer(c)
+	})
+
+	return publie(t, c, "8081"), publie(t, c, "8082"), publie(t, c, "8083")
+}
+
+func publie(t *testing.T, c testcontainers.Container, port string) string {
+	t.Helper()
+	ctx := context.Background()
+	hote, err := c.Host(ctx)
+	if err != nil {
+		t.Fatalf("hôte du conteneur : %v", err)
+	}
+	mappe, err := c.MappedPort(ctx, port+"/tcp")
+	if err != nil {
+		t.Fatalf("port %s : %v", port, err)
+	}
+	return net.JoinHostPort(hote, mappe.Port())
 }
 
 func ecrire(t *testing.T, dir, nom, contenu string) {
@@ -268,30 +409,37 @@ RETURNING id`, sujet).Scan(&id)
 // d'audit côté serveur, l'enregistrement du run, et la création du pod sur un
 // vrai cluster.
 func TestLaChaineComplete(t *testing.T) {
-	// Le rôle `git` refuse de démarrer sous la version minimale de l'ADR-0005, et
-	// ce plancher n'est pas décoratif : 2.45 apporte les correctifs de QUARANTAINE
-	// et d'ESPACES DE NOMS, c'est-à-dire les deux mécanismes que cette chaîne
-	// exerce. Passer outre reviendrait à valider une configuration que le produit
-	// déclare non supportée.
-	if err := git.CheckVersion(t.Context()); err != nil {
-		t.Skipf("chaîne complète non exécutable ici : %v", err)
-	}
-
 	client := clientCluster(t)
 	namespaceJetable(t, client)
 
 	dsn := postgres(t)
-	urlForge, _ := forge(t)
+	urlForgeHote, portForge, _ := forge(t)
 
 	// Le volume du rôle `git` : un dépôt bare par dépôt (ADR-0006).
+	//
+	// Il est initialisé DANS un conteneur, et appartient à l'utilisateur de
+	// l'image. Le créer depuis l'hôte le fait appartenir à un autre uid, et git
+	// refuse alors d'y toucher — « detected dubious ownership », protection
+	// active depuis 2.35.2. C'est une contrainte de DÉPLOIEMENT et pas un artifice
+	// de test : le PVC du rôle `git` doit appartenir à l'utilisateur qui l'écrit.
+	//
+	// Cela met au jour un manque : RIEN dans le produit ne crée ce dépôt bare.
+	// L'administrateur déclare la configuration d'un dépôt, mais personne ne
+	// matérialise `<racine>/<nom>.git`, et `POST /runs` échouera tant qu'il
+	// n'existe pas.
 	racineDepots := t.TempDir()
-	run(t, racineDepots, "init", "--bare", "--initial-branch=main",
-		filepath.Join(racineDepots, depot+".git"))
+	initialiserDepotBare(t, racineDepots)
+
+	// Le rôle `git` vient de l'IMAGE, avec son git conforme à l'ADR-0005. C'est ce
+	// qui rend cette chaîne exécutable sur un poste dont le git est trop ancien —
+	// et ce qui la fait porter sur l'artefact réellement déployé.
+	adresseGitInterne, adresseGitPush, adresseGitLecture := roleGitEnConteneur(t, racineDepots, portForge)
+
+	// Depuis le conteneur, la forge n'est pas sur `127.0.0.1`.
+	urlForgePourGitd := strings.Replace(urlForgeHote, "127.0.0.1",
+		testcontainers.HostInternal, 1)
 
 	adresseAPI := portLibre(t)
-	adresseGitInterne := portLibre(t)
-	adresseGitPush := portLibre(t)
-	adresseGitLecture := portLibre(t)
 	adresseDispatch := portLibre(t)
 
 	// L'environnement est celui d'un déploiement réel : c'est par lui que les
@@ -301,12 +449,10 @@ func TestLaChaineComplete(t *testing.T) {
 		"WARDEN_INSECURE_DEV_AUTH": "1",
 		"WARDEN_API_ADDR":          adresseAPI,
 
-		"WARDEN_GIT_ROOT":           racineDepots,
-		"WARDEN_GIT_INTERNAL_ADDR":  adresseGitInterne,
+		// Le rôle `api` ne détient PAS le volume : il joint le rôle `git` par
+		// l'API interne (ADR-0006), donc par le port publié du conteneur.
 		"WARDEN_GIT_INTERNAL_URL":   "http://" + adresseGitInterne,
 		"WARDEN_GIT_INTERNAL_TOKEN": secretGit,
-		"WARDEN_GIT_PUSH_ADDR":      adresseGitPush,
-		"WARDEN_GIT_ADDR":           adresseGitLecture,
 		"WARDEN_GIT_RUNNER_URL":     "http://" + adresseGitLecture + "/" + depot + ".git",
 
 		"WARDEN_DISPATCH_ADDR": adresseDispatch,
@@ -328,22 +474,20 @@ func TestLaChaineComplete(t *testing.T) {
 	ctxServeurs, arreter := context.WithCancel(context.Background())
 	t.Cleanup(arreter)
 
-	for _, role := range []server.Role{server.RoleGit, server.RoleAPI} {
-		go func() {
-			if err := server.Run(ctxServeurs, role); err != nil &&
-				ctxServeurs.Err() == nil {
-				t.Errorf("rôle %s : %v", role, err)
-			}
-		}()
-	}
-	attendre(t, adresseGitInterne, 30*time.Second)
+	// Seul le rôle `api` tourne en-processus : il n'a aucune exigence sur la
+	// version de git, n'en exécutant pas.
+	go func() {
+		if err := server.Run(ctxServeurs, server.RoleAPI); err != nil &&
+			ctxServeurs.Err() == nil {
+			t.Errorf("rôle api : %v", err)
+		}
+	}()
 	attendre(t, adresseAPI, 30*time.Second)
-	attendre(t, adresseGitPush, 30*time.Second)
 
 	// La configuration du dépôt passe par la surface d'ADMINISTRATION, comme un
 	// administrateur le ferait — et non par un INSERT qui court-circuiterait
 	// l'autorisation qu'on veut voir fonctionner.
-	configurerDepot(t, "http://"+adresseAPI, urlForge)
+	configurerDepot(t, "http://"+adresseAPI, urlForgePourGitd)
 
 	// Le dépôt de l'utilisateur, avec du travail NON COMMITÉ : c'est précisément
 	// ce que l'audit doit capturer et que le dépôt ne doit pas perdre.
@@ -384,8 +528,7 @@ func TestLaChaineComplete(t *testing.T) {
 
 	// Le commit d'audit existe RÉELLEMENT dans le dépôt bare du serveur, sous la
 	// ref que le serveur compose lui-même.
-	bare := filepath.Join(racineDepots, depot+".git")
-	refs := run(t, bare, "for-each-ref", "--format=%(refname) %(objectname)")
+	refs := gitDansLeVolume(t, racineDepots, "for-each-ref", "--format=%(refname) %(objectname)")
 	if !strings.Contains(refs, auditSHA) {
 		t.Errorf("le commit d'audit n'est référencé par aucune ref :\n%s", refs)
 	}
@@ -393,7 +536,7 @@ func TestLaChaineComplete(t *testing.T) {
 		t.Errorf("aucune ref d'audit :\n%s", refs)
 	}
 	// L'arbre poussé porte le travail NON COMMITÉ, ce qui est tout l'objet du §5.3.
-	fichiers := run(t, bare, "ls-tree", "--name-only", auditSHA)
+	fichiers := gitDansLeVolume(t, racineDepots, "ls-tree", "--name-only", auditSHA)
 	if !strings.Contains(fichiers, "inventory.ini") {
 		t.Errorf("le travail non commité n'est pas dans l'arbre d'audit :\n%s", fichiers)
 	}
