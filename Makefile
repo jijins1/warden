@@ -22,6 +22,14 @@ doctor: ## Vérifie que l'environnement de développement est complet
 	  if kubectl version --request-timeout=5s >/dev/null 2>&1; then \
 	    echo "cluster: $$(kubectl config current-context)"; \
 	  else echo "pas de cluster joignable (étage 3 indisponible)"; fi; \
+	printf '%-18s' 'golangci-lint'; \
+	  if command -v golangci-lint >/dev/null; then echo "$$(golangci-lint version 2>/dev/null | head -1)"; \
+	  else echo "hors du PATH — installé dans $$(go env GOPATH)/bin ? l'ajouter au PATH"; fail=1; fi; \
+	printf '%-18s' 'compilateur C'; \
+	  if command -v gcc >/dev/null || command -v cc >/dev/null; then echo "présent (détecteur de courses)"; \
+	  else echo "ABSENT — \`make test\` échouera : -race exige cgo"; fail=1; fi; \
+	printf '%-18s' 'make'; \
+	  echo "$$(make --version 2>/dev/null | head -1)"; \
 	printf '%-18s' 'envtest'; \
 	  if command -v setup-envtest >/dev/null; then echo "installé"; \
 	  else echo "ABSENT — go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest"; fail=1; fi; \
@@ -119,7 +127,7 @@ migrate: ## Applique les migrations sur $$WARDEN_DATABASE_URL
 
 .PHONY: help
 help: ## Liste les cibles disponibles
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .DEFAULT_GOAL := help
