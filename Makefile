@@ -42,6 +42,21 @@ test: ## Étage 1 — tests unitaires, sans Docker ni cluster
 test-integration: ## Étage 2 — intégration, PostgreSQL via testcontainers
 	go test -race -tags=integration ./...
 
+# Étage 3 — un VRAI cluster, par le kubeconfig courant.
+#
+# Séparé des deux autres et jamais dans `test` : il crée des objets sur le
+# cluster que kubectl vise en ce moment. Il se limite à un namespace jetable
+# qu'il supprime, mais « jetable » est une propriété du test, pas du cluster —
+# personne ne doit le lancer sans savoir où il pointe.
+#
+# Ce que cet étage établit et que les autres ne peuvent pas : le clientset
+# factice accepte n'importe quelle podspec. Il ignore l'admission, le kubelet et
+# le montage d'un volume.
+.PHONY: test-e2e
+test-e2e: ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée un namespace jetable)
+	@echo "Cluster visé : $$(kubectl config current-context)"
+	go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/
+
 # ---------------------------------------------------------------------------
 # Base de développement.
 #
