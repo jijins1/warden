@@ -63,17 +63,39 @@ func (g *Git) WithObjectDirs(primary, alternates string) *Git {
 // two enumerations that could drift apart would be a hole rather than a
 // redundancy.
 //
-// Exclusions are GLOB PATTERNS rather than exact refs, and a pattern matching
-// nothing is not an error. That shape is what the caller needs: the set to
-// exclude is "everything the pusher could already see", which is a family of
-// refs and not a list — and a repository that holds none of them yet is a real
-// state, not a failure.
+// An exclusion ending in "/" is a PREFIX; anything else is an exact ref name.
+//
+// The distinction is not cosmetic, and getting it wrong fails silently — which is
+// how it was wrong. `git rev-list --glob=<pattern>` appends "/*" when the pattern
+// has no wildcard, so `--glob=refs/heads/main` becomes `refs/heads/main/*` and
+// matches NOTHING. An exclusion passed that way excludes nothing at all, the
+// command still succeeds, and the only symptom is a set that is quietly too
+// large — which, for the freshness control that consumes it, means honest pushes
+// refused for claiming objects they did in fact send.
+//
+// A prefix matching nothing is not an error, and neither is a missing exact ref:
+// the set to exclude is "everything the pusher could already see", and a
+// repository that holds none of it yet is a real state.
 func (g *Git) RevListObjects(ctx context.Context, tip SHA, excludeGlobs []string) ([]Object, error) {
 	if !tip.Valid() {
 		return nil, fmt.Errorf("invalid tip SHA: %q", tip)
 	}
 
+	// `--not` est émis UNE SEULE FOIS, avant toutes les exclusions.
+	//
+	// Il « inverse le sens des révisions suivantes JUSQU'AU PROCHAIN --not ». En
+	// le répétant devant chaque exclusion, une exclusion sur deux redevenait donc
+	// une INCLUSION — et le symptôme est silencieux : la commande réussit, et
+	// l'ensemble rendu est simplement faux. Pour le contrôle de fraîcheur qui le
+	// consomme, cela signifie des push honnêtes refusés au motif qu'ils
+	// revendiquent des objets qu'ils ont pourtant envoyés.
+	//
+	// La version précédente était correcte par ACCIDENT : le motif du milieu ne
+	// correspondait à rien, donc l'inversion parasite n'avait pas d'effet
+	// visible. Deux défauts qui s'annulaient.
 	args := []string{"rev-list", "--objects", tip.String()}
+	exclusions := make([]string, 0, len(excludeGlobs))
+
 	for _, glob := range excludeGlobs {
 		// These patterns become arguments to git and decide what a security
 		// control excludes. They are validated rather than trusted: `--not` is
@@ -85,7 +107,27 @@ func (g *Git) RevListObjects(ctx context.Context, tip SHA, excludeGlobs []string
 		if strings.ContainsAny(glob, " \t\n~^:?[\\") || strings.Contains(glob, "..") {
 			return nil, fmt.Errorf("exclude pattern %q contains a forbidden character", glob)
 		}
-		args = append(args, "--not", "--glob="+glob)
+
+		if strings.HasSuffix(glob, "/") {
+			exclusions = append(exclusions, "--glob="+glob)
+			continue
+		}
+
+		// Exact ref: named directly, which rev-list refuses if it does not
+		// resolve. Hence the existence check — a missing ref is a state, not a
+		// failure.
+		present, err := g.hasRef(ctx, Ref(glob))
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			exclusions = append(exclusions, glob)
+		}
+	}
+
+	if len(exclusions) > 0 {
+		args = append(args, "--not")
+		args = append(args, exclusions...)
 	}
 
 	// `--` terminates the revision list. Without it a ref named like an option
@@ -278,4 +320,20 @@ func (g *Git) PresentAmong(ctx context.Context, objects []SHA) ([]SHA, error) {
 		present = append(present, sha)
 	}
 	return present, nil
+}
+
+// hasRef reports whether a ref resolves in this repository.
+func (g *Git) hasRef(ctx context.Context, ref Ref) (bool, error) {
+	_, _, err := g.run(ctx, "rev-parse", "--verify", "--quiet", ref.String()+"^{commit}")
+	if err == nil {
+		return true, nil
+	}
+	// --quiet makes a missing ref exit 1 with no output, which is the answer
+	// rather than a failure. Anything else is a real error and must not be read
+	// as "absent" — that would silently widen the object set, which is the same
+	// class of silent widening the glob bug above produced.
+	if isExitCode(err, 1) {
+		return false, nil
+	}
+	return false, fmt.Errorf("resolving ref %s: %w", ref, err)
 }
