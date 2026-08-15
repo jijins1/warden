@@ -1,0 +1,15 @@
+# L'historique git n'a rien à faire dans un contexte de build : il pèse, il
+# change à chaque commit — donc il invalide le cache — et il porte tout le passé
+# du dépôt dans une image qui tourne face à du code arbitraire.
+.git
+.github
+.devcontainer
+.claude
+
+# Binaires déjà construits localement : ils seraient recopiés puis écrasés.
+/warden
+/wardend
+/warden-runner
+
+docs
+specs

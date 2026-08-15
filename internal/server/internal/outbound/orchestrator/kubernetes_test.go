@@ -91,12 +91,15 @@ func TestLeJetonEstMonteEtJamaisDansLaSpec(t *testing.T) {
 	}
 
 	// Il arrive par un volume, en lecture seule.
-	if len(pod.Spec.Volumes) != 1 || pod.Spec.Volumes[0].Secret == nil {
-		t.Fatalf("volume de secret absent : %+v", pod.Spec.Volumes)
+	var secretMonte bool
+	for _, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.MountPath == orchestrator.CheminJeton {
+			secretMonte = m.ReadOnly
+		}
 	}
-	monte := pod.Spec.Containers[0].VolumeMounts
-	if len(monte) != 1 || !monte[0].ReadOnly {
-		t.Errorf("montage inattendu : %+v", monte)
+	if !secretMonte {
+		t.Errorf("le jeton n'est pas monté en lecture seule : %+v",
+			pod.Spec.Containers[0].VolumeMounts)
 	}
 
 	// Et il est bien dans le Secret.
@@ -140,6 +143,49 @@ func TestLeDurcissementDuPodEstApplique(t *testing.T) {
 	}
 	if len(cs.Capabilities.Drop) == 0 || cs.Capabilities.Drop[0] != "ALL" {
 		t.Errorf("capacités non abandonnées : %+v", cs.Capabilities)
+	}
+}
+
+// TestLePodADeQuoiEcrire épingle un défaut qui ne se voit qu'à l'exécution.
+//
+// La racine est en lecture seule (§7). Sans volume inscriptible, le conteneur n'a
+// AUCUN endroit où écrire : git ne matérialise pas son arbre, et Ansible échoue
+// en créant son répertoire temporaire — sur un message Python parlant de
+// permissions, qui ne nomme jamais la cause. Le défaut a été trouvé en
+// construisant l'image, pas en relisant la spec.
+//
+// Un emptyDir et non un PVC : il meurt avec le pod, ce qui est exactement voulu
+// puisqu'un pod n'est jamais réutilisé (§8.2).
+func TestLePodADeQuoiEcrire(t *testing.T) {
+	k, client := monter(t)
+	spec := specValide(t)
+	if err := k.LaunchPod(t.Context(), spec); err != nil {
+		t.Fatalf("LaunchPod : %v", err)
+	}
+	pod, _ := client.CoreV1().Pods(ns).Get(t.Context(), spec.Name, metav1.GetOptions{})
+
+	var espace *corev1.VolumeMount
+	for i, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.MountPath == orchestrator.CheminEspace {
+			espace = &pod.Spec.Containers[0].VolumeMounts[i]
+		}
+	}
+	if espace == nil {
+		t.Fatalf("aucun volume monté sur %s : le conteneur ne peut rien écrire",
+			orchestrator.CheminEspace)
+	}
+	if espace.ReadOnly {
+		t.Error("l'espace de travail est monté en lecture seule")
+	}
+
+	var emptyDir bool
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == espace.Name && v.EmptyDir != nil {
+			emptyDir = true
+		}
+	}
+	if !emptyDir {
+		t.Error("l'espace de travail n'est pas un emptyDir : il survivrait au pod")
 	}
 }
 

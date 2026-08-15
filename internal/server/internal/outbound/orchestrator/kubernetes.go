@@ -32,6 +32,18 @@ const (
 	ValeurComposant = "warden-runner"
 )
 
+// CheminEspace est le volume INSCRIPTIBLE du pod.
+//
+// Il n'est pas optionnel, et son absence est un défaut qu'on ne voit qu'à
+// l'exécution : le conteneur tourne avec `readOnlyRootFilesystem` (§7), donc sans
+// ce volume il n'a AUCUN endroit où écrire. git n'y matérialise pas son arbre et
+// Ansible échoue en tentant de créer son répertoire temporaire — sur un message
+// Python parlant de permissions, très loin de la cause.
+//
+// Un emptyDir et non un PVC : il meurt avec le pod, ce qui est exactement voulu
+// (§8.2 — un pod n'est jamais réutilisé).
+const CheminEspace = "/workspace"
+
 // CheminJeton est le point de montage du jeton d'amorçage.
 //
 // Un volume et non une variable d'environnement : l'objet `Pod` est celui que le
@@ -225,15 +237,22 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 
-			Volumes: []corev1.Volume{{
-				Name: "warden-token",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  spec.Name,
-						DefaultMode: mode(0o400),
+			Volumes: []corev1.Volume{
+				{
+					Name: "warden-token",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName:  spec.Name,
+							DefaultMode: mode(0o400),
+						},
 					},
 				},
-			}},
+				{
+					// Le seul endroit inscriptible du conteneur. Voir CheminEspace.
+					Name:         "warden-workspace",
+					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+				},
+			},
 
 			Containers: []corev1.Container{{
 				Name:  "runner",
@@ -244,11 +263,17 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 					Privileged:               faux(),
 					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 				},
-				VolumeMounts: []corev1.VolumeMount{{
-					Name:      "warden-token",
-					MountPath: CheminJeton,
-					ReadOnly:  true,
-				}},
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      "warden-token",
+						MountPath: CheminJeton,
+						ReadOnly:  true,
+					},
+					{
+						Name:      "warden-workspace",
+						MountPath: CheminEspace,
+					},
+				},
 				// Le chemin du jeton voyage par l'environnement, pas le jeton
 				// lui-même : un chemin n'est pas un secret.
 				Env: []corev1.EnvVar{{Name: "WARDEN_TOKEN_FILE", Value: CheminJeton + "/token"}},

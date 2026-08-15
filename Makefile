@@ -58,6 +58,29 @@ test-e2e: ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée des na
 	go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/ ./e2e/
 
 # ---------------------------------------------------------------------------
+# Images.
+#
+# DEUX images et non une, et pas pour une question de taille : l'ADR-0011 pose
+# que le binaire du runner tourne dans un domaine hostile et qu'il est lisible
+# par un adversaire. Son image ne doit contenir ni le code du control plane, ni
+# ses dépendances — une image commune annulerait la séparation que le découpage
+# des binaires établit.
+# ---------------------------------------------------------------------------
+
+REGISTRY ?= gitea.ruokki.ovh
+IMAGE_TAG ?= dev
+
+.PHONY: images
+images: ## Construit les deux images en local, sans rien pousser
+	docker build -f build/wardend.Dockerfile -t $(REGISTRY)/warden/wardend:$(IMAGE_TAG) .
+	docker build -f build/runner.Dockerfile  -t $(REGISTRY)/warden/warden-runner:$(IMAGE_TAG) .
+
+.PHONY: images-push
+images-push: images ## Pousse les images (exige un `docker login $(REGISTRY)` préalable)
+	docker push $(REGISTRY)/warden/wardend:$(IMAGE_TAG)
+	docker push $(REGISTRY)/warden/warden-runner:$(IMAGE_TAG)
+
+# ---------------------------------------------------------------------------
 # Base de développement.
 #
 # Séparée des tests : ceux-ci démarrent leur propre PostgreSQL jetable par
