@@ -53,9 +53,9 @@ test-integration: ## Étage 2 — intégration, PostgreSQL via testcontainers
 # factice accepte n'importe quelle podspec. Il ignore l'admission, le kubelet et
 # le montage d'un volume.
 .PHONY: test-e2e
-test-e2e: ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée un namespace jetable)
+test-e2e: ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée des namespaces jetables)
 	@echo "Cluster visé : $$(kubectl config current-context)"
-	go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/
+	go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/ ./e2e/
 
 # ---------------------------------------------------------------------------
 # Base de développement.

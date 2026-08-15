@@ -20,6 +20,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -94,12 +95,14 @@ func runAPI(ctx context.Context) error {
 		return err
 	}
 
-	cfg := &api.Config{
-		Addr:        os.Getenv("WARDEN_API_ADDR"),
-		DatabaseURL: dsn,
-	}
-	if cfg.Addr == "" {
-		cfg.Addr = ":8080"
+	// api.FromEnv et non une construction à la main : elle lit
+	// WARDEN_INSECURE_DEV_AUTH, sans quoi l'API assemblée refuse TOUTE requête —
+	// son middleware répond 501 tant qu'aucun authentificateur n'est configuré,
+	// et c'est délibéré de sa part. La construction à la main l'ignorait, donc le
+	// binaire déployé était inutilisable et `FromEnv` était du code mort.
+	cfg, err := api.FromEnv()
+	if err != nil {
+		return err
 	}
 
 	// Assemblage : c'est le SEUL endroit qui connaît à la fois les ports du
@@ -287,7 +290,13 @@ const (
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
 	EnvPodNamespace     = "WARDEN_POD_NAMESPACE"      // namespace où vivent les pods runner
 	EnvRunnerImage      = "WARDEN_RUNNER_IMAGE"       // image du runner, en attendant la configuration projet (ADR-0014)
-	EnvForgeToken       = "WARDEN_FORGE_TOKEN"        // lecture sur la forge, pour le miroir de la principale
+
+	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
+	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il
+	// laisse le control plane lancer des pods dans le cluster que kubectl vise,
+	// qui n'est pas forcément celui auquel cette base d'audit correspond.
+	EnvInsecureKubeconfig = "WARDEN_INSECURE_KUBECONFIG"
+	EnvForgeToken         = "WARDEN_FORGE_TOKEN" // lecture sur la forge, pour le miroir de la principale
 )
 
 // HookName est le nom sous lequel git invoque ce binaire comme hook.
@@ -339,16 +348,36 @@ func databaseURL(name string) (string, error) {
 // Trois surfaces, trois ports d'écoute. La séparation est portée par le PORT et
 // non par le chemin, ce qui la rend exprimable en NetworkPolicy — et pour
 // l'écriture, c'est le contrôle n°3 de la conjonction de l'ADR-0027.
-// clientKubernetes construit le client depuis la configuration du pod.
+// clientKubernetes construit le client Kubernetes.
 //
-// In-cluster uniquement, et c'est délibéré : le control plane tourne dans le
-// cluster qu'il pilote, et accepter un kubeconfig ouvrirait la possibilité de
-// lancer des pods ailleurs — dans un cluster que personne n'a relié à cette base
-// d'audit.
+// In-cluster PAR DÉFAUT, et c'est ce qui compte : le control plane tourne dans le
+// cluster qu'il pilote, et accepter un kubeconfig sans le dire ouvrirait la
+// possibilité de lancer des pods ailleurs — dans un cluster que personne n'a
+// relié à cette base d'audit.
+//
+// Le kubeconfig reste atteignable par un opt-in EXPLICITE, nommé pour que
+// personne ne le pose par accident. Même forme que WARDEN_INSECURE_DEV_AUTH, et
+// pour la même raison : sans lui le produit n'est ni testable ni exploitable hors
+// d'un cluster, ce qui pousse à contourner la règle plutôt qu'à la respecter.
 func clientKubernetes() (*kubernetes.Clientset, error) {
+	if os.Getenv(EnvInsecureKubeconfig) == "1" {
+		regles := clientcmd.NewDefaultClientConfigLoadingRules()
+		cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			regles, &clientcmd.ConfigOverrides{}).ClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("kubeconfig: %w", err)
+		}
+		client, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("client Kubernetes: %w", err)
+		}
+		return client, nil
+	}
+
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("configuration Kubernetes in-cluster: %w", err)
+		return nil, fmt.Errorf("configuration Kubernetes in-cluster: %w "+
+			"(hors cluster, poser %s=1)", err, EnvInsecureKubeconfig)
 	}
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
