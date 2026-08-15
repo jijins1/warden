@@ -37,6 +37,9 @@ type createRunResponse struct {
 	AuditSHA    string `json:"audit_sha"`
 	MainlineRef string `json:"mainline_ref"`
 	MainlineSHA string `json:"mainline_sha"`
+
+	// Pod est vide quand le run est enregistré sans être démarré.
+	Pod string `json:"pod,omitempty"`
 }
 
 const tailleMaxRun = 16 << 10
@@ -158,6 +161,30 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		slog.String("run_ref", payload.RunRef), slog.Int64("id", id),
 		slog.String("repo", repo.Name), slog.Int64("user", user.ID))
 
+	// Le démarrage vient APRÈS l'enregistrement, et l'ordre porte une garantie :
+	// le run naît `interrupted` / `unknown` (§6.4), donc un échec ici laisse une
+	// ligne qui dit la vérité — le run existe, il n'a pas tourné. L'inverse —
+	// lancer puis enregistrer — laisserait un pod en vie que rien ne référence.
+	pod := ""
+	if a.deps.Starter != nil {
+		pod, err = a.deps.Starter.Start(r.Context(), core.Run{
+			ID: id, RunRef: payload.RunRef, UserID: user.ID, Repo: repo.Name,
+			Environment: payload.Environment, Inventory: payload.Inventory,
+			Playbook: payload.Playbook, AuditSHA: auditSHA,
+		})
+		if err != nil {
+			slog.Error("démarrage du run en échec",
+				slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+			// Le run est ENREGISTRÉ, et son état dit déjà qu'il n'a pas tourné.
+			// Le message nomme les deux faits et l'identifiant : sans lui,
+			// l'utilisateur croit que rien ne s'est passé et cherche un artefact
+			// qu'il ne sait pas nommer.
+			http.Error(w, "run "+payload.RunRef+" is recorded but could not be started",
+				http.StatusBadGateway)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusCreated)
@@ -166,6 +193,7 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		AuditSHA:    auditSHA,
 		MainlineRef: repo.MainlineRef,
 		MainlineSHA: mainlineSHA,
+		Pod:         pod,
 	}); err != nil {
 		slog.Error("réponse non écrite", slog.String("error", err.Error()))
 	}

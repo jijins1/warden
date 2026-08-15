@@ -253,3 +253,107 @@ func TestLeJetonOuvreLeNamespaceDeSonPorteur(t *testing.T) {
 		t.Errorf("Cache-Control %q", w.Header().Get("Cache-Control"))
 	}
 }
+
+// --- démarrage du run -------------------------------------------------------
+
+// lanceurFactice retient ce qu'on lui a demandé de démarrer.
+type lanceurFactice struct {
+	recus []core.Run
+	err   error
+}
+
+func (l *lanceurFactice) Start(_ context.Context, run core.Run) (string, error) {
+	if l.err != nil {
+		return "", l.err
+	}
+	l.recus = append(l.recus, run)
+	return "warden-run-" + strings.ToLower(run.RunRef), nil
+}
+
+func monterAvecLanceur(t *testing.T, lanceur core.RunLauncher) (*Server, *gitFactice) {
+	t.Helper()
+	s, g, _, _ := monterEcriture(t)
+	s.deps.Starter = lanceur
+	return s, g
+}
+
+// TestLeRunEstDemarreApresAvoirEteEnregistre.
+//
+// L'ordre porte une garantie : le run naît `interrupted` / `unknown` (§6.4), donc
+// un échec au démarrage laisse une ligne qui dit la vérité. L'inverse — lancer
+// puis enregistrer — laisserait un pod en vie que rien ne référence.
+func TestLeRunEstDemarreApresAvoirEteEnregistre(t *testing.T) {
+	l := &lanceurFactice{}
+	s, _ := monterAvecLanceur(t, l)
+
+	w := posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot","playbook":"site.yml"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d, attendu 201 : %s", w.Code, w.Body.String())
+	}
+
+	if len(l.recus) != 1 {
+		t.Fatalf("%d run(s) démarré(s)", len(l.recus))
+	}
+	// Le run remis au lanceur porte l'audit_sha RÉSOLU par le serveur, pas celui
+	// que le client aurait pu déclarer.
+	if l.recus[0].AuditSHA != shaAlice {
+		t.Errorf("commit remis au lanceur %q, attendu %q", l.recus[0].AuditSHA, shaAlice)
+	}
+	if l.recus[0].UserID != 1 || l.recus[0].Repo != "depot" {
+		t.Errorf("run remis au lanceur inattendu : %+v", l.recus[0])
+	}
+	if l.recus[0].ID == 0 {
+		t.Error("le run remis au lanceur n'a pas d'identifiant")
+	}
+
+	var out createRunResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("réponse illisible : %v", err)
+	}
+	if out.Pod == "" {
+		t.Error("le nom du pod n'est pas rendu")
+	}
+}
+
+// TestUnDemarrageEnEchecDitQueLeRunExisteQuandMeme.
+//
+// Sans cette précision, l'utilisateur croit que rien ne s'est passé et cherche un
+// artefact qu'il ne sait pas nommer — alors que le run est enregistré, que son
+// état dit qu'il n'a pas tourné, et que son commit d'audit est poussé.
+func TestUnDemarrageEnEchecDitQueLeRunExisteQuandMeme(t *testing.T) {
+	l := &lanceurFactice{err: errors.New("cluster injoignable")}
+	s, _ := monterAvecLanceur(t, l)
+
+	w := posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot"}`)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("statut %d, attendu 502", w.Code)
+	}
+	corps := w.Body.String()
+	if !strings.Contains(corps, runAlice) {
+		t.Errorf("le message ne nomme pas le run : %s", corps)
+	}
+	if !strings.Contains(corps, "recorded") {
+		t.Errorf("le message ne dit pas que le run est enregistré : %s", corps)
+	}
+}
+
+// TestSansLanceurLeRunEstEnregistreSansDemarrer : un déploiement sans droits
+// Kubernetes reste utilisable pour tout le reste, ce qui est le mode de
+// développement.
+func TestSansLanceurLeRunEstEnregistreSansDemarrer(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d, attendu 201 : %s", w.Code, w.Body.String())
+	}
+	if len(c.recus) != 1 {
+		t.Fatal("le run n'a pas été enregistré")
+	}
+
+	var out createRunResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if out.Pod != "" {
+		t.Errorf("un pod est annoncé sans lanceur : %q", out.Pod)
+	}
+}

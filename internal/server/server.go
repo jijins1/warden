@@ -18,6 +18,9 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/gitd"
@@ -25,6 +28,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
+	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
@@ -139,6 +143,7 @@ func runAPI(ctx context.Context) error {
 	var (
 		dispatcher   *dispatch.Dispatcher
 		dispatchAddr string
+		starter      core.RunLauncher
 
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
@@ -177,6 +182,35 @@ func runAPI(ctx context.Context) error {
 		// empêcher.
 		creator = st
 
+		// Le démarrage des runs n'est branché que si le produit a accès au
+		// cluster. Sans lui, `POST /runs` ENREGISTRE le run sans le démarrer et le
+		// dit : un déploiement sans droits Kubernetes reste utilisable pour tout
+		// le reste, ce qui est le mode de développement.
+		if ns := os.Getenv(EnvPodNamespace); ns != "" {
+			image := os.Getenv(EnvRunnerImage)
+			if image == "" {
+				// L'ADR-0014 fait déclarer l'image par le projet ; cette
+				// configuration n'existe pas encore, donc elle vient du
+				// déploiement. Son absence produirait des pods qui échouent au
+				// démarrage avec une erreur de Kubernetes, loin de la cause.
+				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvRunnerImage)
+			}
+
+			k8s, err := clientKubernetes()
+			if err != nil {
+				return err
+			}
+			orch, err := orchestrator.New(k8s, orchestrator.Config{Namespace: ns})
+			if err != nil {
+				return err
+			}
+			rs, err := core.NewRunStarter(st, orch, gc, image)
+			if err != nil {
+				return err
+			}
+			starter = rs
+		}
+
 		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
 		// donnée. Son composeur d'ordres a besoin du frappeur de jetons — c'est
 		// lui qui met le jeton de lecture de l'ADR-0007 dans la main du runner —
@@ -210,6 +244,7 @@ func runAPI(ctx context.Context) error {
 		Mirrors: mirrors,
 		Refs:    refs,
 		Grants:  grants,
+		Starter: starter,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
@@ -250,6 +285,8 @@ const (
 	EnvGitPushAddr      = "WARDEN_GIT_PUSH_ADDR"      // smart HTTP en écriture, servi à la CLI
 	EnvDispatchAddr     = "WARDEN_DISPATCH_ADDR"      // canal de dispatch SSE, servi aux pods runner
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
+	EnvPodNamespace     = "WARDEN_POD_NAMESPACE"      // namespace où vivent les pods runner
+	EnvRunnerImage      = "WARDEN_RUNNER_IMAGE"       // image du runner, en attendant la configuration projet (ADR-0014)
 	EnvForgeToken       = "WARDEN_FORGE_TOKEN"        // lecture sur la forge, pour le miroir de la principale
 )
 
@@ -302,6 +339,24 @@ func databaseURL(name string) (string, error) {
 // Trois surfaces, trois ports d'écoute. La séparation est portée par le PORT et
 // non par le chemin, ce qui la rend exprimable en NetworkPolicy — et pour
 // l'écriture, c'est le contrôle n°3 de la conjonction de l'ADR-0027.
+// clientKubernetes construit le client depuis la configuration du pod.
+//
+// In-cluster uniquement, et c'est délibéré : le control plane tourne dans le
+// cluster qu'il pilote, et accepter un kubeconfig ouvrirait la possibilité de
+// lancer des pods ailleurs — dans un cluster que personne n'a relié à cette base
+// d'audit.
+func clientKubernetes() (*kubernetes.Clientset, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("configuration Kubernetes in-cluster: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("client Kubernetes: %w", err)
+	}
+	return client, nil
+}
+
 // servirDispatch sert le canal de dispatch sur son propre port.
 //
 // Un port DISTINCT de celui de l'API et de celui de l'ingestion, chacun avec sa

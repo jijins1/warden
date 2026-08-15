@@ -54,6 +54,15 @@ type PodRegistry interface {
 	RegisterPod(ctx context.Context, n NewPod) (int64, error)
 }
 
+// RunLauncher met un run en route et rend le nom du pod créé.
+//
+// Le port existe pour que l'adaptateur entrant puisse démarrer un run sans
+// connaître Kubernetes : `POST /runs` appelle ceci, et tout ce qui suit est
+// derrière la couture que l'ADR-0010 exige.
+type RunLauncher interface {
+	Start(ctx context.Context, run Run) (string, error)
+}
+
 // RunStarter met un run en route.
 //
 // Un pod par run, créé à la demande. Le pré-chauffage du §8.4 n'est pas ici, et

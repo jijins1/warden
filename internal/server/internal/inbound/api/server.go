@@ -74,6 +74,11 @@ type Deps struct {
 	Mirrors core.MirrorRefresher
 	Refs    core.RefResolver
 	Grants  core.PushGrantIssuer
+
+	// Starter lance le pod du run. Facultatif : sans lui, `POST /runs`
+	// ENREGISTRE le run sans le démarrer, et le dit. Un déploiement sans accès au
+	// cluster reste ainsi utilisable pour tout le reste.
+	Starter core.RunLauncher
 }
 
 // Server serves the HTTP API and WebSocket stream.
