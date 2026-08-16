@@ -1,0 +1,119 @@
+# L'egress des pods runner (ADR-0007).
+#
+# CE FICHIER PORTE UN CONTRÔLE QUE LE CODE NE PEUT PAS PORTER. Le §2 pose qu'un
+# playbook arbitraire équivaut à une exécution de code dans le pod : ce qui borne
+# ce que ce code peut joindre n'est pas le binaire du runner — qu'un playbook
+# peut ignorer — mais la politique réseau qui l'entoure.
+#
+# L'ADR-0020 va plus loin et le dit sans détour : faute de gestionnaire de
+# secrets, en v1 « l'autorisation réelle repose ENTIÈREMENT sur la NetworkPolicy
+# egress ». Ne pas appliquer ce fichier ne dégrade pas le produit, cela supprime
+# son contrôle d'accès.
+#
+# La sélection se fait sur les ÉTIQUETTES que l'orchestrateur pose. Un pod qui
+# n'en porterait pas ne serait pas sélectionné, donc pas confiné — raison pour
+# laquelle une étiquette invalide fait échouer le lancement plutôt que d'être
+# omise.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: warden-runner-egress
+  namespace: warden
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: warden-runner
+  policyTypes: ["Egress", "Ingress"]
+
+  # Aucune entrée. Rien n'a de raison de joindre un pod runner : le dialogue
+  # descendant passe par le canal SSE que le POD ouvre (ADR-0018), et le montant
+  # par l'ingestion qu'il appelle. Les deux partent de lui.
+  ingress: []
+
+  egress:
+    # DNS. Sans lui, rien ne résout, et le symptôme est une panne réseau
+    # incompréhensible plutôt qu'un refus net.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+
+    # Le rôle `git`, EN LECTURE SEULE. Le port d'écriture (8082) et l'API interne
+    # (8081) ne figurent pas ici, et c'est le contrôle n°3 de la conjonction de
+    # l'ADR-0027 : un runner ne joint pas la surface d'écriture. Son jeton y
+    # serait de toute façon refusé — le genre entre dans la signature — mais un
+    # contrôle réseau vaut mieux qu'un contrôle qui dépend d'une vérification.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: warden
+              app.kubernetes.io/component: git
+      ports:
+        - { protocol: TCP, port: 8083 }
+
+    # Le canal de dispatch et l'ingestion des events, servis par le rôle `api`.
+    #
+    # Le port de l'API (8080) est ABSENT, délibérément : quand l'ADR-0007 dit que
+    # le runner ne joint jamais l'API, cela se lit « jamais le port de l'API ».
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: warden
+              app.kubernetes.io/component: api
+      ports:
+        - { protocol: TCP, port: 8084 }
+
+    # LE PÉRIMÈTRE D'HÔTES du §10.2 n'est PAS ici, et son absence est le trou
+    # connu de ce fichier : un runner ne peut donc joindre AUCUN hôte géré, et
+    # aucun playbook ne peut s'exécuter contre quoi que ce soit.
+    #
+    # C'est délibéré tant que le périmètre n'est pas dérivé de l'utilisateur :
+    # une règle large — « tout le réseau privé » — donnerait à un playbook
+    # arbitraire l'accès de l'utilisateur le plus privilégié, ce que le §2
+    # interdit. La règle doit être POSÉE PAR RUN, à partir du scope de son
+    # utilisateur, et rien ne le calcule encore.
+---
+# Le rôle `git` n'accepte QUE ce que sa décomposition en ports prévoit.
+#
+# Sans ingress explicite, n'importe quel pod du cluster joindrait son API interne
+# — celle qui rafraîchit des miroirs et crée des dépôts — avec pour seule barrière
+# le jeton partagé. L'ADR-0024 dit que ce jeton est « la plus interne » de trois
+# couches ; les deux autres sont le port distinct et cette politique.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: warden-git-ingress
+  namespace: warden
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: warden
+      app.kubernetes.io/component: git
+  policyTypes: ["Ingress"]
+  ingress:
+    # L'API interne : le seul rôle `api`, et personne d'autre.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: warden
+              app.kubernetes.io/component: api
+      ports:
+        - { protocol: TCP, port: 8081 }
+
+    # La lecture : les pods runner.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: warden-runner
+      ports:
+        - { protocol: TCP, port: 8083 }
+
+    # L'écriture : la CLI, qui vient de l'extérieur du cluster par l'ingress.
+    # Restreindre davantage suppose de connaître d'où entrent les développeurs,
+    # ce qui est une décision de site et non de produit.
+    - ports:
+        - { protocol: TCP, port: 8082 }

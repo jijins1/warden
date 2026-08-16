@@ -1,0 +1,59 @@
+# Les droits du rôle `api` sur le cluster, et rien de plus.
+#
+# Un Role NAMESPACÉ, jamais un ClusterRole. Ce n'est pas une préférence de style :
+# l'ADR-0023 a écarté la validation de jetons par TokenReview pour cette raison
+# exacte — elle aurait exigé une permission hors du namespace du produit, que la
+# contrainte d'exploitation interdit. Ce fichier tient cette décision.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: warden-api
+  namespace: warden
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: warden-api
+  namespace: warden
+rules:
+  # Les pods runner : les créer, les observer, les supprimer.
+  #
+  # Pas de `watch` : le reconciler du §8.7 n'existe pas encore, et un droit
+  # accordé « pour plus tard » est un droit que personne ne retire.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "create", "delete"]
+
+  # Le Secret qui porte le jeton d'amorçage d'un pod (ADR-0023). Créé avant le
+  # pod, supprimé avec lui.
+  #
+  # `get` est nécessaire au rattachement par ownerReference, qui relit le Secret
+  # créé pour lui poser son propriétaire.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: warden-api
+  namespace: warden
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: warden-api
+subjects:
+  - kind: ServiceAccount
+    name: warden-api
+    namespace: warden
+---
+# Le rôle `git` n'a AUCUN droit sur l'API Kubernetes.
+#
+# Il détient le volume et sert le protocole ; il ne crée rien. Lui donner un
+# ServiceAccount sans droits, plutôt que celui par défaut, rend cette absence
+# explicite et la protège d'un `default` que quelqu'un finirait par élargir.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: warden-git
+  namespace: warden

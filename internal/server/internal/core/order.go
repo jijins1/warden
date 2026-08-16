@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	wire "github.com/jijins1/warden/internal/wire/dispatch"
@@ -29,7 +30,7 @@ type RunByIDReader interface {
 type OrderBuilder struct {
 	runs    RunByIDReader
 	grants  FetchGrantIssuer
-	gitURL  string
+	gitBase string
 	fetchTL time.Duration
 }
 
@@ -46,17 +47,28 @@ type OrderBuilder struct {
 const FetchGrantTTL = 4 * time.Hour
 
 // NewOrderBuilder construit le composeur d'ordres.
-func NewOrderBuilder(runs RunByIDReader, grants FetchGrantIssuer, gitURL string) (*OrderBuilder, error) {
+// NewOrderBuilder prend la BASE de l'adresse du rôle `git`, pas une origine
+// complète.
+//
+// La distinction n'est pas de forme : un dépôt bare par dépôt (ADR-0006), donc
+// l'origine dépend du RUN. Une origine constante ferait cloner le même dépôt à
+// tous les runs — et le premier symptôme serait un runner qui exécute le code
+// d'un autre projet, ce que rien en aval ne rattraperait.
+func NewOrderBuilder(runs RunByIDReader, grants FetchGrantIssuer, gitBase string) (*OrderBuilder, error) {
 	if runs == nil || grants == nil {
 		return nil, fmt.Errorf("construction des ordres : lecture des runs et frappe des jetons sont requises")
 	}
-	if gitURL == "" {
+	if gitBase == "" {
 		// Sans elle, l'ordre partirait avec une origine vide et le runner
 		// échouerait sur un message de git parlant d'URL malformée, très loin de
 		// la cause.
 		return nil, fmt.Errorf("construction des ordres : adresse du rôle git absente")
 	}
-	return &OrderBuilder{runs: runs, grants: grants, gitURL: gitURL, fetchTL: FetchGrantTTL}, nil
+	return &OrderBuilder{
+		runs: runs, grants: grants,
+		gitBase: strings.TrimRight(gitBase, "/"),
+		fetchTL: FetchGrantTTL,
+	}, nil
 }
 
 // OrderFor compose l'ordre du run attribué à un pod.
@@ -97,8 +109,11 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		Environment: run.Environment,
 		Inventory:   run.Inventory,
 		Playbook:    run.Playbook,
-		GitURL:      b.gitURL,
-		GitToken:    wire.Secret(jeton),
+		// L'origine est composée à partir du dépôt DU RUN. Le nom a déjà traversé
+		// la validation de `depots.dir` côté `git` et la contrainte de la base ;
+		// il ne peut pas contenir de barre ni de `..`.
+		GitURL:   b.gitBase + "/" + run.Repo + ".git",
+		GitToken: wire.Secret(jeton),
 
 		// SSHKey reste vide : `key-inventory` n'a pas d'implémentation, et
 		// l'ADR-0020 a constaté que l'environnement cible n'a pas de gestionnaire

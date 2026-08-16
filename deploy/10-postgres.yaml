@@ -1,0 +1,31 @@
+# PostgreSQL par l'opérateur CNPG déjà présent sur le cluster.
+#
+# L'ADR-0008 fait de PostgreSQL le journal ET le transport des events : ce n'est
+# pas une base de côté, c'est le composant dont la disponibilité conditionne le
+# streaming. Confier son cycle de vie à un opérateur plutôt qu'à un StatefulSet
+# écrit à la main, c'est ne pas réimplémenter les sauvegardes, le basculement et
+# les montées de version — dans l'esprit du §10.2, « ne pas réimplémenter,
+# intégrer ».
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: warden-db
+  namespace: warden
+spec:
+  instances: 1
+
+  bootstrap:
+    initdb:
+      database: warden
+      owner: warden
+
+  storage:
+    size: 10Gi
+    # Explicite alors que le cluster a une classe par défaut : il en a même DEUX
+    # marquées `(default)`, ce qui rend le choix implicite indéterminé. Nommer la
+    # classe est ici la seule façon de savoir ce qu'on obtient.
+    storageClass: local-path
+
+  # CNPG publie les credentials dans un Secret `warden-db-app`, dont la clé `uri`
+  # est directement la chaîne de connexion attendue par le produit. Rien à
+  # recopier, donc rien à désynchroniser.

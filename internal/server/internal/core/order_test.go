@@ -81,8 +81,9 @@ func TestLOrdrePorteUnJetonScopeAuRun(t *testing.T) {
 	if string(ordre.GitToken) != "jeton-de-lecture" {
 		t.Errorf("jeton absent de l'ordre : %q", ordre.GitToken)
 	}
-	if ordre.GitURL != "https://git.invalid" {
-		t.Errorf("origine %q", ordre.GitURL)
+	// L'origine porte le dépôt DU RUN : un dépôt bare par dépôt (ADR-0006).
+	if ordre.GitURL != "https://git.invalid/depot.git" {
+		t.Errorf("origine %q, attendue https://git.invalid/depot.git", ordre.GitURL)
 	}
 	if ordre.AuditSHA != runValide().AuditSHA {
 		t.Errorf("commit à exécuter %q", ordre.AuditSHA)
@@ -158,6 +159,37 @@ func TestLOrdreNePorteNiCleNiVariables(t *testing.T) {
 	}
 	if len(ordre.ForwardEnv) != 0 {
 		t.Error("des variables sont présentes alors que la CLI n'en envoie pas")
+	}
+}
+
+// TestLOrigineDependDuDepotDuRun ferme un défaut qui n'aurait produit aucune
+// erreur.
+//
+// Une origine constante ferait cloner le même dépôt à tous les runs. Le premier
+// symptôme serait un runner exécutant le code d'un AUTRE projet — et rien en aval
+// ne le rattraperait, puisque l'arbre obtenu serait un arbre valide.
+func TestLOrigineDependDuDepotDuRun(t *testing.T) {
+	autre := runValide()
+	autre.ID = 2
+	autre.Repo = "un-autre-depot"
+
+	f := &frappeurFactice{}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide(), 2: autre}, f, "https://git.invalid/")
+
+	premier, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	second, err := b.OrderFor(t.Context(), 2)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+
+	if premier.GitURL == second.GitURL {
+		t.Fatalf("deux dépôts, la même origine : %q", premier.GitURL)
+	}
+	if second.GitURL != "https://git.invalid/un-autre-depot.git" {
+		t.Errorf("origine %q", second.GitURL)
 	}
 }
 

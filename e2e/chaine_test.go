@@ -449,7 +449,7 @@ func TestLaChaineComplete(t *testing.T) {
 		// l'API interne (ADR-0006), donc par le port publié du conteneur.
 		"WARDEN_GIT_INTERNAL_URL":   "http://" + adresseGitInterne,
 		"WARDEN_GIT_INTERNAL_TOKEN": secretGit,
-		"WARDEN_GIT_RUNNER_URL":     "http://" + adresseGitLecture + "/" + depot + ".git",
+		"WARDEN_GIT_RUNNER_URL":     "http://" + adresseGitLecture,
 
 		"WARDEN_DISPATCH_ADDR": adresseDispatch,
 		"WARDEN_POD_NAMESPACE": nsE2E,
