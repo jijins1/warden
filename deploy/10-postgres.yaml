@@ -10,7 +10,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: warden-db
-  namespace: warden
+  namespace: warden-dev
 spec:
   instances: 1
 
@@ -29,3 +29,27 @@ spec:
   # CNPG publie les credentials dans un Secret `warden-db-app`, dont la clé `uri`
   # est directement la chaîne de connexion attendue par le produit. Rien à
   # recopier, donc rien à désynchroniser.
+
+  # Les rôles de l'ADR-0008 sont déclarés à l'OPÉRATEUR, pas créés par la
+  # migration.
+  #
+  # La migration 00001 sait les créer, mais l'utilisateur applicatif de CNPG n'a
+  # pas `CREATEROLE` — et le lui donner serait pire que le problème : dans
+  # PostgreSQL, `CREATEROLE` permet de se doter de droits qu'on n'a pas. Les
+  # déclarer ici les fait créer par un rôle qui a déjà l'autorité, et le bloc
+  # idempotent de la migration devient un no-op.
+  #
+  # Les trois existent pour séparer les accès (ADR-0008) : l'ingestion n'a que
+  # INSERT, et les payloads `--diff` sont sous contrôle d'accès distinct parce
+  # qu'ils contiennent les secrets rendus (§6.5).
+  managed:
+    roles:
+      - name: warden_ingest
+        ensure: present
+        login: false
+      - name: warden_reader
+        ensure: present
+        login: false
+      - name: warden_diff_reader
+        ensure: present
+        login: false

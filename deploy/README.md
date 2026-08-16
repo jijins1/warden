@@ -4,7 +4,7 @@ Manifestes du control plane. Ordre d'application implicite par la numérotation.
 
 ```sh
 kubectl apply -f deploy/00-namespace.yaml
-kubectl create secret generic warden-internal -n warden \
+kubectl create secret generic warden-internal -n warden-dev \
   --from-literal=internal-token="$(openssl rand -base64 32)" \
   --from-literal=forge-token="<jeton de lecture Gitea>"
 kubectl apply -f deploy/
@@ -52,6 +52,24 @@ confiné.
 - **`imagePullSecrets` absent.** Si le registre Gitea est privé, l'ajouter aux
   ServiceAccounts `warden-api` et `warden-git` — et au pod runner, dont la
   podspec est construite par le code.
+
+## Les rôles PostgreSQL
+
+Les trois rôles de l'ADR-0008 sont déclarés à l'opérateur CNPG, pas créés par la
+migration. Celle-ci sait les créer, mais l'utilisateur applicatif n'a pas
+`CREATEROLE` — et le lui donner serait pire que le problème : dans PostgreSQL,
+`CREATEROLE` permet de se doter de droits qu'on n'a pas.
+
+Sur une base qui n'est PAS gérée par CNPG, il faut les créer à la main, avec un
+rôle qui en a l'autorité :
+
+```sql
+CREATE ROLE warden_ingest NOLOGIN;
+CREATE ROLE warden_reader NOLOGIN;
+CREATE ROLE warden_diff_reader NOLOGIN;
+```
+
+Le bloc de la migration 00001 est idempotent : les rôles existants sont sautés.
 
 ## Ce que l'exploitation doit savoir
 

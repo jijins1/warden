@@ -18,7 +18,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: warden-runner-egress
-  namespace: warden
+  namespace: warden-dev
 spec:
   podSelector:
     matchLabels:
@@ -87,7 +87,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: warden-git-ingress
-  namespace: warden
+  namespace: warden-dev
 spec:
   podSelector:
     matchLabels:
