@@ -67,6 +67,11 @@ type Deps struct {
 	// d'audit reste valide.
 	Repos core.RepoStore
 
+	// RepoMaker matérialise le dépôt bare. Facultatif : sans lui, la
+	// configuration est écrite mais le volume reste vide, et l'API le DIT plutôt
+	// que de laisser découvrir le manque au premier run.
+	RepoMaker core.RepoMaterializer
+
 	// Les quatre suivants forment le chemin d'écriture. Facultatifs ensemble :
 	// leur absence rend `POST /runs` et la frappe de jetons indisponibles, ce qui
 	// est le mode d'un déploiement en lecture seule.

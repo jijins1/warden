@@ -21,12 +21,18 @@ var nomDeDepot = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 // depots résout un identifiant de dépôt en répertoire de dépôt bare.
 type depots struct{ racine string }
 
-// dir rend le répertoire du dépôt bare, ou une erreur de contrat.
+// chemin résout un identifiant de dépôt en chemin, SANS exiger qu'il existe.
+//
+// Séparé de `dir` parce que la création d'un dépôt a besoin du chemin d'un dépôt
+// qui n'existe pas encore — et que relâcher le contrôle d'existence dans `dir`
+// pour la servir supprimerait la distinction entre « dépôt inconnu » et « ce
+// répertoire n'est pas un dépôt », deux pannes qu'un opérateur ne diagnostique
+// pas de la même façon.
 //
 // La validation précède TOUTE manipulation de chemin. Un filepath.Clean appliqué
 // après coup sur une entrée non validée est un contrôle qu'on croit avoir : il
 // normalise, il ne refuse pas.
-func (d depots) dir(repo string) (string, *gitwire.Error) {
+func (d depots) chemin(repo string) (string, *gitwire.Error) {
 	if !nomDeDepot.MatchString(repo) {
 		return "", &gitwire.Error{
 			Code:    gitwire.CodeBadRequest,
@@ -55,6 +61,16 @@ func (d depots) dir(repo string) (string, *gitwire.Error) {
 			Code:    gitwire.CodeBadRequest,
 			Message: "nom de dépôt invalide",
 		}
+	}
+
+	return dir, nil
+}
+
+// dir rend le répertoire d'un dépôt bare EXISTANT.
+func (d depots) dir(repo string) (string, *gitwire.Error) {
+	dir, errChemin := d.chemin(repo)
+	if errChemin != nil {
+		return "", errChemin
 	}
 
 	// Un dépôt bare a un répertoire `objects`. Le tester plutôt que le seul

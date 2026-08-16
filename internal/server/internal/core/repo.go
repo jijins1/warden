@@ -75,6 +75,22 @@ type RepoStore interface {
 	UpsertRepo(ctx context.Context, r Repo, by int64) error
 }
 
+// RepoMaterializer crée le dépôt bare sur le volume du rôle `git`.
+//
+// Il existe parce que la configuration ne suffit pas : déclarer la forge et la
+// branche protégée d'un dépôt ne crée rien sur le volume, et le premier run
+// échoue alors sur « dépôt inconnu » — message exact, décrivant un état que rien
+// ne permettait d'atteindre.
+//
+// Séparé de RepoStore, qui écrit la POLITIQUE. Celui-ci écrit sur un VOLUME, à
+// travers le réseau, et son échec n'a pas les mêmes conséquences : une
+// configuration sans dépôt se répare en rejouant, un dépôt sans configuration est
+// un répertoire inerte.
+type RepoMaterializer interface {
+	// CreateRepo est idempotente : un dépôt déjà présent est un succès.
+	CreateRepo(ctx context.Context, repo string) error
+}
+
 // MirrorRefresher rafraîchit le miroir de la branche protégée et rend sa
 // position.
 //

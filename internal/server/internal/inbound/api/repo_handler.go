@@ -112,6 +112,25 @@ func (a *Server) HandlePutRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Le dépôt bare est créé AVANT que la configuration soit écrite, et l'ordre
+	// est réfléchi. Dans ce sens, un échec laisse l'administrateur sans
+	// configuration et sans dépôt : il réessaie, rien n'est à défaire. Dans
+	// l'autre, il laisserait une configuration que le premier run ferait échouer
+	// sur « dépôt inconnu », c'est-à-dire un état cohérent en apparence et
+	// inutilisable en pratique.
+	//
+	// Un dépôt créé dont la configuration échoue ensuite est, lui, inerte : un
+	// répertoire vide que la prochaine tentative adoptera.
+	if a.deps.RepoMaker != nil {
+		if err := a.deps.RepoMaker.CreateRepo(r.Context(), repo.Name); err != nil {
+			slog.Error("création du dépôt sur le volume en échec",
+				slog.String("repo", repo.Name), slog.String("error", err.Error()))
+			http.Error(w, "the repository could not be created on the git role's volume",
+				http.StatusBadGateway)
+			return
+		}
+	}
+
 	if err := a.deps.Repos.UpsertRepo(r.Context(), repo, user.ID); err != nil {
 		slog.Error("écriture de la configuration de dépôt en échec",
 			slog.String("repo", repo.Name), slog.String("error", err.Error()))

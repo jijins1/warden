@@ -361,3 +361,24 @@ func (g *Git) CheckoutDetached(ctx context.Context, commit SHA) error {
 	}
 	return nil
 }
+
+// InitBare creates a bare repository at the given path.
+//
+// Bare because it holds no working tree: the `git` role stores audit and mirror
+// refs, it never checks anything out. A non-bare repository would additionally
+// carry a checked-out branch that nothing maintains, and whose staleness would
+// eventually be read as meaning something.
+//
+// The initial branch is named explicitly rather than left to whatever the
+// environment defaults to. Nothing here depends on it — the refs that matter are
+// created by name — but an unset HEAD makes several commands report a repository
+// as broken rather than empty.
+func (g *Git) InitBare(ctx context.Context, path string) error {
+	if path == "" {
+		return fmt.Errorf("empty repository path")
+	}
+	if _, err := g.output(ctx, "init", "--bare", "--quiet", "--initial-branch=main", "--", path); err != nil {
+		return fmt.Errorf("git init --bare %s: %w", path, err)
+	}
+	return nil
+}

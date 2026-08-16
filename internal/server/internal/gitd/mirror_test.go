@@ -192,3 +192,131 @@ func TestMiroirNeFuitPasLURL(t *testing.T) {
 		t.Errorf("l'URL de la forge fuit dans la réponse : %s", brut)
 	}
 }
+
+// --- création du dépôt bare -------------------------------------------------
+
+// appelerCreation frappe l'API interne de création de dépôt.
+func appelerCreation(t *testing.T, srv *httptest.Server, repo string) (int, string) {
+	t.Helper()
+	corps, _ := json.Marshal(gitwire.CreateRepoRequest{Repo: repo})
+
+	r, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		srv.URL+gitwire.CreateRepoPath, bytes.NewReader(corps))
+	if err != nil {
+		t.Fatalf("requête : %v", err)
+	}
+	r.Header.Set("Authorization", "Bearer "+jetonDeTest)
+
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatalf("appel : %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	brut, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(brut)
+}
+
+// monterVide monte le service sur une racine SANS aucun dépôt.
+func monterVide(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+	gitBinary(t)
+	racine := t.TempDir()
+
+	s, err := gitd.New(gitd.Config{Racine: racine, Jeton: jetonDeTest})
+	if err != nil {
+		t.Fatalf("gitd.New : %v", err)
+	}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	return srv, racine
+}
+
+// TestLaCreationDeDepotCombleLeManque : c'est ce qui rendait la configuration
+// inopérante.
+//
+// Un administrateur déclarait la forge et la branche protégée, mais personne ne
+// créait le dépôt sur le volume — et le premier run échouait sur « dépôt
+// inconnu », message exact décrivant un état que rien ne permettait d'atteindre.
+func TestLaCreationDeDepotCombleLeManque(t *testing.T) {
+	srv, racine := monterVide(t)
+
+	statut, corps := appelerCreation(t, srv, "depot")
+	if statut != http.StatusNoContent {
+		t.Fatalf("statut %d, attendu 204 : %s", statut, corps)
+	}
+
+	// Un dépôt bare, reconnaissable à son répertoire `objects`.
+	if _, err := os.Stat(filepath.Join(racine, "depot.git", "objects")); err != nil {
+		t.Fatalf("le dépôt n'a pas été créé : %v", err)
+	}
+
+	// Et il est UTILISABLE : le diff exige un dépôt existant, et c'est
+	// précisément le « dépôt inconnu » que la création débloque. Le SHA demandé
+	// est bidon, donc la réponse doit dire « objet absent » — pas « dépôt
+	// inconnu ».
+	resp := appeler(t, srv, gitwire.DiffRequest{Repo: "depot", From: shaBidon, To: shaBidon})
+	defer func() { _ = resp.Body.Close() }()
+
+	var e gitwire.Error
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	if e.Code == gitwire.CodeUnknownRepo {
+		t.Error("le dépôt reste inconnu après sa création")
+	}
+}
+
+// TestLaCreationEstIdempotente est son contrat.
+//
+// La configuration serveur est déclarative : la réécrire ne doit pas obliger
+// l'administrateur à savoir si le volume est déjà dans l'état voulu. Un conflit
+// ici transformerait une réécriture anodine en échec.
+func TestLaCreationEstIdempotente(t *testing.T) {
+	srv, racine := monterVide(t)
+
+	for i := range 3 {
+		if statut, corps := appelerCreation(t, srv, "depot"); statut != http.StatusNoContent {
+			t.Fatalf("appel %d : statut %d — %s", i+1, statut, corps)
+		}
+	}
+
+	// Et le contenu n'a pas été réinitialisé : un `git init` rejoué sur un dépôt
+	// existant ne doit rien perdre. On y écrit une ref, puis on rappelle.
+	bare := filepath.Join(racine, "depot.git")
+	src := t.TempDir()
+	mustGit(t, src, "init", "--initial-branch=main", ".")
+	mustGit(t, src, "commit", "--allow-empty", "-m", "témoin")
+	sha := strings.TrimSpace(mustGit(t, src, "rev-parse", "HEAD"))
+	mustGit(t, src, "push", bare, sha+":refs/heads/temoin")
+
+	if statut, _ := appelerCreation(t, srv, "depot"); statut != http.StatusNoContent {
+		t.Fatalf("statut %d après contenu", statut)
+	}
+	if got := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", "refs/heads/temoin")); got != sha {
+		t.Errorf("la ref témoin a été perdue : %q", got)
+	}
+}
+
+// TestLaCreationRefuseUnNomHostile : ce nom devient un composant de chemin sous
+// la racine des dépôts, et la création est le SEUL endroit qui écrit là.
+func TestLaCreationRefuseUnNomHostile(t *testing.T) {
+	srv, racine := monterVide(t)
+
+	for _, nom := range []string{"..", "../evade", "a/b", `a\b`, ".cache", "", strings.Repeat("a", 200)} {
+		t.Run(nom, func(t *testing.T) {
+			if statut, _ := appelerCreation(t, srv, nom); statut != http.StatusBadRequest {
+				t.Errorf("statut %d, attendu 400", statut)
+			}
+		})
+	}
+
+	// Rien n'a été créé, ni dans la racine ni à côté.
+	entrees, err := os.ReadDir(racine)
+	if err != nil {
+		t.Fatalf("lecture de la racine : %v", err)
+	}
+	if len(entrees) != 0 {
+		t.Errorf("la racine n'est pas restée vide : %v", entrees)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(racine), "evade.git")); err == nil {
+		t.Error("un dépôt a été créé HORS de la racine")
+	}
+}

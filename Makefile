@@ -60,8 +60,12 @@ test-integration: ## Étage 2 — intégration, PostgreSQL via testcontainers
 # Ce que cet étage établit et que les autres ne peuvent pas : le clientset
 # factice accepte n'importe quelle podspec. Il ignore l'admission, le kubelet et
 # le montage d'un volume.
+# `images` en prérequis, et ce n'est pas du confort : la chaîne complète lance le
+# rôle `git` DEPUIS L'IMAGE, donc un changement de code non reconstruit se teste
+# contre l'ancien binaire. Le symptôme est trompeur — un endpoint absent rend un
+# 404 que l'appelant traduit en « le dépôt n'a pas pu être créé ».
 .PHONY: test-e2e
-test-e2e: ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée des namespaces jetables)
+test-e2e: images ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée des namespaces jetables)
 	@echo "Cluster visé : $$(kubectl config current-context)"
 	go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/ ./e2e/
 

@@ -151,6 +151,7 @@ func runAPI(ctx context.Context) error {
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
 		refs    core.RefResolver
+		makers  core.RepoMaterializer
 		grants  core.PushGrantIssuer
 		creator core.RunCreator
 	)
@@ -166,7 +167,7 @@ func runAPI(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("client du rôle git: %w", err)
 		}
-		repo, mirrors, refs = gc, gc, gc
+		repo, mirrors, refs, makers = gc, gc, gc, gc
 
 		// Le frappeur de jetons est construit à part du client HTTP : signer ne
 		// fait AUCUN appel réseau, et les mêler donnerait à une opération
@@ -237,17 +238,18 @@ func runAPI(ctx context.Context) error {
 	}
 
 	server, err := api.New(cfg, api.Deps{
-		Runs:    st,
-		Users:   st,
-		Diffs:   dr,
-		Events:  f,
-		Repo:    repo,
-		Repos:   st,
-		Creator: creator,
-		Mirrors: mirrors,
-		Refs:    refs,
-		Grants:  grants,
-		Starter: starter,
+		Runs:      st,
+		Users:     st,
+		Diffs:     dr,
+		Events:    f,
+		Repo:      repo,
+		Repos:     st,
+		RepoMaker: makers,
+		Creator:   creator,
+		Mirrors:   mirrors,
+		Refs:      refs,
+		Grants:    grants,
+		Starter:   starter,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)

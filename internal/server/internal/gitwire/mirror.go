@@ -115,3 +115,25 @@ type NamespaceRequest struct {
 	// SHA est le commit que le runner doit matérialiser.
 	SHA string `json:"sha"`
 }
+
+// CreateRepoPath matérialise le dépôt bare d'un dépôt configuré.
+//
+// Il comble un manque que rien ne signalait : un administrateur déclarait la
+// configuration d'un dépôt — sa forge, sa branche protégée — mais PERSONNE ne
+// créait `<racine>/<nom>.git` sur le volume du rôle `git`. Le premier run
+// échouait alors sur « dépôt inconnu », message exact mais qui décrit un état
+// que rien ne permettait d'atteindre.
+//
+// Sur le listener interne, comme le reste : créer un dépôt appartient à
+// l'administration, pas au chemin chaud d'un run, et certainement pas à une
+// surface joignable depuis un pod.
+const CreateRepoPath = "/internal/v1/repos"
+
+// CreateRepoRequest demande la création du dépôt bare.
+//
+// Idempotente par contrat : un dépôt qui existe déjà est un succès. La
+// configuration est déclarative — un administrateur qui la réécrit ne doit pas
+// avoir à se demander si le volume est déjà dans l'état voulu.
+type CreateRepoRequest struct {
+	Repo string `json:"repo"`
+}

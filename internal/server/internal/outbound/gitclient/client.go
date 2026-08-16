@@ -312,3 +312,41 @@ func (c *Client) CreateRunNamespace(ctx context.Context, repo, namespace, sha st
 	}
 	return nil
 }
+
+// CreateRepo matérialise le dépôt bare d'un dépôt configuré.
+//
+// Idempotente : un dépôt déjà présent est un succès. C'est ce qui permet à
+// l'administration de rester déclarative — réécrire la configuration d'un dépôt
+// ne doit pas obliger à savoir si le volume est déjà dans l'état voulu.
+func (c *Client) CreateRepo(ctx context.Context, repo string) error {
+	if repo == "" {
+		return fmt.Errorf("création de dépôt : nom obligatoire")
+	}
+
+	ctx, annuler := context.WithTimeout(ctx, c.timeout)
+	defer annuler()
+
+	corps, err := json.Marshal(gitwire.CreateRepoRequest{Repo: repo})
+	if err != nil {
+		return fmt.Errorf("encodage de la requête: %w", err)
+	}
+
+	cible := c.base.JoinPath(gitwire.CreateRepoPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cible.String(), bytes.NewReader(corps))
+	if err != nil {
+		return fmt.Errorf("construction de la requête: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return fmt.Errorf("appel du rôle git: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.erreur(resp)
+	}
+	return nil
+}

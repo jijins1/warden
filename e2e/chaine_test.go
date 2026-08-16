@@ -132,19 +132,15 @@ func forge(t *testing.T) (urlHote string, port int, mainSHA string) {
 //
 // Le test exerce donc l'image qu'on déploie réellement, et non un binaire
 // compilé à la volée dans un environnement qui n'est celui de personne.
-// initialiserDepotBare crée le dépôt bare avec le bon propriétaire.
-func initialiserDepotBare(t *testing.T, racine string) {
+// preparerVolume rend le volume écrivable par l'utilisateur de l'image.
+//
+// Il ne crée AUCUN dépôt : c'est le produit qui le fait, à la configuration. Ne
+// reste ici que ce qu'un PVC apporterait en production — un répertoire dont
+// l'uid du conteneur peut écrire.
+func preparerVolume(t *testing.T, racine string) {
 	t.Helper()
 	if err := os.Chmod(racine, 0o777); err != nil { // #nosec G302 -- temporaire de test
 		t.Fatalf("droits du volume : %v", err)
-	}
-
-	cmd := exec.CommandContext(t.Context(), "docker", "run", "--rm",
-		"-u", "0:0", "-v", racine+":/depots", "--entrypoint", "sh", imageWardend(),
-		"-c", "git init --bare --initial-branch=main /depots/"+depot+
-			".git >/dev/null && chown -R 65532:65532 /depots")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("initialisation du dépôt bare impossible : %v\n%s", err, out)
 	}
 
 	// Le volume appartient maintenant à l'uid de l'image. Sans cette remise, le
@@ -415,20 +411,20 @@ func TestLaChaineComplete(t *testing.T) {
 	dsn := postgres(t)
 	urlForgeHote, portForge, _ := forge(t)
 
-	// Le volume du rôle `git` : un dépôt bare par dépôt (ADR-0006).
+	// Le volume du rôle `git` part VIDE, et c'est le point.
 	//
-	// Il est initialisé DANS un conteneur, et appartient à l'utilisateur de
-	// l'image. Le créer depuis l'hôte le fait appartenir à un autre uid, et git
-	// refuse alors d'y toucher — « detected dubious ownership », protection
-	// active depuis 2.35.2. C'est une contrainte de DÉPLOIEMENT et pas un artifice
-	// de test : le PVC du rôle `git` doit appartenir à l'utilisateur qui l'écrit.
+	// Le dépôt bare est créé par le produit lui-même, à la configuration du dépôt
+	// par l'administrateur. Ce chemin n'existait pas : personne ne matérialisait
+	// `<racine>/<nom>.git`, et le premier run échouait sur « dépôt inconnu » —
+	// message exact décrivant un état que rien ne permettait d'atteindre. Ce test
+	// l'initialisait donc lui-même, ce qui masquait le manque.
 	//
-	// Cela met au jour un manque : RIEN dans le produit ne crée ce dépôt bare.
-	// L'administrateur déclare la configuration d'un dépôt, mais personne ne
-	// matérialise `<racine>/<nom>.git`, et `POST /runs` échouera tant qu'il
-	// n'existe pas.
+	// Le créer côté serveur règle du même coup une contrainte de déploiement : le
+	// dépôt appartient à l'utilisateur qui l'écrit. Créé depuis l'hôte, il
+	// appartenait à un autre uid et git refusait d'y toucher — « dubious
+	// ownership », protection active depuis 2.35.2.
 	racineDepots := t.TempDir()
-	initialiserDepotBare(t, racineDepots)
+	preparerVolume(t, racineDepots)
 
 	// Le rôle `git` vient de l'IMAGE, avec son git conforme à l'ADR-0005. C'est ce
 	// qui rend cette chaîne exécutable sur un poste dont le git est trop ancien —
@@ -570,7 +566,8 @@ func configurerDepot(t *testing.T, api, urlForge string) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("configuration du dépôt : statut %d", resp.StatusCode)
+		corps, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		t.Fatalf("configuration du dépôt : statut %d — %s", resp.StatusCode, corps)
 	}
 }
 

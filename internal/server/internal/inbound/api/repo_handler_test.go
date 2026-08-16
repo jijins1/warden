@@ -274,3 +274,115 @@ func (stubPort) DiffForRun(context.Context, core.Run, int64) (json.RawMessage, e
 func (stubPort) Follow(context.Context, int64, int64) (core.EventStream, error) {
 	return nil, errPortNonUtilise
 }
+
+// --- matérialisation du dépôt ------------------------------------------------
+
+// faiseurFactice retient l'ordre dans lequel on l'a appelé, relativement au
+// magasin — c'est cet ordre que les tests vérifient.
+type faiseurFactice struct {
+	journal *[]string
+	crees   []string
+	err     error
+}
+
+func (f *faiseurFactice) CreateRepo(_ context.Context, repo string) error {
+	*f.journal = append(*f.journal, "create:"+repo)
+	if f.err != nil {
+		return f.err
+	}
+	f.crees = append(f.crees, repo)
+	return nil
+}
+
+// magasinJournalise enregistre ses écritures dans le même journal.
+type magasinJournalise struct {
+	*magasinFactice
+	journal *[]string
+}
+
+func (m *magasinJournalise) UpsertRepo(ctx context.Context, r core.Repo, by int64) error {
+	*m.journal = append(*m.journal, "config:"+r.Name)
+	return m.magasinFactice.UpsertRepo(ctx, r, by)
+}
+
+func serveurAvecFaiseur(t *testing.T, journal *[]string, errFaiseur error) (*Server, *magasinFactice, *faiseurFactice) {
+	t.Helper()
+	base := &magasinFactice{}
+	faiseur := &faiseurFactice{journal: journal, err: errFaiseur}
+
+	s, err := New(&Config{Addr: "127.0.0.1:0"}, Deps{
+		Runs: stubPort{}, Users: stubPort{}, Diffs: stubPort{}, Events: stubPort{},
+		Repos:     &magasinJournalise{magasinFactice: base, journal: journal},
+		RepoMaker: faiseur,
+	})
+	if err != nil {
+		t.Fatalf("api.New : %v", err)
+	}
+	return s, base, faiseur
+}
+
+func configurer(t *testing.T, s *Server) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r := requete(t, http.MethodPut, "/admin/repos/depot", administrateur(),
+		`{"remote_url":"https://forge.invalid/x.git","mainline_ref":"refs/heads/main"}`)
+	r.SetPathValue("repo", "depot")
+	s.HandlePutRepo(w, r)
+	return w
+}
+
+// TestLeDepotEstCreeAVANTQueLaConfigurationSoitEcrite.
+//
+// L'ordre est ce qui décide de l'état laissé par un échec. Dans ce sens,
+// l'administrateur se retrouve sans configuration ET sans dépôt : il réessaie,
+// rien n'est à défaire. Dans l'autre, il laisserait une configuration que le
+// premier run ferait échouer sur « dépôt inconnu » — un état cohérent en
+// apparence et inutilisable en pratique.
+func TestLeDepotEstCreeAvantQueLaConfigurationSoitEcrite(t *testing.T) {
+	var journal []string
+	s, magasin, faiseur := serveurAvecFaiseur(t, &journal, nil)
+
+	if w := configurer(t, s); w.Code != http.StatusOK {
+		t.Fatalf("statut %d : %s", w.Code, w.Body.String())
+	}
+
+	if len(journal) != 2 || journal[0] != "create:depot" || journal[1] != "config:depot" {
+		t.Fatalf("ordre %v, attendu [create:depot config:depot]", journal)
+	}
+	if len(faiseur.crees) != 1 || len(magasin.ecrites) != 1 {
+		t.Errorf("créations %v, écritures %v", faiseur.crees, magasin.ecrites)
+	}
+}
+
+// TestUnVolumeInjoignableNecritPasDeConfiguration.
+//
+// Une configuration sans dépôt est le pire des deux états : elle a l'air
+// complète et ne l'est pas. Mieux vaut que l'administrateur voie l'échec et
+// recommence.
+func TestUnVolumeInjoignableNecritPasDeConfiguration(t *testing.T) {
+	var journal []string
+	s, magasin, _ := serveurAvecFaiseur(t, &journal, errors.New("rôle git injoignable"))
+
+	w := configurer(t, s)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("statut %d, attendu 502", w.Code)
+	}
+	if len(magasin.ecrites) != 0 {
+		t.Errorf("une configuration a été écrite malgré l'échec : %+v", magasin.ecrites)
+	}
+}
+
+// TestSansFaiseurLaConfigurationSecritQuandMeme : un déploiement sans accès au
+// rôle `git` reste utilisable pour la consultation, et n'a pas de volume à
+// peupler.
+func TestSansFaiseurLaConfigurationSecritQuandMeme(t *testing.T) {
+	magasin := &magasinFactice{}
+	s := serveurAvec(t, magasin) // RepoMaker nil
+
+	if w := configurer(t, s); w.Code != http.StatusOK {
+		t.Fatalf("statut %d : %s", w.Code, w.Body.String())
+	}
+	if len(magasin.ecrites) != 1 {
+		t.Error("la configuration n'a pas été écrite")
+	}
+}

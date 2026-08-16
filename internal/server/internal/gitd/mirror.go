@@ -2,8 +2,12 @@ package gitd
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/server/internal/gitwire"
@@ -213,5 +217,54 @@ func (s *Server) handleNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleCreateRepo matérialise le dépôt bare d'un dépôt.
+//
+// IDEMPOTENT : un dépôt qui existe déjà est un succès, et non un conflit. La
+// configuration serveur est déclarative, donc la réécrire doit pouvoir se faire
+// sans savoir si le volume est déjà dans l'état voulu — et le reconciler comme
+// l'administrateur la rejoueront.
+func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
+	var req gitwire.CreateRepoRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tailleMaxRequete))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeBadRequest, Message: "corps de requête illisible"})
+		return
+	}
+
+	// `chemin` et non `dir` : le dépôt n'existe justement pas encore. La
+	// validation du nom, elle, est la même — il devient un composant de chemin
+	// sous la racine des dépôts.
+	dir, errDepot := s.depots.chemin(req.Repo)
+	if errDepot != nil {
+		repondreErreur(w, errDepot)
+		return
+	}
+
+	// Déjà là : rien à faire. Le tester par `objects` plutôt que par le seul
+	// répertoire distingue un dépôt d'un répertoire homonyme laissé par un
+	// incident — le second doit échouer bruyamment plutôt que d'être adopté.
+	if _, err := os.Stat(filepath.Join(dir, "objects")); err == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		repondreErreur(w, &gitwire.Error{Code: gitwire.CodeInternal, Message: "volume illisible"})
+		return
+	}
+
+	if err := git.New(s.cfg.Racine).InitBare(r.Context(), dir); err != nil {
+		slog.Error("création du dépôt bare en échec",
+			slog.String("repo", req.Repo), slog.String("error", err.Error()))
+		repondreErreur(w, &gitwire.Error{
+			Code:    gitwire.CodeInternal,
+			Message: "le dépôt n'a pas pu être créé sur le volume",
+		})
+		return
+	}
+
+	slog.Info("dépôt bare créé", slog.String("repo", req.Repo))
 	w.WriteHeader(http.StatusNoContent)
 }
