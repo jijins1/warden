@@ -185,10 +185,36 @@ func checkFreshness(ctx context.Context, tip git.SHA, prefix string) error {
 		return errors.New("the pushed history could not be verified")
 	}
 	if len(present) > 0 {
-		// The count is safe to report; the identifiers are not. A SHA the server
-		// holds and the client does not is exactly what the attacker came for,
-		// and echoing it back would confirm the guess.
-		return fmt.Errorf("this push claims %d object(s) it did not send", len(present))
+		// Being already in the store is not, by itself, a claim. The client omits
+		// what the server ADVERTISED as having, so an object it did not send is
+		// legitimate exactly when an advertised ref reaches it.
+		//
+		// The two sets cannot be collapsed into one rev-list, and that is a
+		// measured property of git rather than a preference: `--objects <new>
+		// ^<seen>` still lists the tree of <seen> when <new> merely reuses it
+		// (see ReachableObjects). The ordinary case — a second run over unchanged
+		// sources — lands exactly there, and this repository refused it.
+		visible, err := stored.ReachableObjects(ctx, visibleGlobs(prefix))
+		if err != nil {
+			return errors.New("the pushed history could not be verified")
+		}
+		advertised := make(map[git.SHA]struct{}, len(visible))
+		for _, o := range visible {
+			advertised[o.SHA] = struct{}{}
+		}
+
+		claimed := 0
+		for _, id := range present {
+			if _, ok := advertised[id]; !ok {
+				claimed++
+			}
+		}
+		if claimed > 0 {
+			// The count is safe to report; the identifiers are not. A SHA the
+			// server holds and the client does not is exactly what the attacker
+			// came for, and echoing it back would confirm the guess.
+			return fmt.Errorf("this push claims %d object(s) it did not send", claimed)
+		}
 	}
 
 	// The scan runs on the SAME set, and that is the point of computing it once:

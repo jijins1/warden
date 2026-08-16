@@ -169,6 +169,53 @@ func TestPushNominal(t *testing.T) {
 	}
 }
 
+// TestASecondRunSharingATreeIsAccepted is the case the first two runs of a real
+// deployment could not reach, because the repository was still empty.
+//
+// The third run submitted UNCHANGED sources. Its audit commit is new — it names
+// its own run — but its tree and its blobs already sit in the store, reachable
+// from the previous run's audit ref, which this credential's prefix un-hides.
+// Git therefore advertises them, the client rightly omits them, and the
+// freshness check must recognise that omission as legitimate.
+//
+// Refusing here refuses the ordinary case: submitting twice without editing a
+// file. Which is what happened — "this push claims 2 object(s) it did not send",
+// the tree and the one blob.
+func TestASecondRunSharingATreeIsAccepted(t *testing.T) {
+	root, bare, alice, mainSHA, _ := writeWorld(t)
+	url := servePush(t, root, aliceScope())
+
+	if err := os.WriteFile(filepath.Join(alice, "inventory.ini"), []byte("[dev]\nlocalhost"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, alice, "add", ".")
+	mustGit(t, alice, "commit", "-m", "alice's run 01JZQ0000000000000000ALIC")
+	first := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD"))
+
+	if out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git",
+		first+":"+aliceRef); err != nil {
+		t.Fatalf("the first push was refused: %v\n%s", err, out)
+	}
+
+	// The second capture, built exactly as the CLI builds it: the SAME tree,
+	// parented on the mainline rather than on the previous run. commit-tree is
+	// what makes the two commits differ by nothing but their message.
+	tree := strings.TrimSpace(mustGit(t, alice, "rev-parse", "HEAD^{tree}"))
+	second := strings.TrimSpace(mustGit(t, alice, "commit-tree", tree, "-p", mainSHA,
+		"-m", "alice's run 01JZQ0000000000000000ALI2"))
+	secondRef := alicePrefix + "01JZQ0000000000000000ALI2"
+
+	out, err := gitWithToken(t, alice, pushToken, "push", url+"/depot.git", second+":"+secondRef)
+	if err != nil {
+		t.Fatalf("a second run over unchanged sources was refused: %v\n%s", err, out)
+	}
+
+	got := strings.TrimSpace(mustGit(t, bare, "rev-parse", "--verify", secondRef))
+	if got != second {
+		t.Errorf("ref points at %s, want %s", got, second)
+	}
+}
+
 // --- the first form: claim an object without sending it --------------------
 
 // TestCraftedClaimIsRefused is the mirror of probe A3.

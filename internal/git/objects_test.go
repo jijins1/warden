@@ -163,6 +163,98 @@ func TestUnMotifQuiNeCorrespondARienNestPasUneErreur(t *testing.T) {
 //
 // C'est la seconde moitié du contrôle : un objet énuméré ET déjà présent est un
 // objet revendiqué sans être transmis.
+// TestUneExclusionNeSoustraitPasLesObjetsPartages est une SONDE, au sens des
+// autres mesures du projet : elle épingle un comportement de git dont dépend la
+// conception, pour qu'une version future qui en changerait le dise ici.
+//
+// Mesuré sur git 2.43 : `rev-list --objects <neuf> ^<vu>` liste encore l'arbre et
+// les blobs de `<vu>` quand `<neuf>` RÉUTILISE cet arbre sans descendre de ce
+// commit. Git marque le commit exclu et son ascendance comme inintéressants, pas
+// tout objet que ces commits nomment — et aucun drapeau ne le change
+// (`--objects-edge-aggressive` et `--boundary` ont été essayés).
+//
+// C'est pourquoi ReachableObjects existe. Croire l'inverse — ce que faisait le
+// contrôle de fraîcheur — refuse le cas le plus ordinaire qui soit : soumettre
+// deux fois sans avoir modifié un fichier.
+func TestUneExclusionNeSoustraitPasLesObjetsPartages(t *testing.T) {
+	dir := t.TempDir()
+	runGitObjets(t, dir, "init", "--initial-branch=main", ".")
+
+	ecrire := func(nom, contenu string) {
+		if err := os.WriteFile(filepath.Join(dir, nom), []byte(contenu), 0o600); err != nil {
+			t.Fatalf("écriture : %v", err)
+		}
+	}
+	ecrire("playbook.yml", "- hosts: all")
+	runGitObjets(t, dir, "add", ".")
+	runGitObjets(t, dir, "commit", "-m", "principale")
+	principale := strings.TrimSpace(runGitObjets(t, dir, "rev-parse", "HEAD"))
+
+	ecrire("inventory.ini", "[dev]\nlocalhost")
+	runGitObjets(t, dir, "add", ".")
+	runGitObjets(t, dir, "commit", "-m", "premier run")
+	arbre := strings.TrimSpace(runGitObjets(t, dir, "rev-parse", "HEAD^{tree}"))
+	runGitObjets(t, dir, "update-ref", "refs/audit/alice/r1", "HEAD")
+
+	// Le second run : MÊME arbre, parenté sur la principale. C'est exactement la
+	// forme que produit la capture d'audit quand les sources n'ont pas bougé.
+	second := strings.TrimSpace(runGitObjets(t, dir,
+		"commit-tree", arbre, "-p", principale, "-m", "second run"))
+	tete, err := NewSHA(second)
+	if err != nil {
+		t.Fatalf("SHA : %v", err)
+	}
+
+	g := New(dir)
+
+	restants, err := g.RevListObjects(t.Context(), tete, []string{"refs/audit/alice/"})
+	if err != nil {
+		t.Fatalf("RevListObjects : %v", err)
+	}
+	// La sonde : l'arbre partagé SURVIT à l'exclusion. Si ce test se met à
+	// échouer, git a changé et ReachableObjects peut être reconsidéré.
+	partageSurvit := false
+	for _, o := range restants {
+		if string(o.SHA) == arbre {
+			partageSurvit = true
+		}
+	}
+	if !partageSurvit {
+		t.Errorf("git soustrait désormais l'arbre partagé : la mesure de "+
+			"ReachableObjects est à refaire (%d objets restants)", len(restants))
+	}
+
+	// Et voici ce sur quoi le contrôle s'appuie à la place : l'arbre partagé est
+	// bien JOIGNABLE depuis la ref annoncée, donc légitimement non retransmis.
+	visibles, err := g.ReachableObjects(t.Context(), []string{"refs/audit/alice/"})
+	if err != nil {
+		t.Fatalf("ReachableObjects : %v", err)
+	}
+	joignable := false
+	for _, o := range visibles {
+		if string(o.SHA) == arbre {
+			joignable = true
+		}
+	}
+	if !joignable {
+		t.Error("l'arbre partagé n'est pas joignable depuis la ref annoncée")
+	}
+}
+
+// TestReachableObjectsSurUnMotifQuiNeCorrespondARien : un dépôt qui n'a encore
+// rien reçu est un état réel, pas une panne.
+func TestReachableObjectsSurUnMotifQuiNeCorrespondARien(t *testing.T) {
+	dir, _ := depotAvecDeuxBranches(t)
+
+	objets, err := New(dir).ReachableObjects(t.Context(), []string{"refs/audit/personne/"})
+	if err != nil {
+		t.Fatalf("ReachableObjects : %v", err)
+	}
+	if len(objets) != 0 {
+		t.Errorf("%d objets rendus pour un motif sans correspondance", len(objets))
+	}
+}
+
 func TestPresentAmongDistingueCeQuiEstLaDeCeQuiNyEstPas(t *testing.T) {
 	dir, tete := depotAvecDeuxBranches(t)
 	g := New(dir)

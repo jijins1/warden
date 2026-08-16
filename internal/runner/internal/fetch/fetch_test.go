@@ -3,6 +3,7 @@
 package fetch_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
@@ -10,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/runner/internal/fetch"
@@ -47,6 +50,18 @@ func lancer(t *testing.T, dir string, args ...string) string {
 // le présente au runner : une seule ref, la sienne.
 func serveur(t *testing.T) (url, sha, autreSHA string) {
 	t.Helper()
+	return serveurCoupant(t, 0)
+}
+
+// serveurCoupant est `serveur` dont les `coupures` premières requêtes sont
+// tuées au niveau de la connexion, sans réponse HTTP.
+//
+// La connexion est détournée puis fermée plutôt que répondue en 5xx : c'est une
+// panne de TRANSPORT qu'on reproduit, la seule qui ressemble à ce qu'un pod
+// rencontre à son démarrage. Une réponse 503 serait un serveur qui parle, donc
+// une autre situation.
+func serveurCoupant(t *testing.T, coupures int) (url, sha, autreSHA string) {
+	t.Helper()
 	racine := t.TempDir()
 	bare := filepath.Join(racine, "depot.git")
 	lancer(t, racine, "init", "--bare", "--initial-branch=run", bare)
@@ -74,7 +89,24 @@ func serveur(t *testing.T) (url, sha, autreSHA string) {
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(backend.ServeHTTP))
+	restantes := int64(coupures)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt64(&restantes, -1) >= 0 {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("le serveur de test ne sait pas détourner la connexion")
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("détournement : %v", err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
+		backend.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	return srv.URL + "/depot.git", sha, autreSHA
 }
@@ -97,6 +129,84 @@ func TestLeCodeEstMaterialiseAuCommitDeLOrdre(t *testing.T) {
 	}
 	if got := strings.TrimSpace(lancer(t, espace, "rev-parse", "HEAD")); got != sha {
 		t.Errorf("HEAD à %s, attendu %s", got, sha)
+	}
+}
+
+// TestUneCoupureAuDemarrageDuPodEstReessayee épingle un comportement MESURÉ sur
+// le cluster, pas une précaution générale.
+//
+// Le premier accès réseau d'un pod qui vient de démarrer est refusé — « Failed
+// to connect after 1 ms » — et le même accès passe une seconde plus tard : les
+// règles que le CNI programme pour un pod neuf n'existent pas encore quand le
+// conteneur, lui, tourne déjà. Ce n'est pas réparable depuis la NetworkPolicy,
+// qui est correcte ; c'est une propriété du démarrage d'un pod.
+//
+// Sans reprise, un run meurt d'un refus d'une seconde, et il en mourait
+// DÉTERMINISTEMENT ici : le fetch est la première chose que le runner fait après
+// avoir reçu son ordre.
+func TestUneCoupureAuDemarrageDuPodEstReessayee(t *testing.T) {
+	url, sha, _ := serveurCoupant(t, 1)
+	espace := filepath.Join(t.TempDir(), "workspace")
+
+	commit, err := git.NewSHA(sha)
+	if err != nil {
+		t.Fatalf("SHA : %v", err)
+	}
+	if err := fetch.Materialize(t.Context(), espace, url, "", commit); err != nil {
+		t.Fatalf("une coupure unique n'a pas été reprise : %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(espace, "site.yml")); err != nil {
+		t.Errorf("l'arbre n'est pas matérialisé : %v", err)
+	}
+}
+
+// TestLesReprisesSontBornees : reprendre sans borne transformerait un rôle `git`
+// éteint en pod qui tourne indéfiniment sans rien exécuter.
+//
+// Un pod qui abandonne est visible et remplaçable ; un pod qui réessaie pour
+// toujours consomme un slot et n'apparaît nulle part comme en panne.
+func TestLesReprisesSontBornees(t *testing.T) {
+	// Assez de coupures pour épuiser toutes les tentatives, quel qu'en soit le
+	// nombre : le test dit « borné », pas « borné à quatre ».
+	url, sha, _ := serveurCoupant(t, 1000)
+	espace := filepath.Join(t.TempDir(), "workspace")
+	commit, _ := git.NewSHA(sha)
+
+	debut := time.Now()
+	err := fetch.Materialize(t.Context(), espace, url, "", commit)
+	if err == nil {
+		t.Fatal("un serveur toujours coupé a été accepté")
+	}
+	if ecoule := time.Since(debut); ecoule > 30*time.Second {
+		t.Errorf("les reprises ont duré %s : la borne ne tient pas", ecoule)
+	}
+	if !strings.Contains(err.Error(), "récupération du code") {
+		t.Errorf("l'échec ne nomme plus sa cause : %v", err)
+	}
+}
+
+// TestUneAnnulationInterrompLesReprises : un SIGTERM pendant les reprises doit
+// rendre la main tout de suite, et non attendre la fin du barème.
+func TestUneAnnulationInterrompLesReprises(t *testing.T) {
+	url, sha, _ := serveurCoupant(t, 1000)
+	espace := filepath.Join(t.TempDir(), "workspace")
+	commit, _ := git.NewSHA(sha)
+
+	ctx, annuler := context.WithCancel(t.Context())
+	fini := make(chan error, 1)
+	go func() { fini <- fetch.Materialize(ctx, espace, url, "", commit) }()
+
+	// Laisser la première tentative échouer, puis annuler pendant l'attente.
+	time.Sleep(200 * time.Millisecond)
+	annuler()
+
+	select {
+	case err := <-fini:
+		if err == nil {
+			t.Fatal("Materialize a réussi malgré l'annulation")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("l'annulation n'a pas interrompu les reprises")
 	}
 }
 

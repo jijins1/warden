@@ -94,22 +94,76 @@ func (g *Git) RevListObjects(ctx context.Context, tip SHA, excludeGlobs []string
 	// correspondait à rien, donc l'inversion parasite n'avait pas d'effet
 	// visible. Deux défauts qui s'annulaient.
 	args := []string{"rev-list", "--objects", tip.String()}
-	exclusions := make([]string, 0, len(excludeGlobs))
 
-	for _, glob := range excludeGlobs {
+	exclusions, err := g.refArgs(ctx, excludeGlobs)
+	if err != nil {
+		return nil, err
+	}
+	if len(exclusions) > 0 {
+		args = append(args, "--not")
+		args = append(args, exclusions...)
+	}
+
+	// `--` terminates the revision list. Without it a ref named like an option
+	// would be read as one, and these refs come from configuration.
+	args = append(args, "--")
+
+	return g.revList(ctx, args)
+}
+
+// ReachableObjects lists every object reachable from a set of ref patterns.
+//
+// The inclusive counterpart of the exclusions above, and it exists because those
+// exclusions do NOT compute an object set difference. MEASURED on git 2.43:
+//
+//	rev-list --objects <new> ^<other>
+//
+// still lists the tree and blobs of <other> when <new> merely REUSES that tree
+// without descending from that commit. Git marks the excluded commit and its
+// ancestry uninteresting, not every object those commits happen to name — and no
+// flag changes it (--objects-edge-aggressive and --boundary were both tried).
+//
+// That gap is invisible until two things are compared: what a push must send,
+// and what the client was entitled to omit. The client omits by REACHABILITY
+// FROM WHAT THE SERVER ADVERTISED, which is exactly what this function computes.
+func (g *Git) ReachableObjects(ctx context.Context, globs []string) ([]Object, error) {
+	inclusions, err := g.refArgs(ctx, globs)
+	if err != nil {
+		return nil, err
+	}
+	if len(inclusions) == 0 {
+		// No visible ref resolves: a real state for a repository that has only
+		// ever been pushed to once, and an empty set is its honest answer.
+		return nil, nil
+	}
+
+	args := append([]string{"rev-list", "--objects"}, inclusions...)
+	return g.revList(ctx, append(args, "--"))
+}
+
+// refArgs turns ref patterns into rev-list arguments.
+//
+// An entry ending in "/" is a PREFIX; anything else is an exact ref name. The
+// distinction is not cosmetic, and getting it wrong fails silently — which is how
+// it was wrong: `--glob=<pattern>` appends "/*" when the pattern has no wildcard,
+// so `--glob=refs/heads/main` becomes `refs/heads/main/*` and matches NOTHING.
+func (g *Git) refArgs(ctx context.Context, patterns []string) ([]string, error) {
+	out := make([]string, 0, len(patterns))
+
+	for _, glob := range patterns {
 		// These patterns become arguments to git and decide what a security
-		// control excludes. They are validated rather than trusted: `--not` is
+		// control covers. They are validated rather than trusted: `--not` is
 		// positional, so a pattern that looked like an option would silently
 		// change the meaning of everything after it.
 		if !strings.HasPrefix(glob, "refs/") {
-			return nil, fmt.Errorf("exclude pattern %q must start with refs/", glob)
+			return nil, fmt.Errorf("ref pattern %q must start with refs/", glob)
 		}
 		if strings.ContainsAny(glob, " \t\n~^:?[\\") || strings.Contains(glob, "..") {
-			return nil, fmt.Errorf("exclude pattern %q contains a forbidden character", glob)
+			return nil, fmt.Errorf("ref pattern %q contains a forbidden character", glob)
 		}
 
 		if strings.HasSuffix(glob, "/") {
-			exclusions = append(exclusions, "--glob="+glob)
+			out = append(out, "--glob="+glob)
 			continue
 		}
 
@@ -121,19 +175,13 @@ func (g *Git) RevListObjects(ctx context.Context, tip SHA, excludeGlobs []string
 			return nil, err
 		}
 		if present {
-			exclusions = append(exclusions, glob)
+			out = append(out, glob)
 		}
 	}
+	return out, nil
+}
 
-	if len(exclusions) > 0 {
-		args = append(args, "--not")
-		args = append(args, exclusions...)
-	}
-
-	// `--` terminates the revision list. Without it a ref named like an option
-	// would be read as one, and these refs come from configuration.
-	args = append(args, "--")
-
+func (g *Git) revList(ctx context.Context, args []string) ([]Object, error) {
 	stdout, stderr, err := g.run(ctx, args...)
 	if err != nil {
 		return nil, fmt.Errorf("git rev-list --objects: %w: %s", err, strings.TrimSpace(stderr))

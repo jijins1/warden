@@ -164,8 +164,42 @@ quarantaine — point vérifié par la sonde A1 :
 | Énumération | celui du hook | quarantaine (`GIT_OBJECT_DIRECTORY`) **et** magasin (`GIT_ALTERNATE_OBJECT_DIRECTORIES`) |
 | Présence | `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` et `GIT_QUARANTINE_PATH` retirées | le magasin **seul** |
 
-Un objet énuméré et déjà présent dans le magasin seul → refus : « ce push
-revendique un objet qu'il n'a pas envoyé ».
+Un objet énuméré et déjà présent dans le magasin seul est un **candidat** au
+refus, pas un refus. Il faut une troisième invocation, et sa nécessité est une
+mesure, pas une précaution.
+
+#### Sonde A6 — une exclusion `rev-list` ne soustrait pas les objets partagés
+
+**Mesuré sur git 2.43.0** :
+
+```
+git rev-list --objects <neuf> ^<vu>
+```
+
+liste encore **l'arbre et les blobs de `<vu>`** lorsque `<neuf>` réutilise cet
+arbre sans descendre de ce commit. Git marque le commit exclu et son ascendance
+comme inintéressants, pas tout objet que ces commits nomment. Ni
+`--objects-edge-aggressive` ni `--boundary` n'y changent quoi que ce soit.
+
+Or **le client, lui, omet par joignabilité depuis ce que le serveur a annoncé**.
+Les deux côtés ne parlaient donc pas du même ensemble, et l'écart n'apparaît que
+dans un cas — le plus ordinaire qui soit :
+
+> soumettre deux fois de suite **sans avoir modifié un fichier**.
+
+L'arbre et les blobs existent déjà, le serveur les annonce, le client ne les
+renvoie pas, et le contrôle y voyait deux objets revendiqués. Les deux premiers
+push d'un dépôt neuf ne peuvent pas révéler le défaut : il faut qu'un run
+précédent ait déposé l'arbre. Le troisième push réel l'a trouvé.
+
+Le contrôle compare donc au **jeu annoncé**, calculé par une énumération
+INCLUSIVE des mêmes motifs que `receive.hideRefs` :
+
+> Un objet énuméré, déjà présent dans le magasin seul, et **non joignable depuis
+> une ref annoncée** → refus.
+
+L'attaque reste prise sans rien y ajouter : la ref d'audit d'autrui n'est jamais
+annoncée, donc l'arbre convoité n'est jamais dans ce jeu.
 
 ### 3. La branche principale est l'unique ancre, et le serveur seul l'écrit
 
