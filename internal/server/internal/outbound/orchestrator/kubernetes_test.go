@@ -16,6 +16,7 @@ import (
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
+	wire "github.com/jijins1/warden/internal/wire/dispatch"
 )
 
 const ns = "warden"
@@ -23,7 +24,9 @@ const ns = "warden"
 func monter(t *testing.T) (*orchestrator.Kubernetes, *fake.Clientset) {
 	t.Helper()
 	client := fake.NewSimpleClientset()
-	k, err := orchestrator.New(client, orchestrator.Config{Namespace: ns})
+	k, err := orchestrator.New(client, orchestrator.Config{
+		Namespace: ns, DispatchURL: "http://warden-dispatch.warden.svc:8084",
+	})
 	if err != nil {
 		t.Fatalf("orchestrator.New : %v", err)
 	}
@@ -293,4 +296,61 @@ func rendreSpec(t *testing.T, pod *corev1.Pod) string {
 		t.Fatalf("sérialisation : %v", err)
 	}
 	return string(b)
+}
+
+// TestLePodSaitQuiAppeler est le test qui manquait, et son absence a coûté un
+// maillon entier.
+//
+// L'orchestrateur posait `WARDEN_TOKEN_FILE` ; le runner exigeait en plus
+// `WARDEN_DISPATCH_URL`, que personne ne passait. Les deux moitiés étaient
+// cohérentes et testées chacune de son côté — RIEN ne comparait les deux listes.
+// Un pod aurait démarré, lu son jeton, et se serait arrêté faute de savoir qui
+// appeler : panne se présentant comme un défaut du runner alors qu'elle venait
+// de la podspec.
+//
+// Les noms viennent désormais du contrat de fil, que les deux extrémités lisent,
+// ce qui rend la divergence impossible plutôt que testée. Ce test vérifie que les
+// valeurs, elles, sont bien posées.
+func TestLePodSaitQuiAppeler(t *testing.T) {
+	k, client := monter(t)
+	spec := specValide(t)
+	if err := k.LaunchPod(t.Context(), spec); err != nil {
+		t.Fatalf("LaunchPod : %v", err)
+	}
+	pod, _ := client.CoreV1().Pods(ns).Get(t.Context(), spec.Name, metav1.GetOptions{})
+
+	vues := map[string]string{}
+	for _, e := range pod.Spec.Containers[0].Env {
+		vues[e.Name] = e.Value
+	}
+
+	for _, nom := range []string{wire.EnvTokenFile, wire.EnvDispatchURL, wire.EnvWorkspace} {
+		if vues[nom] == "" {
+			t.Errorf("%s n'est pas posée : le pod ne pourrait pas fonctionner", nom)
+		}
+	}
+
+	// Le jeton lui-même ne doit JAMAIS être une valeur d'environnement — seul son
+	// chemin l'est (ADR-0023).
+	for nom, valeur := range vues {
+		if valeur == spec.Token.Reveal() {
+			t.Fatalf("le jeton d'amorçage est passé en clair dans %s", nom)
+		}
+	}
+
+	// L'espace de travail annoncé est SOUS le volume inscriptible, sans quoi le
+	// runner écrirait sur une racine en lecture seule.
+	if !strings.HasPrefix(vues[wire.EnvWorkspace], orchestrator.CheminEspace+"/") {
+		t.Errorf("espace de travail %q hors du volume inscriptible %q",
+			vues[wire.EnvWorkspace], orchestrator.CheminEspace)
+	}
+}
+
+// TestUnOrchestrateurSansAdresseDeDispatchRefuseDeDemarrer : échouer à froid
+// plutôt que de lancer des pods qui ne peuvent rien faire.
+func TestUnOrchestrateurSansAdresseDeDispatchRefuseDeDemarrer(t *testing.T) {
+	_, err := orchestrator.New(fake.NewSimpleClientset(), orchestrator.Config{Namespace: ns})
+	if err == nil {
+		t.Fatal("un orchestrateur sans adresse de dispatch a été construit")
+	}
 }

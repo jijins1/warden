@@ -18,21 +18,14 @@ import (
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/runner/internal/dispatch"
 	"github.com/jijins1/warden/internal/runner/internal/fetch"
+	wire "github.com/jijins1/warden/internal/wire/dispatch"
 )
 
-// Variables d'environnement posées par l'orchestrateur.
-//
-// Le CHEMIN du jeton voyage par l'environnement, jamais le jeton lui-même :
-// l'objet `Pod` est celui que le produit liste, observe et journalise le plus, et
-// un secret dans le champ le plus consulté du système est un secret qui finira
-// dans un log (ADR-0023). Un chemin n'est pas un secret.
+// Les NOMS des variables viennent du contrat de fil et ne sont pas redéclarés
+// ici : l'orchestrateur les pose, ce paquet les lit, et deux déclarations
+// jumelles finiraient par diverger — ce qui s'est produit, `WARDEN_DISPATCH_URL`
+// n'étant posé par personne alors que ce paquet l'exigeait.
 const (
-	// #nosec G101 -- c'est le NOM d'une variable d'environnement portant un
-	// chemin, pas un credential. Le jeton lui-même n'apparaît nulle part dans ce
-	// binaire, et c'est précisément l'objet de cette indirection.
-	EnvTokenFile     = "WARDEN_TOKEN_FILE"
-	EnvDispatchURL   = "WARDEN_DISPATCH_URL"
-	EnvWorkspace     = "WARDEN_WORKSPACE"
 	DefaultWorkspace = "/workspace"
 
 	// MountDir est le répertoire où l'orchestrateur monte le Secret du jeton. Il
@@ -50,12 +43,12 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("warden-runner ne prend aucun argument (%d reçus)", len(args))
 	}
 
-	token, err := lireJeton(os.Getenv(EnvTokenFile))
+	token, err := lireJeton(os.Getenv(wire.EnvTokenFile))
 	if err != nil {
 		return err
 	}
 
-	canal, err := dispatch.New(os.Getenv(EnvDispatchURL), token)
+	canal, err := dispatch.New(os.Getenv(wire.EnvDispatchURL), token)
 	if err != nil {
 		return err
 	}
@@ -83,7 +76,7 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("ordre du run %s : commit invalide", ordre.RunRef)
 	}
 
-	espace := os.Getenv(EnvWorkspace)
+	espace := os.Getenv(wire.EnvWorkspace)
 	if espace == "" {
 		espace = DefaultWorkspace
 	}
@@ -111,7 +104,7 @@ func Run(ctx context.Context, args []string) error {
 // parlant d'autre chose.
 func lireJeton(chemin string) (string, error) {
 	if chemin == "" {
-		return "", fmt.Errorf("%s n'est pas définie", EnvTokenFile)
+		return "", fmt.Errorf("%s n'est pas définie", wire.EnvTokenFile)
 	}
 	// Le chemin est contraint au répertoire de montage, et ce n'est pas de la
 	// complaisance envers l'analyseur. Ce binaire tourne dans le même conteneur

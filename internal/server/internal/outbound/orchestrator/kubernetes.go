@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
+	wire "github.com/jijins1/warden/internal/wire/dispatch"
 )
 
 // Étiquettes portées par tout pod runner.
@@ -61,6 +62,15 @@ type Config struct {
 	// DeadlineSeconds borne la vie d'un pod, même si le contrôleur est mort.
 	// C'est la décision actée n°13, transposée du Job au Pod — voir LaunchPod.
 	DeadlineSeconds int64
+
+	// DispatchURL est l'adresse du canal TELLE QU'UN POD LA JOINT, distincte de
+	// l'adresse d'écoute du service : le pod n'est pas dans le même espace réseau
+	// que le processus qui sert.
+	//
+	// Obligatoire. Un pod lancé sans elle démarre, lit son jeton, et s'arrête
+	// faute de savoir qui appeler — panne qui se présente comme un défaut du
+	// runner alors qu'elle vient d'ici.
+	DispatchURL string
 }
 
 // DefaultDeadlineSeconds borne un run à deux heures par défaut.
@@ -87,6 +97,10 @@ func New(client kubernetes.Interface, cfg Config) (*Kubernetes, error) {
 		// hors du seul endroit où le produit a des droits, et potentiellement
 		// dans un namespace qui appartient à quelqu'un d'autre.
 		return nil, fmt.Errorf("orchestrateur : namespace absent")
+	}
+	if cfg.DispatchURL == "" {
+		return nil, fmt.Errorf("orchestrateur : adresse du canal de dispatch absente, " +
+			"les pods lancés ne sauraient pas qui appeler")
 	}
 	if cfg.DeadlineSeconds <= 0 {
 		cfg.DeadlineSeconds = DefaultDeadlineSeconds
@@ -274,9 +288,17 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 						MountPath: CheminEspace,
 					},
 				},
-				// Le chemin du jeton voyage par l'environnement, pas le jeton
-				// lui-même : un chemin n'est pas un secret.
-				Env: []corev1.EnvVar{{Name: "WARDEN_TOKEN_FILE", Value: CheminJeton + "/token"}},
+				// Les NOMS viennent du contrat de fil, que le runner lit aussi :
+				// deux listes tenues séparément divergent, et la divergence ne se
+				// voit qu'au démarrage d'un pod.
+				//
+				// Le CHEMIN du jeton voyage ici, jamais le jeton : un chemin n'est
+				// pas un secret.
+				Env: []corev1.EnvVar{
+					{Name: wire.EnvTokenFile, Value: CheminJeton + "/token"},
+					{Name: wire.EnvDispatchURL, Value: k.cfg.DispatchURL},
+					{Name: wire.EnvWorkspace, Value: CheminEspace + "/src"},
+				},
 			}},
 		},
 	}

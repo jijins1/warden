@@ -135,7 +135,9 @@ func TestUnPodReelDemarreAvecSonJeton(t *testing.T) {
 	ns := namespaceJetable(t, client)
 	ctx := context.Background()
 
-	k, err := orchestrator.New(client, orchestrator.Config{Namespace: ns})
+	k, err := orchestrator.New(client, orchestrator.Config{
+		Namespace: ns, DispatchURL: "http://warden-dispatch.warden.svc:8084",
+	})
 	if err != nil {
 		t.Fatalf("orchestrator.New : %v", err)
 	}
@@ -191,7 +193,9 @@ func TestLaSuppressionNeLaisseRienDerriere(t *testing.T) {
 	ns := namespaceJetable(t, client)
 	ctx := context.Background()
 
-	k, err := orchestrator.New(client, orchestrator.Config{Namespace: ns})
+	k, err := orchestrator.New(client, orchestrator.Config{
+		Namespace: ns, DispatchURL: "http://warden-dispatch.warden.svc:8084",
+	})
 	if err != nil {
 		t.Fatalf("orchestrator.New : %v", err)
 	}

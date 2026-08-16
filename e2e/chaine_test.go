@@ -453,6 +453,11 @@ func TestLaChaineComplete(t *testing.T) {
 
 		"WARDEN_DISPATCH_ADDR": adresseDispatch,
 		"WARDEN_POD_NAMESPACE": nsE2E,
+		// L'adresse que le POD joindra. Elle n'est pas atteignable depuis le
+		// cluster dans ce test — le canal tourne sur l'hôte — mais elle est
+		// OBLIGATOIRE : sans elle, l'orchestrateur refuse de démarrer plutôt que
+		// de lancer des pods incapables de savoir qui appeler.
+		"WARDEN_DISPATCH_RUNNER_URL": "http://" + adresseDispatch,
 		// Le test tourne HORS du cluster : sans cet opt-in explicite, le contrôle
 		// plane refuse le kubeconfig et n'utilise que la configuration in-cluster.
 		"WARDEN_INSECURE_KUBECONFIG": "1",

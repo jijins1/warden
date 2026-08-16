@@ -238,3 +238,34 @@ func (d *Decoder) Next() (Message, error) {
 	}
 	return Message{}, io.EOF
 }
+
+// Configuration que le control plane pose sur le pod, et que le runner lit.
+//
+// Elle vit ICI, dans le contrat de fil, et non dupliquée de part et d'autre. Le
+// message de dispatch et la façon dont le pod apprend OÙ le recevoir sont la même
+// convention : deux extrémités qui la déclarent chacune de leur côté finissent
+// par diverger, et la divergence ne se voit qu'à l'exécution.
+//
+// Elle s'est d'ailleurs produite : l'orchestrateur posait `WARDEN_TOKEN_FILE` et
+// le runner exigeait en plus `WARDEN_DISPATCH_URL`, que personne ne passait. Les
+// deux moitiés étaient cohérentes et testées ; rien ne comparait les deux listes.
+const (
+	// #nosec G101 -- c'est le NOM d'une variable portant un CHEMIN, pas un
+	// credential. Que l'analyseur s'en méfie est d'ailleurs cohérent : c'est
+	// exactement la confusion que cette indirection existe pour empêcher.
+	//
+	// EnvTokenFile porte le CHEMIN du jeton d'amorçage, jamais le jeton. L'objet
+	// `Pod` est celui que le produit liste, observe et journalise le plus, et un
+	// secret dans le champ le plus consulté du système est un secret qui finira
+	// dans un log (ADR-0023).
+	EnvTokenFile = "WARDEN_TOKEN_FILE"
+
+	// EnvDispatchURL est l'adresse du canal, telle qu'un POD la joint. Elle
+	// diffère de l'adresse d'écoute du service : le pod n'est pas dans le même
+	// espace réseau que le processus qui sert.
+	EnvDispatchURL = "WARDEN_DISPATCH_URL"
+
+	// EnvWorkspace est le répertoire inscriptible du pod. La racine étant en
+	// lecture seule (§7), c'est le seul endroit où le runner peut écrire.
+	EnvWorkspace = "WARDEN_WORKSPACE"
+)

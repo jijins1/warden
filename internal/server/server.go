@@ -204,7 +204,17 @@ func runAPI(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			orch, err := orchestrator.New(k8s, orchestrator.Config{Namespace: ns})
+			// L'adresse que le POD joindra, distincte de celle sur laquelle le
+			// service écoute : un pod n'est pas dans le même espace réseau que le
+			// processus qui sert. Sans elle, les pods démarrent et s'arrêtent
+			// faute de savoir qui appeler.
+			dispatchURL := os.Getenv(EnvDispatchRunnerURL)
+			if dispatchURL == "" {
+				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvDispatchRunnerURL)
+			}
+			orch, err := orchestrator.New(k8s, orchestrator.Config{
+				Namespace: ns, DispatchURL: dispatchURL,
+			})
 			if err != nil {
 				return err
 			}
@@ -290,8 +300,12 @@ const (
 	EnvGitPushAddr      = "WARDEN_GIT_PUSH_ADDR"      // smart HTTP en écriture, servi à la CLI
 	EnvDispatchAddr     = "WARDEN_DISPATCH_ADDR"      // canal de dispatch SSE, servi aux pods runner
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
-	EnvPodNamespace     = "WARDEN_POD_NAMESPACE"      // namespace où vivent les pods runner
-	EnvRunnerImage      = "WARDEN_RUNNER_IMAGE"       // image du runner, en attendant la configuration projet (ADR-0014)
+	// EnvDispatchRunnerURL est l'adresse du canal telle qu'un POD la joint. Comme
+	// pour git, elle diffère de l'adresse d'écoute : le service écoute dans le
+	// control plane, le pod appelle depuis le cluster.
+	EnvDispatchRunnerURL = "WARDEN_DISPATCH_RUNNER_URL"
+	EnvPodNamespace      = "WARDEN_POD_NAMESPACE" // namespace où vivent les pods runner
+	EnvRunnerImage       = "WARDEN_RUNNER_IMAGE"  // image du runner, en attendant la configuration projet (ADR-0014)
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il
