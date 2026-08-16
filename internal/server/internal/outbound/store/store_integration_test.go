@@ -191,7 +191,8 @@ func TestIngestionIdempotente(t *testing.T) {
 // Le compteur `changed` est dénormalisé (ADR-0008) : c'est la métrique d'audit
 // principale, elle ne doit pas coûter une agrégation. Il est tenu par un
 // trigger SECURITY DEFINER, ce qui lui permet d'être exact SANS que le rôle
-// d'ingestion ait le droit d'écrire sur `run`.
+// d'ingestion ait le droit d'écrire cette colonne — la migration 00006 lui a
+// ouvert les cinq colonnes de statut, et `changed_count` n'en fait pas partie.
 func TestCompteurChangedSurPlusieursLots(t *testing.T) {
 	dsn := startPostgres(t)
 	ctx := context.Background()
@@ -397,7 +398,22 @@ func TestRoleIngestionNePeutQueInserer(t *testing.T) {
 		{"effacer de l'audit", `DELETE FROM event WHERE run_id = $1`, []any{runID}},
 		{"modifier un event", `UPDATE event SET state = 'ok' WHERE run_id = $1`, []any{runID}},
 		{"créer une table", `CREATE TABLE evasion (x int)`, nil},
+
+		// Les colonnes que la migration 00006 a délibérément LAISSÉES hors du
+		// GRANT de clôture. Ce sont celles qui disent qui a exécuté quoi : un
+		// pod hostile qui pourrait les toucher réécrirait l'audit dont il est
+		// l'objet.
+		{"réécrire le commit exécuté", `UPDATE run SET audit_sha = 'dead' WHERE id = $1`, []any{runID}},
+		{"changer d'auteur", `UPDATE run SET user_id = 1 WHERE id = $1`, []any{runID}},
+		{"antidater le démarrage", `UPDATE run SET started_at = now() WHERE id = $1`, []any{runID}},
+		{"déplacer le run de partition", `UPDATE run SET run_day = '2000-01-01' WHERE id = $1`, []any{runID}},
 	}
+	// Ce que ce GRANT ne borne PAS, et il faut le dire : `UPDATE run SET state`
+	// sans clause WHERE est permis. Ce qui enferme un pod dans SON run n'est pas
+	// le GRANT, c'est que le `run_id` est résolu côté serveur depuis le jeton
+	// présenté et jamais accepté d'un corps de requête (ADR-0021, ADR-0023). Le
+	// GRANT est la seconde couche, celle qui limite les dégâts si la première
+	// cédait — et sa portée est exactement les colonnes de statut.
 	for _, c := range interdits {
 		if _, err := restreint.Exec(ctx, c.q, c.args...); err == nil {
 			t.Errorf("le rôle d'ingestion peut %s — le GRANT est trop large", c.nom)
@@ -480,6 +496,182 @@ func TestIngestionSurRunInconnu(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("erreur = %v, attendu store.ErrNotFound", err)
 	}
+}
+
+// La clôture par le runner (§6.4, marche 2), sous le rôle RESTREINT et non sous
+// le rôle applicatif. C'est le seul montage qui prouve que le GRANT de la
+// migration 00006 est suffisant : le vérifier avec le rôle applicatif ne
+// dirait rien, puisqu'il peut déjà tout.
+func TestClotureParLeRoleDIngestion(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	admin := connect(t, dsn)
+	defer admin.Close(ctx)
+	for _, q := range []string{
+		`CREATE ROLE ingest_login LOGIN PASSWORD 'ingest'`,
+		`GRANT warden_ingest TO ingest_login`,
+	} {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatalf("préparation du rôle: %v", err)
+		}
+	}
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	runID := seedRun(t, s)
+
+	in, err := store.OpenIngest(ctx, swapUser(dsn, "ingest_login", "ingest"))
+	if err != nil {
+		t.Fatalf("OpenIngest: %v", err)
+	}
+	defer in.Close()
+
+	// Le dernier lot ET la clôture, en une seule requête : c'est la forme que
+	// le contrat de fil impose, et celle que le §6.3 exige.
+	if err := in.AppendAndClose(ctx, runID, batch(), core.Closure{State: core.RunSucceeded}); err != nil {
+		t.Fatalf("AppendAndClose: %v", err)
+	}
+
+	fin := readClosure(t, dsn, runID)
+	if fin.state != string(core.RunSucceeded) {
+		t.Errorf("état = %q, attendu %q", fin.state, core.RunSucceeded)
+	}
+	if fin.cause != nil {
+		t.Errorf("cause = %q sur un run réussi, attendu NULL", *fin.cause)
+	}
+	if fin.endedAt == nil {
+		t.Fatal("ended_at non posé : la durée du run est inconnue")
+	}
+	assertCounts(t, dsn, runID, len(batch()), 1, 2)
+
+	// Réémission : le runner rejoue son dernier lot après une coupure réseau.
+	// Ni les events ni la date de fin ne doivent bouger — un `ended_at` redaté
+	// à chaque reprise ferait dériver la durée mesurée du run.
+	if err := in.AppendAndClose(ctx, runID, batch(), core.Closure{State: core.RunSucceeded}); err != nil {
+		t.Fatalf("réémission: %v", err)
+	}
+	apres := readClosure(t, dsn, runID)
+	if apres.endedAt == nil || !apres.endedAt.Equal(*fin.endedAt) {
+		t.Errorf("ended_at redaté par une réémission : %v puis %v", fin.endedAt, apres.endedAt)
+	}
+	assertCounts(t, dsn, runID, len(batch()), 1, 2)
+}
+
+// Une trame terminale voyage sans event : c'est le cas d'un run qui n'a plus
+// rien à dire mais doit être clos.
+func TestClotureSansEvent(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	runID := seedRun(t, s)
+
+	in, err := store.OpenIngest(ctx, dsn)
+	if err != nil {
+		t.Fatalf("OpenIngest: %v", err)
+	}
+	defer in.Close()
+
+	err = in.AppendAndClose(ctx, runID, nil, core.Closure{
+		State:           core.RunInterrupted,
+		Cause:           core.CauseUserInterrupt,
+		SecretsUnmasked: "jeu de secrets indisponible",
+	})
+	if err != nil {
+		t.Fatalf("AppendAndClose: %v", err)
+	}
+
+	c := readClosure(t, dsn, runID)
+	if c.state != string(core.RunInterrupted) ||
+		c.cause == nil || *c.cause != string(core.CauseUserInterrupt) {
+		t.Errorf("état/cause = %q/%v, attendu %q/%q",
+			c.state, c.cause, core.RunInterrupted, core.CauseUserInterrupt)
+	}
+	// L'ADR-0017 exige de pouvoir répondre à « N runs contiennent des secrets
+	// non masqués ». Sans le motif, l'alerte est inexploitable : savoir qu'un
+	// masquage a échoué ne dit pas s'il faut faire tourner un secret.
+	if !c.unmasked || c.reason == nil || *c.reason != "jeu de secrets indisponible" {
+		t.Errorf("secrets non masqués = %v / %v, le motif doit accompagner le drapeau",
+			c.unmasked, c.reason)
+	}
+}
+
+// Une clôture invalide doit être nommée ici, pas renvoyée comme une violation
+// de contrainte PostgreSQL dont le message ne dit pas ce qui manque.
+func TestUneClotureInvalideEstRefuseeAvantLaBase(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	runID := seedRun(t, s)
+
+	in, err := store.OpenIngest(ctx, dsn)
+	if err != nil {
+		t.Fatalf("OpenIngest: %v", err)
+	}
+	defer in.Close()
+
+	cas := map[string]core.Closure{
+		"interruption sans cause": {State: core.RunInterrupted},
+		"cause sur un succès":     {State: core.RunSucceeded, Cause: core.CauseUserInterrupt},
+		"clôture sur `running`":   {State: core.RunRunning},
+		"statut inconnu":          {State: "presque"},
+	}
+	for nom, c := range cas {
+		t.Run(nom, func(t *testing.T) {
+			if err := in.AppendAndClose(ctx, runID, nil, c); err == nil {
+				t.Fatal("accepté à tort")
+			}
+		})
+	}
+
+	// Et le run n'a pas bougé : un refus ne doit rien écrire.
+	if readClosure(t, dsn, runID).endedAt != nil {
+		t.Error("un refus de clôture a quand même posé ended_at")
+	}
+}
+
+// closureRow est ce que la clôture écrit, lu directement en SQL.
+//
+// Directement, parce que `core.Run` ne porte ni `ended_at` ni le motif de
+// masquage : l'élargir pour un test changerait la forme de la réponse d'audit,
+// ce qui n'est pas l'objet de ce lot.
+type closureRow struct {
+	state    string
+	cause    *string
+	endedAt  *time.Time
+	unmasked bool
+	reason   *string
+}
+
+func readClosure(t *testing.T, dsn string, runID int64) closureRow {
+	t.Helper()
+	ctx := context.Background()
+
+	conn := connect(t, dsn)
+	defer conn.Close(ctx)
+
+	var r closureRow
+	err := conn.QueryRow(ctx, `
+SELECT state, termination_cause, ended_at, secrets_unmasked, secrets_unmasked_reason
+  FROM run WHERE id = $1`, runID).
+		Scan(&r.state, &r.cause, &r.endedAt, &r.unmasked, &r.reason)
+	if err != nil {
+		t.Fatalf("lecture de la clôture: %v", err)
+	}
+	return r
 }
 
 // --- utilitaires ---

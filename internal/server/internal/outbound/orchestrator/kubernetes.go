@@ -13,6 +13,7 @@ import (
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 	wire "github.com/jijins1/warden/internal/wire/dispatch"
+	ingestwire "github.com/jijins1/warden/internal/wire/ingest"
 )
 
 // Étiquettes portées par tout pod runner.
@@ -71,6 +72,16 @@ type Config struct {
 	// faute de savoir qui appeler — panne qui se présente comme un défaut du
 	// runner alors qu'elle vient d'ici.
 	DispatchURL string
+
+	// IngestURL est l'adresse de l'ingestion TELLE QU'UN POD LA JOINT, sur le
+	// même principe et un autre port (ADR-0008).
+	//
+	// Obligatoire, et pour une raison plus dure que celle du dispatch : un pod
+	// qui ne sait pas où rapporter EXÉCUTERAIT quand même son playbook, puis
+	// s'arrêterait sans que l'audit dise rien de ce qui a été modifié. Un run
+	// dont l'audit ne s'écrit pas ne doit pas commencer (§6.3), et le refus doit
+	// donc arriver ici, avant que le pod existe.
+	IngestURL string
 }
 
 // DefaultDeadlineSeconds borne un run à deux heures par défaut.
@@ -101,6 +112,10 @@ func New(client kubernetes.Interface, cfg Config) (*Kubernetes, error) {
 	if cfg.DispatchURL == "" {
 		return nil, fmt.Errorf("orchestrateur : adresse du canal de dispatch absente, " +
 			"les pods lancés ne sauraient pas qui appeler")
+	}
+	if cfg.IngestURL == "" {
+		return nil, fmt.Errorf("orchestrateur : adresse de l'ingestion absente, " +
+			"les pods lancés exécuteraient sans pouvoir rien rapporter")
 	}
 	if cfg.DeadlineSeconds <= 0 {
 		cfg.DeadlineSeconds = DefaultDeadlineSeconds
@@ -298,6 +313,7 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 					{Name: wire.EnvTokenFile, Value: CheminJeton + "/token"},
 					{Name: wire.EnvDispatchURL, Value: k.cfg.DispatchURL},
 					{Name: wire.EnvWorkspace, Value: CheminEspace + "/src"},
+					{Name: ingestwire.EnvIngestURL, Value: k.cfg.IngestURL},
 				},
 			}},
 		},

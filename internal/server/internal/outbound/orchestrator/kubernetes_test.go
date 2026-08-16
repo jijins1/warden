@@ -17,6 +17,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
 	wire "github.com/jijins1/warden/internal/wire/dispatch"
+	ingestwire "github.com/jijins1/warden/internal/wire/ingest"
 )
 
 const ns = "warden"
@@ -25,7 +26,9 @@ func monter(t *testing.T) (*orchestrator.Kubernetes, *fake.Clientset) {
 	t.Helper()
 	client := fake.NewSimpleClientset()
 	k, err := orchestrator.New(client, orchestrator.Config{
-		Namespace: ns, DispatchURL: "http://warden-dispatch.warden.svc:8084",
+		Namespace:   ns,
+		DispatchURL: "http://warden-dispatch.warden.svc:8084",
+		IngestURL:   "http://warden-ingest.warden.svc:8085",
 	})
 	if err != nil {
 		t.Fatalf("orchestrator.New : %v", err)
@@ -324,7 +327,13 @@ func TestLePodSaitQuiAppeler(t *testing.T) {
 		vues[e.Name] = e.Value
 	}
 
-	for _, nom := range []string{wire.EnvTokenFile, wire.EnvDispatchURL, wire.EnvWorkspace} {
+	for _, nom := range []string{
+		wire.EnvTokenFile, wire.EnvDispatchURL, wire.EnvWorkspace,
+		// Le sens MONTANT, ajouté au même endroit et pour la même raison : un
+		// pod qui ne sait pas où rapporter exécuterait quand même, et l'audit
+		// ne dirait rien de ce qui a été modifié (§6.3).
+		ingestwire.EnvIngestURL,
+	} {
 		if vues[nom] == "" {
 			t.Errorf("%s n'est pas posée : le pod ne pourrait pas fonctionner", nom)
 		}
@@ -346,11 +355,22 @@ func TestLePodSaitQuiAppeler(t *testing.T) {
 	}
 }
 
-// TestUnOrchestrateurSansAdresseDeDispatchRefuseDeDemarrer : échouer à froid
-// plutôt que de lancer des pods qui ne peuvent rien faire.
-func TestUnOrchestrateurSansAdresseDeDispatchRefuseDeDemarrer(t *testing.T) {
-	_, err := orchestrator.New(fake.NewSimpleClientset(), orchestrator.Config{Namespace: ns})
-	if err == nil {
-		t.Fatal("un orchestrateur sans adresse de dispatch a été construit")
+// TestUnOrchestrateurSansAdresseRefuseDeDemarrer : échouer à froid plutôt que
+// de lancer des pods qui ne peuvent rien faire.
+//
+// Les deux adresses sont exigées, et la seconde plus durement que la première :
+// sans dispatch le pod s'arrête sans rien avoir fait, sans ingestion il EXÉCUTE
+// et personne n'en saura rien.
+func TestUnOrchestrateurSansAdresseRefuseDeDemarrer(t *testing.T) {
+	cas := map[string]orchestrator.Config{
+		"sans dispatch":  {Namespace: ns, IngestURL: "http://i:8085"},
+		"sans ingestion": {Namespace: ns, DispatchURL: "http://d:8084"},
+	}
+	for nom, cfg := range cas {
+		t.Run(nom, func(t *testing.T) {
+			if _, err := orchestrator.New(fake.NewSimpleClientset(), cfg); err == nil {
+				t.Fatal("un orchestrateur incomplet a été construit")
+			}
+		})
 	}
 }

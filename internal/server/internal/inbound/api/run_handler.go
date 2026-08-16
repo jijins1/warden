@@ -183,6 +183,18 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadGateway)
 			return
 		}
+
+		// Le pod existe : le run passe `running`, avec le nom du pod pour la
+		// corrélation avec les logs d'infrastructure (§6.4). Un échec ici ne
+		// remet PAS le run en cause — le pod tourne, il exécutera et se clôra
+		// lui-même. Faire échouer la réponse laisserait l'utilisateur croire
+		// que rien ne s'est passé alors que son playbook est parti.
+		if a.deps.Running != nil {
+			if err := a.deps.Running.MarkRunning(r.Context(), id, pod); err != nil {
+				slog.Error("run non marqué courant",
+					slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

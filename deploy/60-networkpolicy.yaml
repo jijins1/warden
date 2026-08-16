@@ -55,10 +55,18 @@ spec:
       ports:
         - { protocol: TCP, port: 8083 }
 
-    # Le canal de dispatch et l'ingestion des events, servis par le rôle `api`.
+    # Le canal de dispatch (8084) et l'ingestion des events (8085), servis par le
+    # rôle `api` sur DEUX ports distincts du sien.
     #
     # Le port de l'API (8080) est ABSENT, délibérément : quand l'ADR-0007 dit que
     # le runner ne joint jamais l'API, cela se lit « jamais le port de l'API ».
+    # C'est ici que cette phrase devient une règle plutôt qu'une intention.
+    #
+    # Les deux sens du dialogue avec le pod, et ils ne sont pas symétriques :
+    # 8084 DESCEND et transporte des credentials, 8085 MONTE et ne transporte
+    # que de l'audit. Les séparer par le port est ce qui permettra de couper
+    # l'un sans l'autre — un pod qui n'a plus rien à recevoir doit encore
+    # pouvoir rapporter ce qu'il a fait (§6.3).
     - to:
         - podSelector:
             matchLabels:
@@ -66,6 +74,7 @@ spec:
               app.kubernetes.io/component: api
       ports:
         - { protocol: TCP, port: 8084 }
+        - { protocol: TCP, port: 8085 }
 
     # LE PÉRIMÈTRE D'HÔTES du §10.2 n'est PAS ici, et son absence est le trou
     # connu de ce fichier : un runner ne peut donc joindre AUCUN hôte géré, et

@@ -269,6 +269,37 @@ func (r *Redactor) RedactText(text string) (string, int, []string) {
 // to remove.
 var ErrRedactionUnverifiable = errors.New("redacted payload is not valid JSON; dropping it")
 
+// RedactRaw redacts a payload that is already encoded JSON.
+//
+// It exists alongside RedactJSON because the caller on the hot path — the event
+// reporter — holds json.RawMessage, not a Go value. Routing it through
+// RedactJSON would decode into interface{} and re-encode: that reorders object
+// keys and rounds every number through float64, which silently rewrites a
+// module result the audit is supposed to keep verbatim (ADR-0021).
+//
+// Fail-closed, on the same rule as RedactJSON: if substitution leaves something
+// that is no longer valid JSON, the payload is DROPPED rather than emitted as
+// it was. Emitting the original would publish the secret the caller asked to
+// remove, and ADR-0013 makes that permanent.
+func (r *Redactor) RedactRaw(raw json.RawMessage) (json.RawMessage, []string, error) {
+	if len(raw) == 0 {
+		return raw, nil, nil
+	}
+	// No derivations means no secret was injected into this run, which is the
+	// normal case today: neither forward_env nor ssh_key is populated yet. The
+	// payload is returned untouched rather than round-tripped through a
+	// substitution that cannot match anything.
+	if len(r.derivations) == 0 && len(r.skipped) == 0 {
+		return raw, nil, nil
+	}
+
+	redacted, _, exceptions := r.RedactText(string(raw))
+	if !json.Valid([]byte(redacted)) {
+		return nil, exceptions, ErrRedactionUnverifiable
+	}
+	return json.RawMessage(redacted), exceptions, nil
+}
+
 // RedactJSON redacts an arbitrary JSON structure by serializing it, applying
 // text redaction (so JSON-escaped derivations are caught), then re-parsing.
 //

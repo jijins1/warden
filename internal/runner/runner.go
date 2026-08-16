@@ -14,11 +14,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jijins1/warden/internal/git"
 	"github.com/jijins1/warden/internal/runner/internal/dispatch"
+	"github.com/jijins1/warden/internal/runner/internal/exec"
 	"github.com/jijins1/warden/internal/runner/internal/fetch"
+	"github.com/jijins1/warden/internal/runner/internal/report"
 	wire "github.com/jijins1/warden/internal/wire/dispatch"
+	ingestwire "github.com/jijins1/warden/internal/wire/ingest"
 )
 
 // Les NOMS des variables viennent du contrat de fil et ne sont pas redéclarés
@@ -31,6 +35,13 @@ const (
 	// MountDir est le répertoire où l'orchestrateur monte le Secret du jeton. Il
 	// borne ce que lireJeton accepte de lire.
 	MountDir = "/var/run/warden"
+
+	// delaiDeCloture borne l'écriture de la terminaison du run.
+	//
+	// Il court sur un contexte détaché, donc rien d'autre ne l'arrêtera : sans
+	// borne, un pod dont l'ingestion ne répond plus resterait en vie jusqu'à
+	// `activeDeadlineSeconds` au lieu de rendre la main.
+	delaiDeCloture = 2 * time.Minute
 )
 
 // Run exécute l'agent jusqu'à l'annulation du contexte.
@@ -88,12 +99,102 @@ func Run(ctx context.Context, args []string) error {
 	slog.Info("code matérialisé", slog.String("run_ref", ordre.RunRef),
 		slog.String("workspace", espace))
 
-	// L'EXÉCUTION N'EST PAS ENCORE ICI. Le §5.2 la fait suivre, mais elle suppose
-	// l'émission d'events vers l'ingestion — dont le contrat de fil
-	// (`internal/wire/ingest`) n'existe encore d'aucun côté. Exécuter sans
-	// pouvoir rapporter produirait un run qui tourne et dont l'audit ne dit rien,
-	// ce qui est exactement l'inverse du produit.
-	return errors.New("exécution du playbook : pas encore implémentée")
+	return executer(ctx, ordre, espace, token)
+}
+
+// executer joue le playbook et rapporte ce qu'il fait.
+//
+// L'ORDRE porte la correction. Le rapporteur est ouvert AVANT l'exécution et
+// fermé APRÈS, quoi qu'il arrive : le §6.3 pose qu'un run interrompu brutalement
+// doit encore dire ce qui avait déjà été modifié, ce qui suppose que le canal de
+// remontée existe avant la première tâche et survive à l'échec de la dernière.
+func executer(ctx context.Context, ordre wire.Order, espace, token string) error {
+	// Aucun rédacteur : l'ordre ne porte encore ni `forward_env` ni clé d'accès
+	// (voir `core.OrderBuilder`), donc aucun secret n'est injecté dans ce pod.
+	// La couture de l'ADR-0017 est en place dans `report` et s'appliquera sans
+	// toucher à ce chemin le jour où l'un des deux arrivera.
+	rapporteur, err := report.New(os.Getenv(ingestwire.EnvIngestURL), token, nil)
+	if err != nil {
+		return fmt.Errorf("run %s : remontée des events : %w", ordre.RunRef, err)
+	}
+
+	moteur, err := exec.New(exec.Config{
+		Workspace: espace,
+		// Frère de l'arbre audité, sous le même volume inscriptible : la racine
+		// du pod est en lecture seule (§7), et `ansible-runner` a besoin
+		// d'écrire ses artefacts.
+		PrivateDataDir: filepath.Join(filepath.Dir(espace), "pdd"),
+		Playbook:       ordre.Playbook,
+		Inventory:      ordre.Inventory,
+		Flags:          ordre.Flags,
+	})
+	if err != nil {
+		// Le run est clos malgré tout : sans cela il resterait `running` pour
+		// toujours, et l'audit ne dirait pas pourquoi rien n'a eu lieu.
+		return joindre(clore(ctx, rapporteur, ingestwire.StatusFailed, ""),
+			fmt.Errorf("run %s : %w", ordre.RunRef, err))
+	}
+
+	slog.Info("exécution du playbook", slog.String("run_ref", ordre.RunRef),
+		slog.String("playbook", ordre.Playbook), slog.String("inventaire", ordre.Inventory))
+
+	statut, err := moteur.Run(ctx, rapporteur.Send)
+
+	// Ce que le RAPPORTEUR a constaté prime : si l'audit ne s'écrit plus, le run
+	// ne peut pas être déclaré réussi, quoi qu'Ansible en dise (§6.3).
+	if errReport := rapporteur.Err(); errReport != nil {
+		return joindre(clore(ctx, rapporteur, ingestwire.StatusFailed, ""),
+			fmt.Errorf("run %s : %w", ordre.RunRef, errReport))
+	}
+	if err != nil {
+		// Panne de PILOTAGE, distincte d'un playbook qui échoue. Si le contexte
+		// est annulé, c'est le Ctrl-C du §5.6 et non un défaut.
+		final, cause := ingestwire.StatusFailed, ingestwire.Cause("")
+		if ctx.Err() != nil {
+			final, cause = ingestwire.StatusInterrupted, ingestwire.CauseUserInterrupt
+		}
+		return joindre(clore(ctx, rapporteur, final, cause),
+			fmt.Errorf("run %s : %w", ordre.RunRef, err))
+	}
+
+	final := ingestwire.StatusFailed
+	if statut == exec.StatutReussi {
+		final = ingestwire.StatusSucceeded
+	}
+	slog.Info("run terminé", slog.String("run_ref", ordre.RunRef),
+		slog.String("statut", string(final)))
+
+	// Un playbook en ÉCHEC ne fait pas sortir l'agent en erreur, et c'est
+	// délibéré : le §6.4 pose que « l'exit code du pod dit que le processus est
+	// mort, pas ce que le playbook a fait ». Le verdict est dans le journal, où
+	// il est requêtable ; le faire aussi porter par le code de sortie créerait
+	// une seconde source de vérité, qui divergerait le jour où la clôture
+	// échoue sans que le playbook ait échoué.
+	return clore(ctx, rapporteur, final, "")
+}
+
+// clore vide le dernier lot et clôt le run.
+//
+// Le contexte est DÉTACHÉ de celui du run : l'annulation du §5.6 est justement
+// le moment où il reste le plus à dire, et fermer avec un contexte déjà annulé
+// ferait échouer l'écriture de la terminaison qu'on essaie de journaliser.
+func clore(ctx context.Context, r *report.Reporter, statut ingestwire.Status, cause ingestwire.Cause) error {
+	fond, annuler := context.WithTimeout(context.WithoutCancel(ctx), delaiDeCloture)
+	defer annuler()
+
+	return r.Close(fond, ingestwire.Final{
+		Status: statut, Cause: cause, SecretsUnmasked: r.SecretsUnmasked(),
+	})
+}
+
+// joindre rend l'erreur de clôture ET celle du run, sans qu'aucune n'efface
+// l'autre : « le playbook a échoué » et « l'audit n'a pas pu s'écrire » sont
+// deux incidents différents, et confondre les deux égare le diagnostic.
+func joindre(cloture, run error) error {
+	if cloture == nil {
+		return run
+	}
+	return errors.Join(run, fmt.Errorf("clôture du run : %w", cloture))
 }
 
 // lireJeton lit le jeton d'amorçage depuis son fichier monté.

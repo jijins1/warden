@@ -43,6 +43,15 @@ spec:
               value: ":8080"
             - name: WARDEN_DISPATCH_ADDR
               value: ":8084"
+            - name: WARDEN_INGEST_ADDR
+              value: ":8085"
+
+            # PAS de WARDEN_INGEST_DATABASE_URL : le rôle PostgreSQL restreint
+            # de l'ADR-0008 n'a pas d'utilisateur de connexion dans ce
+            # déploiement, et l'ingestion retombe donc sur le DSN applicatif en
+            # le disant au démarrage. C'est un écart ASSUMÉ du déploiement de
+            # développement, pas du code : le jour où CNPG publie un second
+            # secret, cette variable le pointe et rien d'autre ne bouge.
 
             # L'authentification RÉELLE n'existe pas (OIDC/mTLS restent à faire).
             # Sans cet opt-in, le middleware refuse TOUTE requête — et c'est la
@@ -70,6 +79,8 @@ spec:
               value: http://warden-git-read:8083
             - name: WARDEN_DISPATCH_RUNNER_URL
               value: http://warden-dispatch:8084
+            - name: WARDEN_INGEST_RUNNER_URL
+              value: http://warden-ingest:8085
 
             - name: WARDEN_POD_NAMESPACE
               value: warden-dev
@@ -78,6 +89,7 @@ spec:
           ports:
             - { name: api,      containerPort: 8080 }
             - { name: dispatch, containerPort: 8084 }
+            - { name: ingest,   containerPort: 8085 }
           readinessProbe:
             tcpSocket: { port: api }
             initialDelaySeconds: 2
@@ -109,6 +121,24 @@ spec:
     app.kubernetes.io/name: warden
     app.kubernetes.io/component: api
   ports: [{ name: dispatch, port: 8084, targetPort: dispatch }]
+---
+# L'ingestion a son propre service pour la même raison, et une de plus : quand
+# l'ADR-0007 dit que le runner ne joint jamais l'API, cela se lit « jamais le
+# PORT de l'API ». C'est ici que la phrase devient exprimable en NetworkPolicy.
+#
+# Le rôle `ingest` existe déjà dans le binaire et n'est pas déployé : `api` sert
+# le même endpoint sur ce même port. Le promouvoir en Deployment séparé ne
+# demandera que d'ajouter un manifeste pointant ce Service ailleurs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: warden-ingest
+  namespace: warden-dev
+spec:
+  selector:
+    app.kubernetes.io/name: warden
+    app.kubernetes.io/component: api
+  ports: [{ name: ingest, port: 8085, targetPort: ingest }]
 ---
 # Les migrations : un Job, pas un initContainer.
 #

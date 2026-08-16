@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jijins1/warden/internal/events"
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
 // maxEventsPerStatement borne le nombre d'events par instruction INSERT.
@@ -60,7 +61,30 @@ func (i *Ingest) Close() { i.pool.Close() }
 // events d'un run dans la partition d'un autre mois, et casserait l'unicité qui
 // fonde l'idempotence.
 func (i *Ingest) AppendEvents(ctx context.Context, runID int64, evs []events.Event) error {
-	if len(evs) == 0 {
+	return i.append(ctx, runID, evs, nil)
+}
+
+// AppendAndClose insère un lot ET clôt le run, dans LA MÊME transaction.
+//
+// L'atomicité est le point, et elle sert le §6.3 : les events sont persistés au
+// fil de l'eau, jamais bufferisés, « parce que la question d'audit qui compte
+// est qu'est-ce qui avait déjà été modifié quand un run est tué brutalement ».
+// Deux écritures séparées laisseraient une fenêtre où le run est clos alors que
+// ses derniers events ne sont pas journalisés — exactement l'état où cette
+// question devient sans réponse.
+//
+// La clôture est IDEMPOTENTE, au même titre que l'insertion : le runner réémet
+// son dernier lot sans danger après une coupure, et une seconde clôture ne doit
+// pas redater la fin du run.
+func (i *Ingest) AppendAndClose(ctx context.Context, runID int64, evs []events.Event, c core.Closure) error {
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("run %d: %w", runID, err)
+	}
+	return i.append(ctx, runID, evs, &c)
+}
+
+func (i *Ingest) append(ctx context.Context, runID int64, evs []events.Event, c *core.Closure) error {
+	if len(evs) == 0 && c == nil {
 		return nil
 	}
 	for _, e := range evs {
@@ -96,8 +120,58 @@ func (i *Ingest) AppendEvents(ctx context.Context, runID int64, evs []events.Eve
 		}
 	}
 
+	// APRÈS les events, jamais avant : c'est l'ordre qui donne son sens à
+	// l'atomicité. Un run clos dont les derniers events manqueraient serait
+	// pire qu'un run non clos, qu'un réconciliateur peut rattraper.
+	if c != nil {
+		if err := closeRun(ctx, tx, runID, *c); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("validation du lot d'events du run %d: %w", runID, err)
+	}
+	return nil
+}
+
+// closeRun écrit la transition d'état finale du run.
+//
+// La garde est `ended_at IS NULL` et non `state = 'running'`, et ce n'est pas
+// équivalent : un run naît `interrupted` / `unknown` avant même que son pod
+// existe (§6.4), et `MarkRunning` peut n'avoir jamais été atteint si le
+// démarrage a échoué à mi-course. Garder sur l'état ferait donc échouer la
+// clôture de tous les runs qui n'ont pas suivi le chemin nominal — c'est-à-dire
+// exactement ceux qu'on tient le plus à voir clos.
+//
+// Zéro line touchée n'est PAS une erreur : c'est le run déjà clos, donc une
+// réémission. L'existence du run est déjà établie par la lecture de `run_day`
+// faite en tête de la transaction.
+func closeRun(ctx context.Context, tx pgx.Tx, runID int64, c core.Closure) error {
+	var cause *string
+	if c.State == core.RunInterrupted {
+		v := string(c.Cause)
+		cause = &v
+	}
+	var motif *string
+	if c.SecretsUnmasked != "" {
+		motif = &c.SecretsUnmasked
+	}
+
+	// `secrets_unmasked` et son motif sont posés ensemble ou pas du tout : le
+	// schéma impose leur équivalence, et les dissocier ici produirait une
+	// violation de contrainte au lieu d'une clôture.
+	const q = `
+UPDATE run
+   SET state                   = $2,
+       termination_cause       = $3,
+       ended_at                = now(),
+       secrets_unmasked        = ($4::text IS NOT NULL),
+       secrets_unmasked_reason = $4
+ WHERE id = $1 AND ended_at IS NULL`
+
+	if _, err := tx.Exec(ctx, q, runID, string(c.State), cause, motif); err != nil {
+		return fmt.Errorf("clôture du run %d: %w", runID, err)
 	}
 	return nil
 }

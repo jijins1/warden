@@ -31,11 +31,40 @@ FROM alpine:3.22
 #
 # git sert au `fetch` de l'ADR-0007 — le seul accès du pod au code.
 # openssh-client sert aux connexions vers les hôtes gérés.
-RUN apk add --no-cache ansible-core git openssh-client ca-certificates
+RUN apk add --no-cache ansible-core git openssh-client ca-certificates py3-pip
 
+# ansible-runner n'est PAS dans les dépôts Alpine : `apk add ansible-core` donne
+# le moteur, pas le flux d'events que le §11 demande de réutiliser tel quel. Son
+# absence était la dette nommée par l'ADR-0014 — « rien n'impose que l'image
+# contienne effectivement ansible-runner » — et elle se manifestait tard, au
+# démarrage du run.
+#
+# --break-system-packages : Alpine 3.22 marque son Python « externally managed »
+# (PEP 668). L'avertissement vise les environnements où pip écraserait des
+# paquets du système ; ici l'image ne sert qu'à ça et ansible-runner n'est fourni
+# par aucun paquet apk, donc il n'y a rien à écraser.
+#
+# Version épinglée : la rejouabilité d'un run dépend de la précision de cette
+# référence (ADR-0014), et le traducteur d'events du runner est écrit contre le
+# flux MESURÉ de cette version-là.
+RUN pip install --no-cache-dir --break-system-packages ansible-runner==2.4.3
+
+# Le répertoire personnel de 65534 est déplacé sur le workspace, et c'est une
+# correction, pas du confort. MESURÉ : Ansible expanse le `~` de son `remote_tmp`
+# depuis /etc/passwd, PAS depuis $HOME — le compte `nobody` d'Alpine ayant `/`
+# pour home, une tâche en `connection: local` tente de créer `/.ansible/tmp` sur
+# une racine en lecture seule (§7) et rend `unreachable`, avec un message qui
+# parle de permissions sur la cible.
+#
+# La corriger ICI plutôt qu'avec ANSIBLE_REMOTE_TEMP est délibéré : cette
+# variable s'appliquerait AUSSI aux hôtes gérés, où `~` s'expanse chez la cible
+# et où pointer sur /workspace n'aurait aucun sens. L'entrée passwd ne concerne
+# que ce conteneur.
+#
 # Utilisateur non privilégié, aligné sur le securityContext que l'orchestrateur
 # pose : `runAsUser: 65534`. Un écart entre les deux se manifesterait par un pod
 # qui refuse de démarrer sur `runAsNonRoot`, message qui ne nomme pas la cause.
+RUN sed -i 's#^nobody:x:65534:65534:.*#nobody:x:65534:65534:nobody:/workspace:/sbin/nologin#' /etc/passwd
 USER 65534:65534
 
 # Le workspace est le point de montage attendu par le runner. Il DOIT être un

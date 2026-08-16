@@ -437,6 +437,7 @@ func TestLaChaineComplete(t *testing.T) {
 
 	adresseAPI := portLibre(t)
 	adresseDispatch := portLibre(t)
+	adresseIngestion := portLibre(t)
 
 	// L'environnement est celui d'un déploiement réel : c'est par lui que les
 	// rôles se configurent, et le test ne prend donc aucun raccourci.
@@ -458,6 +459,19 @@ func TestLaChaineComplete(t *testing.T) {
 		// OBLIGATOIRE : sans elle, l'orchestrateur refuse de démarrer plutôt que
 		// de lancer des pods incapables de savoir qui appeler.
 		"WARDEN_DISPATCH_RUNNER_URL": "http://" + adresseDispatch,
+
+		// L'ingestion, sur un troisième port (ADR-0008). Elle est exigée pour la
+		// même raison que le dispatch, en plus dure : un pod qui ne sait pas où
+		// rapporter exécuterait quand même son playbook, et l'audit ne dirait
+		// rien de ce qui a été modifié (§6.3). L'orchestrateur refuse donc de
+		// démarrer sans elle.
+		//
+		// Ce test ne va PAS jusqu'à l'exécution : son image de runner est
+		// `pause`, et le control plane tourne sur l'hôte, hors d'atteinte du
+		// cluster. Ce qu'il établit ici est que le troisième listener démarre et
+		// que la podspec porte l'adresse.
+		"WARDEN_INGEST_ADDR":       adresseIngestion,
+		"WARDEN_INGEST_RUNNER_URL": "http://" + adresseIngestion,
 		// Le test tourne HORS du cluster : sans cet opt-in explicite, le contrôle
 		// plane refuse le kubeconfig et n'utilise que la configuration in-cluster.
 		"WARDEN_INSECURE_KUBECONFIG": "1",

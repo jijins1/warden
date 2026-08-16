@@ -94,6 +94,34 @@ images: ## Construit les deux images en local, sans rien pousser
 	docker build -f build/wardend.Dockerfile -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) .
 	docker build -f build/runner.Dockerfile  -t $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) .
 
+# Le pilotage d'`ansible-runner` DANS l'image qui sera livrée.
+#
+# Les fixtures de l'étage 1 sont une photographie : elles disent ce qu'une
+# version a produit un jour. Cette cible dit que la couture tient encore avec
+# l'`ansible-runner` réellement installé — et c'est elle qui parlera le jour où
+# l'image bouge, plutôt qu'un run de production.
+#
+# Le test est compilé ICI et exécuté LÀ-BAS : l'image du runner ne contient pas
+# de chaîne Go, et l'ADR-0011 veut qu'elle n'en contienne pas. Les mêmes
+# contraintes que le pod sont posées — racine en lecture seule, uid 65534,
+# /workspace comme seul volume inscriptible — parce que c'est justement là que
+# le dernier défaut s'était logé.
+#
+# UN SEUL test est lancé, et c'est nécessaire : le binaire compilé contient
+# aussi les tests d'étage 1, qui lisent `testdata/` relativement à leur paquet.
+# Ce répertoire n'est pas dans l'image, et il n'a rien à y faire.
+EXEC_TEST := $(CURDIR)/.exec.test
+
+.PHONY: test-runner-image
+test-runner-image: images ## Vérifie le pilotage d'ansible-runner dans l'image du runner
+	CGO_ENABLED=0 go test -tags=integration -c -o $(EXEC_TEST) ./internal/runner/internal/exec
+	docker run --rm --read-only \
+	  --tmpfs /workspace:rw,uid=65534,gid=65534 --tmpfs /tmp:rw \
+	  -v $(EXEC_TEST):/t/exec.test:ro --entrypoint /t/exec.test \
+	  $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) \
+	  -test.run TestLeVraiAnsibleRunnerEstPilote -test.v
+	rm -f $(EXEC_TEST)
+
 .PHONY: images-push
 images-push: images ## Pousse les images (exige un `docker login $(REGISTRY)` préalable)
 	docker push $(IMAGE_BASE)/wardend:$(IMAGE_TAG)

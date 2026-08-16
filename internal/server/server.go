@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/gitd"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
+	"github.com/jijins1/warden/internal/server/internal/inbound/ingest"
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
@@ -79,7 +81,7 @@ func Run(ctx context.Context, r Role) error {
 	case RoleAPI:
 		return runAPI(ctx)
 	case RoleIngest:
-		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+		return runIngest(ctx)
 	case RoleGit:
 		return runGit(ctx)
 	case RoleController:
@@ -87,6 +89,45 @@ func Run(ctx context.Context, r Role) error {
 	default:
 		return fmt.Errorf("rôle %q: pas encore implémenté", r)
 	}
+}
+
+// runIngest ne sert que l'ingestion.
+//
+// Le rôle existe pour que sa promotion en processus déployé à part reste un
+// changement de DÉPLOIEMENT et jamais un changement de code (ADR-0008). Il
+// n'est pas déployé aujourd'hui — `api` sert le même endpoint sur le même port
+// distinct — et cette fonction est ce qui rend la promesse vérifiable.
+//
+// Deux connexions et pas une : la résolution `pod -> run` passe par le magasin
+// applicatif, l'écriture par le pool restreint. Les confondre donnerait au
+// chemin d'écriture les droits du chemin de lecture, ce que toute la séparation
+// de rôles existe pour empêcher.
+func runIngest(ctx context.Context) error {
+	adresse := os.Getenv(EnvIngestAddr)
+	if adresse == "" {
+		// Un rôle d'ingestion sans adresse d'écoute démarrerait, ne servirait
+		// rien, et paraîtrait sain. Le refus est ici.
+		return fmt.Errorf("rôle ingest : %s est requise", EnvIngestAddr)
+	}
+
+	dsn, err := databaseURL(EnvDatabaseURL)
+	if err != nil {
+		return err
+	}
+
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("ouverture du magasin: %w", err)
+	}
+	defer st.Close()
+
+	h, fermer, err := ouvrirIngestion(ctx, dsn, st)
+	if err != nil {
+		return err
+	}
+	defer fermer()
+
+	return servirIngestion(ctx, adresse, h)
 }
 
 func runAPI(ctx context.Context) error {
@@ -212,8 +253,16 @@ func runAPI(ctx context.Context) error {
 			if dispatchURL == "" {
 				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvDispatchRunnerURL)
 			}
+			// Même raisonnement que pour le dispatch, avec une conséquence plus
+			// dure : un pod sans adresse d'ingestion exécuterait son playbook
+			// sans pouvoir rien rapporter, et l'audit ne dirait rien de ce qui
+			// a été modifié — l'inverse exact du produit (§6.3).
+			ingestURL := os.Getenv(EnvIngestRunnerURL)
+			if ingestURL == "" {
+				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvIngestRunnerURL)
+			}
 			orch, err := orchestrator.New(k8s, orchestrator.Config{
-				Namespace: ns, DispatchURL: dispatchURL,
+				Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
 			})
 			if err != nil {
 				return err
@@ -260,18 +309,39 @@ func runAPI(ctx context.Context) error {
 		Refs:      refs,
 		Grants:    grants,
 		Starter:   starter,
+		Running:   st,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
 	}
 	defer func() { _ = server.Close() }()
 
-	if dispatcher == nil {
+	services := []func(context.Context) error{server.Run}
+
+	if dispatcher != nil {
+		services = append(services, func(ctx context.Context) error {
+			return servirDispatch(ctx, dispatchAddr, dispatcher)
+		})
+	}
+
+	// L'ingestion n'a besoin ni du rôle `git` ni du cluster : elle est montée
+	// dès qu'une adresse lui est donnée, indépendamment du dispatch. Sa seule
+	// dépendance est la résolution `pod -> run`, que le magasin satisfait.
+	if adresse := os.Getenv(EnvIngestAddr); adresse != "" {
+		h, fermer, err := ouvrirIngestion(ctx, dsn, st)
+		if err != nil {
+			return err
+		}
+		defer fermer()
+		services = append(services, func(ctx context.Context) error {
+			return servirIngestion(ctx, adresse, h)
+		})
+	}
+
+	if len(services) == 1 {
 		return server.Run(ctx)
 	}
-	return servirDeux(ctx, server.Run, func(ctx context.Context) error {
-		return servirDispatch(ctx, dispatchAddr, dispatcher)
-	})
+	return servirTous(ctx, services...)
 }
 
 // Variables d'environnement portant les chaînes de connexion.
@@ -299,13 +369,17 @@ const (
 	EnvGitInternalToken = "WARDEN_GIT_INTERNAL_TOKEN" // partagé par les deux, et clé de signature des jetons de push
 	EnvGitPushAddr      = "WARDEN_GIT_PUSH_ADDR"      // smart HTTP en écriture, servi à la CLI
 	EnvDispatchAddr     = "WARDEN_DISPATCH_ADDR"      // canal de dispatch SSE, servi aux pods runner
+	EnvIngestAddr       = "WARDEN_INGEST_ADDR"        // ingestion des events, servie aux pods runner
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
 	// EnvDispatchRunnerURL est l'adresse du canal telle qu'un POD la joint. Comme
 	// pour git, elle diffère de l'adresse d'écoute : le service écoute dans le
 	// control plane, le pod appelle depuis le cluster.
 	EnvDispatchRunnerURL = "WARDEN_DISPATCH_RUNNER_URL"
-	EnvPodNamespace      = "WARDEN_POD_NAMESPACE" // namespace où vivent les pods runner
-	EnvRunnerImage       = "WARDEN_RUNNER_IMAGE"  // image du runner, en attendant la configuration projet (ADR-0014)
+	// EnvIngestRunnerURL est l'adresse de l'ingestion telle qu'un POD la joint,
+	// distincte de l'adresse d'écoute pour la même raison.
+	EnvIngestRunnerURL = "WARDEN_INGEST_RUNNER_URL"
+	EnvPodNamespace    = "WARDEN_POD_NAMESPACE" // namespace où vivent les pods runner
+	EnvRunnerImage     = "WARDEN_RUNNER_IMAGE"  // image du runner, en attendant la configuration projet (ADR-0014)
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il
@@ -402,6 +476,78 @@ func clientKubernetes() (*kubernetes.Clientset, error) {
 	return client, nil
 }
 
+// servirIngestion sert l'endpoint d'ingestion sur son propre port.
+//
+// Un port DISTINCT de celui de l'API, avec sa propre règle d'ingress et son
+// propre rôle PostgreSQL (ADR-0008). Quand l'ADR-0007 dit que le runner ne
+// joint jamais l'API, cela se lit « jamais le port de l'API ».
+//
+// Le service est monté à partir d'un pool d'ingestion, pas du pool applicatif :
+// c'est la seconde couche d'isolation, celle qui limite les dégâts si la
+// première — la résolution `pod -> run` côté serveur — cédait.
+func servirIngestion(ctx context.Context, addr string, h *ingest.Handler) error {
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: h.Routes(),
+		// Sans délai sur la lecture des en-têtes, une connexion qui les envoie
+		// octet par octet immobilise un handler indéfiniment (Slowloris).
+		ReadHeaderTimeout: 10 * time.Second,
+		// WriteTimeout ici, contrairement au dispatch : une réponse d'ingestion
+		// est un accusé de quelques octets, jamais un flux. Un handler qui
+		// mettrait plus longtemps est bloqué, pas occupé.
+		WriteTimeout: 30 * time.Second,
+	}
+
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("écoute de l'ingestion sur %s: %w", addr, err)
+	}
+
+	// #nosec G118 -- l'arrêt gracieux part d'un contexte neuf par nécessité :
+	// celui-ci vient d'être annulé, et c'est ce qui déclenche l'arrêt.
+	go func() {
+		<-ctx.Done()
+		arret, annuler := context.WithTimeout(context.Background(), 30*time.Second)
+		defer annuler()
+		_ = srv.Shutdown(arret)
+	}()
+
+	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("service d'ingestion: %w", err)
+	}
+	return nil
+}
+
+// ouvrirIngestion monte le handler d'ingestion sur son pool restreint.
+//
+// Le DSN d'ingestion porte le rôle `warden_ingest`, restreint à l'insertion
+// d'events et aux cinq colonnes de statut d'un run (ADR-0008, migration 00006).
+// À défaut, on retombe sur le DSN applicatif — acceptable en développement,
+// jamais en production, et c'est exactement le repli déjà consenti au lecteur
+// de diffs.
+func ouvrirIngestion(ctx context.Context, dsnApp string, pods ingest.Pods) (*ingest.Handler, func(), error) {
+	dsn := os.Getenv(EnvIngestDatabaseURL)
+	if dsn == "" {
+		slog.Warn("ingestion sur le DSN applicatif",
+			slog.String("variable", EnvIngestDatabaseURL),
+			slog.String("effet", "le rôle restreint de l'ADR-0008 n'est pas en vigueur"))
+		dsn = dsnApp
+	}
+
+	in, err := store.OpenIngest(ctx, dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ouverture du pool d'ingestion: %w", err)
+	}
+
+	h, err := ingest.New(pods, in)
+	if err != nil {
+		in.Close()
+		return nil, nil, err
+	}
+	return h, in.Close, nil
+}
+
 // servirDispatch sert le canal de dispatch sur son propre port.
 //
 // Un port DISTINCT de celui de l'API et de celui de l'ingestion, chacun avec sa
@@ -440,23 +586,28 @@ func servirDispatch(ctx context.Context, addr string, d *dispatch.Dispatcher) er
 	return nil
 }
 
-// servirDeux fait tourner deux services et rend la première erreur.
+// servirTous fait tourner N services et rend la première erreur.
 //
-// La première erreur fait tomber l'autre : continuer à distribuer des ordres
+// La première erreur fait tomber les autres : continuer à distribuer des ordres
 // alors que l'API est morte laisserait des runs démarrer sans que personne
-// puisse les suivre.
-func servirDeux(ctx context.Context, a, b func(context.Context) error) error {
+// puisse les suivre. Le raisonnement vaut a fortiori pour l'ingestion — un run
+// qui tourne et dont l'audit ne s'écrit pas est ce que le §6.3 interdit.
+func servirTous(ctx context.Context, services ...func(context.Context) error) error {
 	ctx, annuler := context.WithCancel(ctx)
 	defer annuler()
 
-	erreurs := make(chan error, 2)
-	for _, servir := range []func(context.Context) error{a, b} {
+	erreurs := make(chan error, len(services))
+	for _, servir := range services {
 		go func() { erreurs <- servir(ctx) }()
 	}
 
 	premiere := <-erreurs
 	annuler()
-	<-erreurs
+	// Les autres sont attendus : sortir sans les attendre laisserait des
+	// listeners ouverts sur des ports que le processus suivant voudra prendre.
+	for range len(services) - 1 {
+		<-erreurs
+	}
 	return premiere
 }
 

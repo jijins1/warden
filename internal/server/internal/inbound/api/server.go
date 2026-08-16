@@ -84,6 +84,14 @@ type Deps struct {
 	// ENREGISTRE le run sans le démarrer, et le dit. Un déploiement sans accès au
 	// cluster reste ainsi utilisable pour tout le reste.
 	Starter core.RunLauncher
+
+	// Running fait passer le run à l'état courant une fois son pod créé.
+	//
+	// Facultatif au même titre que Starter, et pour la même raison : sans
+	// démarrage il n'y a rien à marquer. La transition est écrite sur un fait
+	// que le control plane CONSTATE — le pod existe — et non sur la parole du
+	// pod, qui est du code hostile.
+	Running core.RunStateWriter
 }
 
 // Server serves the HTTP API and WebSocket stream.
