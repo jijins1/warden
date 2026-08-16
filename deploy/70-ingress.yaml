@@ -1,0 +1,61 @@
+# Entrées depuis les postes de développement.
+#
+# DEUX hôtes et non un, parce que la CLI parle à deux surfaces qui n'ont ni le
+# même protocole ni la même politique : l'API en JSON, et le smart HTTP de git
+# en écriture. Les mettre derrière un même hôte à des chemins différents rendrait
+# leur restriction indissociable — or c'est précisément la séparation par port
+# qui rend chaque surface restreignable (ADR-0027).
+#
+# Le canal de dispatch et le port de LECTURE du rôle `git` ne sont PAS exposés :
+# ils sont joints par les pods runner, depuis l'intérieur du cluster. Les publier
+# ouvrirait à Internet les deux surfaces que l'ADR-0007 réserve au domaine
+# hostile — et la seule qui distribue des credentials.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: warden-api
+  namespace: warden-dev
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: traefik-middleware-redirect-https@kubernetescrd
+spec:
+  rules:
+    - host: warden-dev.ruokki.ovh
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: warden-api
+                port: { number: 8080 }
+  tls:
+    - hosts: ["warden-dev.ruokki.ovh"]
+      secretName: warden-api-cert-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: warden-git
+  namespace: warden-dev
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: traefik-middleware-redirect-https@kubernetescrd
+    # Un push d'audit transporte l'historique local manquant, et l'ADR-0003 note
+    # que ce coût n'est pas borné — le modèle simplifié en a même fait le cas
+    # NORMAL. Un plafond de corps par défaut couperait donc les pushes ordinaires.
+    traefik.ingress.kubernetes.io/router.middlewares.buffering: ""
+spec:
+  rules:
+    - host: warden-git-dev.ruokki.ovh
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: warden-git-push
+                port: { number: 8082 }
+  tls:
+    - hosts: ["warden-git-dev.ruokki.ovh"]
+      secretName: warden-git-cert-tls
