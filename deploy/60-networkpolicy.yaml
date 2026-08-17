@@ -1,19 +1,22 @@
-# L'egress des pods runner (ADR-0007).
+# Les pods runner : egress OUVERT, ingress fermé.
 #
-# CE FICHIER PORTE UN CONTRÔLE QUE LE CODE NE PEUT PAS PORTER. Le §2 pose qu'un
-# playbook arbitraire équivaut à une exécution de code dans le pod : ce qui borne
-# ce que ce code peut joindre n'est pas le binaire du runner — qu'un playbook
-# peut ignorer — mais la politique réseau qui l'entoure.
+# L'egress n'est pas restreint. Un playbook joint n'importe quelle adresse, dans
+# le cluster comme au dehors. C'est un écart assumé : le périmètre du §10.2 doit
+# être posé par run à partir du scope de l'utilisateur, rien ne le calcule, et le
+# développement avance avec l'egress ouvert plutôt qu'avec un produit qui ne
+# joint rien. L'ADR-0020 pose que ce fichier EST le contrôle d'autorisation de la
+# v1 : il n'y en a donc plus. À reprendre avant toute production.
 #
-# L'ADR-0020 va plus loin et le dit sans détour : faute de gestionnaire de
-# secrets, en v1 « l'autorisation réelle repose ENTIÈREMENT sur la NetworkPolicy
-# egress ». Ne pas appliquer ce fichier ne dégrade pas le produit, cela supprime
-# son contrôle d'accès.
+# Le périmètre étroit qui existait ici — DNS, `git` en lecture seule, dispatch et
+# ingestion — est dans l'historique git, à restaurer tel quel le jour venu.
+#
+# L'ingress reste fermé, et il n'y a aucune raison de l'ouvrir : rien n'a à
+# joindre un pod runner. Le canal SSE (ADR-0018) et l'ingestion partent tous deux
+# de lui.
 #
 # La sélection se fait sur les ÉTIQUETTES que l'orchestrateur pose. Un pod qui
-# n'en porterait pas ne serait pas sélectionné, donc pas confiné — raison pour
-# laquelle une étiquette invalide fait échouer le lancement plutôt que d'être
-# omise.
+# n'en porterait pas ne serait pas sélectionné — raison pour laquelle une
+# étiquette invalide fait échouer le lancement plutôt que d'être omise.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -23,68 +26,13 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: warden-runner
-  policyTypes: ["Egress", "Ingress"]
 
-  # Aucune entrée. Rien n'a de raison de joindre un pod runner : le dialogue
-  # descendant passe par le canal SSE que le POD ouvre (ADR-0018), et le montant
-  # par l'ingestion qu'il appelle. Les deux partent de lui.
+  # `Egress` est ABSENT de policyTypes : aucune règle de sortie n'est donc
+  # évaluée pour ces pods. C'est la façon la plus courte de dire « tout est
+  # permis », et la plus lisible — une règle 0.0.0.0/0 se confondrait avec un
+  # périmètre qu'on aurait mal écrit.
+  policyTypes: ["Ingress"]
   ingress: []
-
-  egress:
-    # DNS. Sans lui, rien ne résout, et le symptôme est une panne réseau
-    # incompréhensible plutôt qu'un refus net.
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - { protocol: UDP, port: 53 }
-        - { protocol: TCP, port: 53 }
-
-    # Le rôle `git`, EN LECTURE SEULE. Le port d'écriture (8082) et l'API interne
-    # (8081) ne figurent pas ici, et c'est le contrôle n°3 de la conjonction de
-    # l'ADR-0027 : un runner ne joint pas la surface d'écriture. Son jeton y
-    # serait de toute façon refusé — le genre entre dans la signature — mais un
-    # contrôle réseau vaut mieux qu'un contrôle qui dépend d'une vérification.
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: warden
-              app.kubernetes.io/component: git
-      ports:
-        - { protocol: TCP, port: 8083 }
-
-    # Le canal de dispatch (8084) et l'ingestion des events (8085), servis par le
-    # rôle `api` sur DEUX ports distincts du sien.
-    #
-    # Le port de l'API (8080) est ABSENT, délibérément : quand l'ADR-0007 dit que
-    # le runner ne joint jamais l'API, cela se lit « jamais le port de l'API ».
-    # C'est ici que cette phrase devient une règle plutôt qu'une intention.
-    #
-    # Les deux sens du dialogue avec le pod, et ils ne sont pas symétriques :
-    # 8084 DESCEND et transporte des credentials, 8085 MONTE et ne transporte
-    # que de l'audit. Les séparer par le port est ce qui permettra de couper
-    # l'un sans l'autre — un pod qui n'a plus rien à recevoir doit encore
-    # pouvoir rapporter ce qu'il a fait (§6.3).
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: warden
-              app.kubernetes.io/component: api
-      ports:
-        - { protocol: TCP, port: 8084 }
-        - { protocol: TCP, port: 8085 }
-
-    # LE PÉRIMÈTRE D'HÔTES du §10.2 n'est PAS ici, et son absence est le trou
-    # connu de ce fichier : un runner ne peut donc joindre AUCUN hôte géré, et
-    # aucun playbook ne peut s'exécuter contre quoi que ce soit.
-    #
-    # C'est délibéré tant que le périmètre n'est pas dérivé de l'utilisateur :
-    # une règle large — « tout le réseau privé » — donnerait à un playbook
-    # arbitraire l'accès de l'utilisateur le plus privilégié, ce que le §2
-    # interdit. La règle doit être POSÉE PAR RUN, à partir du scope de son
-    # utilisateur, et rien ne le calcule encore.
 ---
 # Le rôle `git` n'accepte QUE ce que sa décomposition en ports prévoit.
 #
