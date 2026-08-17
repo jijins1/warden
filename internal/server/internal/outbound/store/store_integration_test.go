@@ -729,3 +729,152 @@ func assertCounts(t *testing.T, dsn string, runID int64, wantEvents, wantDiffs, 
 		t.Errorf("changed_count = %d, attendu %d", gotChanged, wantChanged)
 	}
 }
+
+// --- les clés d'environnement (ADR-0020, migration 00007) ---
+
+func descripteur(env, empreinte string) core.KeyDescriptor {
+	return core.KeyDescriptor{
+		Environment: env,
+		PublicKey:   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemple warden-" + env,
+		Fingerprint: empreinte,
+		SecretName:  core.SecretNameFor(env),
+		Origin:      core.KeyGenerated,
+	}
+}
+
+func TestUneCleEstEnregistreeEtRelue(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SaveKey(ctx, descripteur("prod", "SHA256:aaaa")); err != nil {
+		t.Fatalf("SaveKey: %v", err)
+	}
+
+	d, err := s.KeyByEnvironment(ctx, "prod")
+	if err != nil {
+		t.Fatalf("KeyByEnvironment: %v", err)
+	}
+	if d.Fingerprint != "SHA256:aaaa" || d.SecretName != core.SecretNameFor("prod") {
+		t.Errorf("descripteur relu = %+v", d)
+	}
+	// Une clé qui n'a jamais tourné ne porte PAS de date de rotation : elle
+	// ferait croire à un évènement qui n'a pas eu lieu.
+	if !d.RotatedAt.IsZero() {
+		t.Errorf("rotated_at = %v sur une clé jamais remplacée", d.RotatedAt)
+	}
+
+	if _, err := s.KeyByEnvironment(ctx, "jamais-configure"); !errors.Is(err, core.ErrNoKey) {
+		t.Errorf("erreur = %v, attendu core.ErrNoKey", err)
+	}
+}
+
+// Reposer une clé EST la rotation : l'ADR-0020 note que c'est le seul mécanisme
+// de révocation. La refuser obligerait à supprimer d'abord, donc à passer par un
+// état où la production n'a plus de clé du tout.
+func TestReposerUneCleEstUneRotation(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SaveKey(ctx, descripteur("prod", "SHA256:aaaa")); err != nil {
+		t.Fatalf("SaveKey: %v", err)
+	}
+	nouvelle := descripteur("prod", "SHA256:bbbb")
+	nouvelle.Origin = core.KeyImported
+	if err := s.SaveKey(ctx, nouvelle); err != nil {
+		t.Fatalf("SaveKey (rotation): %v", err)
+	}
+
+	d, err := s.KeyByEnvironment(ctx, "prod")
+	if err != nil {
+		t.Fatalf("KeyByEnvironment: %v", err)
+	}
+	if d.Fingerprint != "SHA256:bbbb" || d.Origin != core.KeyImported {
+		t.Errorf("la rotation n'a pas remplacé : %+v", d)
+	}
+	if d.RotatedAt.IsZero() {
+		t.Error("rotated_at non posé : impossible de dire depuis quand la clé est en place")
+	}
+
+	// Une ligne par environnement, toujours.
+	toutes, err := s.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+	if len(toutes) != 1 {
+		t.Errorf("%d clés pour un environnement", len(toutes))
+	}
+}
+
+// La contrainte de forme du schéma. Cette valeur devient un composant de nom de
+// Secret Kubernetes : une violation découverte par l'API se présenterait à la
+// livraison de l'ordre, très loin d'ici.
+func TestUnEnvironnementMalFormeEstRefuseParLeSchema(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	// Directement en SQL : la validation Go refuse déjà ces valeurs, et ce
+	// qu'on vérifie ici est que la BASE les refuserait aussi — une défense de
+	// moins à oublier le jour où un autre chemin d'écriture apparaîtra.
+	conn := connect(t, dsn)
+	defer conn.Close(ctx)
+
+	for _, env := range []string{"PROD", "prod.eu", "prod/eu", "-prod", ""} {
+		_, err := conn.Exec(ctx, `
+INSERT INTO ssh_key (environment, public_key, fingerprint, secret_name, origin)
+VALUES ($1, 'ssh-ed25519 AAAA x', 'SHA256:aaaa', 'warden-key-x', 'generated')`, env)
+		if err == nil {
+			t.Errorf("l'environnement %q a été accepté par le schéma", env)
+		}
+	}
+}
+
+// L'ingestion écrit des events. Elle n'a AUCUNE raison de connaître les clés
+// d'accès de la flotte, et le GRANT ne lui en donne pas.
+func TestLIngestionNeVoitPasLesCles(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	admin := connect(t, dsn)
+	defer admin.Close(ctx)
+	for _, q := range []string{
+		`CREATE ROLE ingest_login LOGIN PASSWORD 'ingest'`,
+		`GRANT warden_ingest TO ingest_login`,
+	} {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatalf("préparation du rôle: %v", err)
+		}
+	}
+
+	restreint := connect(t, swapUser(dsn, "ingest_login", "ingest"))
+	defer restreint.Close(ctx)
+
+	interdits := map[string]string{
+		"lire les clés":     `SELECT count(*) FROM ssh_key`,
+		"poser une clé":     `INSERT INTO ssh_key (environment, public_key, fingerprint, secret_name, origin) VALUES ('x', 'ssh-ed25519 A x', 'SHA256:a', 'w', 'generated')`,
+		"effacer une clé":   `DELETE FROM ssh_key`,
+		"détourner une clé": `UPDATE ssh_key SET secret_name = 'ailleurs'`,
+	}
+	for nom, q := range interdits {
+		if _, err := restreint.Exec(ctx, q); err == nil {
+			t.Errorf("le rôle d'ingestion peut %s — le GRANT est trop large", nom)
+		}
+	}
+}

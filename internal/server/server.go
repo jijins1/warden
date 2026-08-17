@@ -31,6 +31,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
+	"github.com/jijins1/warden/internal/server/internal/outbound/keyinventory"
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
@@ -188,6 +189,7 @@ func runAPI(ctx context.Context) error {
 		dispatcher   *dispatch.Dispatcher
 		dispatchAddr string
 		starter      core.RunLauncher
+		keys         core.KeyIssuer
 
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
@@ -272,6 +274,17 @@ func runAPI(ctx context.Context) error {
 				return err
 			}
 			starter = rs
+
+			// Le magasin de clés partage la condition du cluster, et pas par
+			// commodité : la partie privée vit dans un Secret du namespace des
+			// pods (ADR-0020). Sans accès à Kubernetes il n'y a pas de magasin,
+			// donc pas de clé — et les ordres partent sans, ce que le composeur
+			// traite comme un état légitime.
+			ki, err := keyinventory.New(k8s, ns, st)
+			if err != nil {
+				return err
+			}
+			keys = ki
 		}
 
 		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
@@ -287,7 +300,7 @@ func runAPI(ctx context.Context) error {
 				// celle de la CLI : lecture et écriture sont deux ports (ADR-0027).
 				return fmt.Errorf("%s est définie sans %s", EnvDispatchAddr, EnvGitRunnerURL)
 			}
-			ob, err := core.NewOrderBuilder(st, gi, origine)
+			ob, err := core.NewOrderBuilder(st, gi, keys, origine)
 			if err != nil {
 				return fmt.Errorf("composeur d'ordres: %w", err)
 			}

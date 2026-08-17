@@ -20,13 +20,29 @@
 // # Ce que la v1 ne fait pas
 //
 // Aucun certificat éphémère : le contrôle n°1 du §10.2 n'a pas
-// d'implémentation, Vault n'existant pas dans l'environnement cible. En v1
-// l'autorisation réelle repose ENTIÈREMENT sur la NetworkPolicy egress. Aucune
-// expiration non plus : la rotation est le seul mécanisme de révocation.
+// d'implémentation, Vault n'existant pas dans l'environnement cible. Aucune
+// expiration non plus : la rotation est le seul mécanisme de révocation, et
+// elle n'est pas outillée.
 //
-// La lecture est faite par le control plane au moment du claim, et la livraison
-// par `outbound/dispatch`. Jamais de volume monté : il serait fixé à la création
-// du pod, donc présent avant le claim (§8.3), et le pod est pré-chauffé.
-// Le runner conserve automountServiceAccountToken: false et n'atteint jamais
-// l'API Kubernetes.
+// L'ADR-0020 rabattait l'autorisation sur le contrôle n°2 — la NetworkPolicy
+// egress. CE REPLI N'EXISTE PLUS : l'egress des runners est ouvert
+// (`deploy/60-networkpolicy.yaml`). Il faut donc lire ce paquet pour ce qu'il
+// est devenu — un magasin d'ACCÈS, pas d'autorisation. La clé qu'il émet ouvre
+// tout ce qui l'accepte, et rien dans le produit ne borne aujourd'hui ce que le
+// playbook en fait.
+//
+// # Deux magasins pour une clé
+//
+// La partie PRIVÉE vit dans un Secret Kubernetes, la partie PUBLIQUE et les
+// métadonnées dans PostgreSQL (migration 00007). La séparation est la décision :
+// un seul magasin obligerait à choisir entre un journal d'audit qui contient des
+// secrets — répliqué, sauvegardé, jamais purgé (ADR-0013) — et une configuration
+// qu'on ne peut pas requêter.
+//
+// La lecture est faite par le control plane au moment de la LIVRAISON de l'ordre
+// et non du claim (ADR-0018 amendée) : c'est ce qui garantit qu'aucun credential
+// n'est persisté, ni en base ni dans le WAL par une notification. Jamais de
+// volume monté — il serait fixé à la création du pod, donc présent avant le
+// claim (§8.3). Le runner conserve automountServiceAccountToken: false et
+// n'atteint jamais l'API Kubernetes.
 package keyinventory

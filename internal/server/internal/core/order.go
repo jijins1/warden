@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +33,7 @@ type RunByIDReader interface {
 type OrderBuilder struct {
 	runs    RunByIDReader
 	grants  FetchGrantIssuer
+	keys    KeyIssuer
 	gitBase string
 	fetchTL time.Duration
 }
@@ -54,7 +58,12 @@ const FetchGrantTTL = 4 * time.Hour
 // l'origine dépend du RUN. Une origine constante ferait cloner le même dépôt à
 // tous les runs — et le premier symptôme serait un runner qui exécute le code
 // d'un autre projet, ce que rien en aval ne rattraperait.
-func NewOrderBuilder(runs RunByIDReader, grants FetchGrantIssuer, gitBase string) (*OrderBuilder, error) {
+// `keys` est FACULTATIF, et l'absence est un état légitime : un playbook en
+// `connection: local` n'a besoin d'aucune clé, et c'est le cas de tous les runs
+// du produit jusqu'ici. Sans magasin de clés, l'ordre part sans clé et le run
+// tourne — il échouera sur un `unreachable` si son inventaire vise de vraies
+// machines, ce qui est un diagnostic honnête.
+func NewOrderBuilder(runs RunByIDReader, grants FetchGrantIssuer, keys KeyIssuer, gitBase string) (*OrderBuilder, error) {
 	if runs == nil || grants == nil {
 		return nil, fmt.Errorf("construction des ordres : lecture des runs et frappe des jetons sont requises")
 	}
@@ -65,7 +74,7 @@ func NewOrderBuilder(runs RunByIDReader, grants FetchGrantIssuer, gitBase string
 		return nil, fmt.Errorf("construction des ordres : adresse du rôle git absente")
 	}
 	return &OrderBuilder{
-		runs: runs, grants: grants,
+		runs: runs, grants: grants, keys: keys,
 		gitBase: strings.TrimRight(gitBase, "/"),
 		fetchTL: FetchGrantTTL,
 	}, nil
@@ -103,6 +112,14 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		return wire.Order{}, fmt.Errorf("frappe du jeton de lecture du run %s : %w", run.RunRef, err)
 	}
 
+	// La clé d'accès est émise ICI, à la livraison, pour la même raison que le
+	// jeton git : c'est ce qui garantit qu'aucun credential n'est persisté, ni
+	// en base ni dans le WAL par une notification (ADR-0018 amendée).
+	cle, err := b.cleDAcces(ctx, run)
+	if err != nil {
+		return wire.Order{}, err
+	}
+
 	return wire.Order{
 		RunRef:      run.RunRef,
 		AuditSHA:    run.AuditSHA,
@@ -115,13 +132,45 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		GitURL:   b.gitBase + "/" + run.Repo + ".git",
 		GitToken: wire.Secret(jeton),
 
-		// SSHKey reste vide : `key-inventory` n'a pas d'implémentation, et
-		// l'ADR-0020 a constaté que l'environnement cible n'a pas de gestionnaire
-		// de secrets. En v1 l'autorisation d'accès aux hôtes repose ENTIÈREMENT
-		// sur la NetworkPolicy egress. Mettre une valeur factice ici donnerait
-		// l'illusion inverse.
+		// La clé d'accès de l'ADR-0020, vide quand l'environnement n'en a pas.
 		//
-		// ForwardEnv reste vide de même : les variables du shell de l'utilisateur
+		// Ce qu'elle N'EST PAS, et il faut le garder en tête : une autorisation.
+		// L'ADR-0020 pose qu'en v1 l'autorisation repose sur la NetworkPolicy
+		// egress, et celle-ci est aujourd'hui ouverte. Cette clé ouvre donc
+		// tout ce qui l'accepte.
+		SSHKey: cle,
+
+		// ForwardEnv reste vide : les variables du shell de l'utilisateur
 		// transitent par la CLI (§5.4), qui ne les envoie pas encore.
 	}, nil
+}
+
+// cleDAcces émet la clé de l'environnement du run, ou rien.
+//
+// Un environnement sans clé n'est PAS une erreur — voir NewOrderBuilder. Il est
+// en revanche journalisé : c'est la cause la plus probable d'un run qui échouera
+// en `unreachable` quelques secondes plus tard, et la trace évite de la chercher
+// dans Ansible.
+func (b *OrderBuilder) cleDAcces(ctx context.Context, run Run) (wire.Secret, error) {
+	if b.keys == nil {
+		return nil, nil
+	}
+
+	// `hostScope` est nil : le périmètre par utilisateur du §10.2 n'existe pas.
+	// Le paramètre est passé quand même, parce que c'est lui qui rendra
+	// l'adaptateur Vault indolore.
+	cle, err := b.keys.Issue(ctx, strconv.FormatInt(run.UserID, 10), run.Environment, nil)
+	if errors.Is(err, ErrNoKey) {
+		slog.Info("run sans clé d'accès",
+			slog.String("run_ref", run.RunRef), slog.String("environnement", run.Environment))
+		return nil, nil
+	}
+	if err != nil {
+		// Une panne du magasin de clés FAIT ÉCHOUER la livraison plutôt que de
+		// livrer un ordre sans clé : envoyer un run sans credential parce que
+		// Kubernetes n'a pas répondu produirait un échec `unreachable` qui
+		// accuserait la machine cible.
+		return nil, fmt.Errorf("clé d'accès du run %s : %w", run.RunRef, err)
+	}
+	return wire.Secret(cle.Reveal()), nil
 }

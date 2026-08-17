@@ -59,6 +59,20 @@ type Config struct {
 	// donne, après citation.
 	Flags []string
 
+	// SSHKey est la clé d'accès de l'environnement (ADR-0020), vide quand il
+	// n'y en a pas.
+	//
+	// Elle est écrite dans `<pdd>/env/ssh_key`, et c'est MESURÉ :
+	// `ansible-runner` y trouve la clé, la recopie, démarre un `ssh-agent`,
+	// l'y charge par `ssh-add`, EFFACE le fichier, puis lance le playbook sous
+	// cet agent. La clé n'existe donc sur disque qu'un instant, et le playbook
+	// ne voit que l'agent.
+	//
+	// L'alternative — écrire un fichier et passer `--private-key` — la
+	// laisserait lisible par le playbook pendant tout le run. Le playbook est
+	// du code arbitraire (§2).
+	SSHKey []byte
+
 	// DelaiApresSignal est le sursis accordé après le SIGINT du §5.6.
 	// Zéro vaut DelaiApresSignalParDefaut.
 	DelaiApresSignal time.Duration
@@ -125,6 +139,9 @@ const (
 func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 	if err := os.MkdirAll(r.cfg.PrivateDataDir, 0o750); err != nil {
 		return "", fmt.Errorf("préparation du répertoire de travail : %w", err)
+	}
+	if err := r.poserLaCle(); err != nil {
+		return "", err
 	}
 
 	kwargs, err := r.kwargs()
@@ -255,6 +272,31 @@ func (r *Runner) lire(sortie io.Reader, emettre Emetteur) Statut {
 		})
 	}
 	return statut
+}
+
+// poserLaCle écrit la clé d'accès là où `ansible-runner` la cherche.
+//
+// 0600, et le répertoire 0700. `ssh-add` ne s'en formalise pas — c'est `ssh -i`
+// qui refuse une clé lisible par tous — mais le fichier existe le temps que le
+// playbook démarre, et le playbook tourne sous le même utilisateur.
+//
+// Rien n'est écrit quand il n'y a pas de clé : un `env/ssh_key` vide ferait
+// démarrer `ssh-agent` et échouer `ssh-add`, donc échouer le run entier — alors
+// qu'un run sans clé doit simplement tourner sans clé.
+func (r *Runner) poserLaCle() error {
+	if len(r.cfg.SSHKey) == 0 {
+		return nil
+	}
+
+	env := filepath.Join(r.cfg.PrivateDataDir, "env")
+	if err := os.MkdirAll(env, 0o700); err != nil {
+		return fmt.Errorf("préparation du répertoire de clés : %w", err)
+	}
+	// Le message ne cite jamais le contenu, et le chemin suffit à diagnostiquer.
+	if err := os.WriteFile(filepath.Join(env, "ssh_key"), r.cfg.SSHKey, 0o600); err != nil {
+		return fmt.Errorf("écriture de la clé d'accès : %w", err)
+	}
+	return nil
 }
 
 // kwargs compose la trame que `ansible-runner worker` lit sur son entrée.

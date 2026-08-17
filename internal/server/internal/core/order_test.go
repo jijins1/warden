@@ -58,7 +58,7 @@ func runValide() core.Run {
 // obtenir en abusant de son accès est exactement ce qu'il allait recevoir.
 func TestLOrdrePorteUnJetonScopeAuRun(t *testing.T) {
 	f := &frappeurFactice{}
-	b, err := core.NewOrderBuilder(runsFactices{1: runValide()}, f, "https://git.invalid")
+	b, err := core.NewOrderBuilder(runsFactices{1: runValide()}, f, nil, "https://git.invalid")
 	if err != nil {
 		t.Fatalf("NewOrderBuilder : %v", err)
 	}
@@ -98,7 +98,7 @@ func TestLOrdrePorteUnJetonScopeAuRun(t *testing.T) {
 // attente qu'on ne sait pas borner.
 func TestLeJetonEstFrappeALaLivraison(t *testing.T) {
 	f := &frappeurFactice{}
-	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, f, "https://git.invalid")
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, f, nil, "https://git.invalid")
 
 	avant := time.Now()
 	if _, err := b.OrderFor(t.Context(), 1); err != nil {
@@ -128,7 +128,7 @@ func TestUnRunSansCommitNeProduitPasDOrdre(t *testing.T) {
 	} {
 		t.Run(nom, func(t *testing.T) {
 			f := &frappeurFactice{}
-			b, _ := core.NewOrderBuilder(runsFactices{1: run}, f, "https://git.invalid")
+			b, _ := core.NewOrderBuilder(runsFactices{1: run}, f, nil, "https://git.invalid")
 
 			if _, err := b.OrderFor(t.Context(), 1); err == nil {
 				t.Fatal("un ordre a été produit")
@@ -148,7 +148,7 @@ func TestUnRunSansCommitNeProduitPasDOrdre(t *testing.T) {
 // d'accès aux hôtes repose ENTIÈREMENT sur la NetworkPolicy egress. Une valeur
 // factice ici laisserait croire le contraire.
 func TestLOrdreNePorteNiCleNiVariables(t *testing.T) {
-	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, "https://git.invalid")
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
 
 	ordre, err := b.OrderFor(t.Context(), 1)
 	if err != nil {
@@ -174,7 +174,7 @@ func TestLOrigineDependDuDepotDuRun(t *testing.T) {
 	autre.Repo = "un-autre-depot"
 
 	f := &frappeurFactice{}
-	b, _ := core.NewOrderBuilder(runsFactices{1: runValide(), 2: autre}, f, "https://git.invalid/")
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide(), 2: autre}, f, nil, "https://git.invalid/")
 
 	premier, err := b.OrderFor(t.Context(), 1)
 	if err != nil {
@@ -196,7 +196,7 @@ func TestLOrigineDependDuDepotDuRun(t *testing.T) {
 // TestUneAdresseGitAbsenteEchoueAuDemarrage : échouer à froid plutôt qu'à la
 // première livraison.
 func TestUneAdresseGitAbsenteEchoueAuDemarrage(t *testing.T) {
-	if _, err := core.NewOrderBuilder(runsFactices{}, &frappeurFactice{}, ""); err == nil {
+	if _, err := core.NewOrderBuilder(runsFactices{}, &frappeurFactice{}, nil, ""); err == nil {
 		t.Fatal("un composeur sans adresse git a été construit")
 	}
 }
@@ -206,7 +206,7 @@ func TestUneAdresseGitAbsenteEchoueAuDemarrage(t *testing.T) {
 // cause.
 func TestUneFrappeEnEchecNeLivrePasDOrdreMuet(t *testing.T) {
 	f := &frappeurFactice{err: errors.New("secret indisponible")}
-	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, f, "https://git.invalid")
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, f, nil, "https://git.invalid")
 
 	_, err := b.OrderFor(t.Context(), 1)
 	if err == nil {
@@ -214,5 +214,88 @@ func TestUneFrappeEnEchecNeLivrePasDOrdreMuet(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), runValide().RunRef) {
 		t.Errorf("le message ne nomme pas le run : %v", err)
+	}
+}
+
+// --- la clé d'accès (ADR-0020) ---
+
+// emetteurFactice retient ce qu'on lui a demandé d'émettre.
+type emetteurFactice struct {
+	users []string
+	envs  []string
+	cle   string
+	err   error
+}
+
+func (e *emetteurFactice) Issue(_ context.Context, user, env string, _ []string) (core.AccessKey, error) {
+	e.users = append(e.users, user)
+	e.envs = append(e.envs, env)
+	if e.err != nil {
+		return core.AccessKey{}, e.err
+	}
+	return core.NewAccessKey([]byte(e.cle), time.Time{}), nil
+}
+
+func TestLOrdrePorteLaCleDeSonEnvironnement(t *testing.T) {
+	e := &emetteurFactice{cle: "-----BEGIN OPENSSH PRIVATE KEY-----"}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if string(ordre.SSHKey.Reveal()) != e.cle {
+		t.Errorf("clé de l'ordre = %q", ordre.SSHKey.Reveal())
+	}
+	// La clé demandée est celle de l'ENVIRONNEMENT du run, pas d'un autre.
+	if len(e.envs) != 1 || e.envs[0] != "prod" {
+		t.Errorf("environnements demandés = %v, attendu [prod]", e.envs)
+	}
+	// `user` est passé même si la v1 l'ignore : c'est lui qui rendra
+	// l'adaptateur Vault indolore (ADR-0020).
+	if len(e.users) != 1 || e.users[0] == "" {
+		t.Errorf("utilisateurs demandés = %v, il doit être transmis", e.users)
+	}
+}
+
+// Un environnement sans clé n'est PAS une erreur : un playbook en
+// `connection: local` n'en a besoin d'aucune, et c'est le cas de tous les runs
+// du produit jusqu'ici.
+func TestUnEnvironnementSansCleNEmpechePasLeRun(t *testing.T) {
+	e := &emetteurFactice{err: core.ErrNoKey}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor a échoué faute de clé : %v", err)
+	}
+	if len(ordre.SSHKey) != 0 {
+		t.Errorf("clé = %q, attendu vide", ordre.SSHKey.Reveal())
+	}
+}
+
+// Une PANNE du magasin de clés, en revanche, doit faire échouer la livraison :
+// livrer un ordre sans clé parce que Kubernetes n'a pas répondu produirait un
+// `unreachable` qui accuserait la machine cible.
+func TestUnePanneDuMagasinDeClesFaitEchouerLaLivraison(t *testing.T) {
+	e := &emetteurFactice{err: errors.New("API Kubernetes indisponible")}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+
+	if _, err := b.OrderFor(t.Context(), 1); err == nil {
+		t.Fatal("la livraison a réussi malgré un magasin de clés en panne")
+	}
+}
+
+// Sans magasin du tout — un déploiement sans accès au cluster — l'ordre part
+// sans clé plutôt que d'échouer.
+func TestSansMagasinDeClesLOrdrePartQuandMeme(t *testing.T) {
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if len(ordre.SSHKey) != 0 {
+		t.Errorf("clé = %q, attendu vide", ordre.SSHKey.Reveal())
 	}
 }

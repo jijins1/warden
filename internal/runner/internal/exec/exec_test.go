@@ -297,3 +297,62 @@ func TestUneAnnulationInterromptLeRun(t *testing.T) {
 		t.Fatal("le pilote n'a pas rendu la main après annulation")
 	}
 }
+
+// --- la clé d'accès (ADR-0020) ---
+
+// Elle va dans `<pdd>/env/ssh_key`, et c'est MESURÉ : ansible-runner l'y trouve,
+// démarre un ssh-agent, l'y charge et EFFACE le fichier avant de lancer le
+// playbook. Écrire ailleurs — un fichier plus `--private-key` — la laisserait
+// lisible par du code arbitraire pendant tout le run.
+func TestLaCleDAccesEstPoseeLaOuAnsibleRunnerLaCherche(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	const cle = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n"
+	cfg.SSHKey = []byte(cle)
+
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	chemin := filepath.Join(cfg.PrivateDataDir, "env", "ssh_key")
+	brut, err := os.ReadFile(chemin) // #nosec G304 -- chemin construit par le test
+	if err != nil {
+		t.Fatalf("la clé n'a pas été posée : %v", err)
+	}
+	if string(brut) != cle {
+		t.Errorf("la clé a été réécrite : %q", brut)
+	}
+
+	// Le fichier existe le temps que le playbook démarre, et le playbook tourne
+	// sous le même utilisateur : il ne doit pas être lisible plus largement que
+	// nécessaire.
+	fi, err := os.Stat(chemin)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("permissions = %v, attendu 0600", fi.Mode().Perm())
+	}
+	if rep, err := os.Stat(filepath.Dir(chemin)); err != nil {
+		t.Fatalf("Stat du répertoire : %v", err)
+	} else if rep.Mode().Perm() != 0o700 {
+		t.Errorf("permissions du répertoire = %v, attendu 0700", rep.Mode().Perm())
+	}
+}
+
+// Sans clé, RIEN n'est écrit. Un `env/ssh_key` vide ferait démarrer ssh-agent et
+// échouer ssh-add, donc échouer le run entier — alors qu'un run sans clé doit
+// simplement tourner sans clé.
+func TestSansCleAucunFichierNEstPose(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cfg.PrivateDataDir, "env", "ssh_key")); err == nil {
+		t.Error("un fichier de clé a été posé alors qu'il n'y a pas de clé")
+	}
+}

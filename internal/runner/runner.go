@@ -109,10 +109,16 @@ func Run(ctx context.Context, args []string) error {
 // doit encore dire ce qui avait déjà été modifié, ce qui suppose que le canal de
 // remontée existe avant la première tâche et survive à l'échec de la dernière.
 func executer(ctx context.Context, ordre wire.Order, espace, token string) error {
-	// Aucun rédacteur : l'ordre ne porte encore ni `forward_env` ni clé d'accès
-	// (voir `core.OrderBuilder`), donc aucun secret n'est injecté dans ce pod.
-	// La couture de l'ADR-0017 est en place dans `report` et s'appliquera sans
-	// toucher à ce chemin le jour où l'un des deux arrivera.
+	// Aucun rédacteur : l'ordre ne porte pas encore de `forward_env`, donc aucune
+	// variable de playbook n'est injectée dans ce pod. La couture de l'ADR-0017
+	// est en place dans `report` et s'appliquera sans toucher à ce chemin le jour
+	// où elles arriveront.
+	//
+	// La clé d'accès, elle, N'ENTRE PAS dans le jeu à masquer, et c'est la
+	// distinction que l'ADR-0020 pose : les credentials d'accès viennent du
+	// serveur et n'apparaissent jamais dans un résultat de module ni dans un
+	// `--diff`. Ce que l'ADR-0017 masque est l'autre famille — les valeurs que
+	// le playbook rend dans des fichiers.
 	rapporteur, err := report.New(os.Getenv(ingestwire.EnvIngestURL), token, nil)
 	if err != nil {
 		return fmt.Errorf("run %s : remontée des events : %w", ordre.RunRef, err)
@@ -127,6 +133,10 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		Playbook:       ordre.Playbook,
 		Inventory:      ordre.Inventory,
 		Flags:          ordre.Flags,
+		// `Reveal` et non un passage implicite : le nom inconfortable doit se
+		// voir ici, c'est le seul endroit du runner où la clé d'accès sort de
+		// son enveloppe masquée.
+		SSHKey: ordre.SSHKey.Reveal(),
 	})
 	if err != nil {
 		// Le run est clos malgré tout : sans cela il resterait `running` pour
