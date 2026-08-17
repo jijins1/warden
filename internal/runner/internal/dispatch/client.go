@@ -62,6 +62,16 @@ func New(url, token string) (*Client, error) {
 	}, nil
 }
 
+// Mission est ce qu'un pod reçoit : soit un run, soit un enrôlement.
+//
+// Un type de retour plutôt que deux méthodes, parce que le pod ne sait pas
+// LEQUEL il va recevoir avant de l'avoir reçu — il ouvre un canal et écoute.
+// Exactement UN des deux champs est non nul.
+type Mission struct {
+	Order  *wire.Order
+	Enroll *wire.Enroll
+}
+
 // Await ouvre le canal et attend l'ordre de ce pod.
 //
 // Le canal ne se ROUVRE PAS (ADR-0018) : si la connexion tombe, le pod est perdu
@@ -71,17 +81,17 @@ func New(url, token string) (*Client, error) {
 //
 // Elle rend ErrCanceled si l'annulation arrive avant l'ordre, ce qui est un cas
 // réel : un Ctrl-C pendant le démarrage du pod.
-func (c *Client) Await(ctx context.Context) (wire.Order, error) {
+func (c *Client) Await(ctx context.Context) (Mission, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 	if err != nil {
-		return wire.Order{}, fmt.Errorf("construction de la requête : %w", err)
+		return Mission{}, fmt.Errorf("construction de la requête : %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := c.httpc.Do(req)
 	if err != nil {
-		return wire.Order{}, fmt.Errorf("ouverture du canal de dispatch : %w", err)
+		return Mission{}, fmt.Errorf("ouverture du canal de dispatch : %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -90,25 +100,31 @@ func (c *Client) Await(ctx context.Context) (wire.Order, error) {
 		// doit pas apprendre si un pod a existé ni s'il a été libéré. Le message
 		// d'ici ne peut donc pas être plus précis, et prétendre le contraire
 		// serait trompeur.
-		return wire.Order{}, fmt.Errorf("canal de dispatch refusé (%d)", resp.StatusCode)
+		return Mission{}, fmt.Errorf("canal de dispatch refusé (%d)", resp.StatusCode)
 	}
 
 	dec := wire.NewDecoder(resp.Body)
 	for {
 		msg, err := dec.Next()
 		if err != nil {
-			return wire.Order{}, fmt.Errorf("lecture du canal de dispatch : %w", err)
+			return Mission{}, fmt.Errorf("lecture du canal de dispatch : %w", err)
 		}
 
 		switch msg.Kind {
 		case wire.KindOrder:
 			if msg.Order == nil {
-				return wire.Order{}, errors.New("ordre vide reçu")
+				return Mission{}, errors.New("ordre vide reçu")
 			}
-			return *msg.Order, nil
+			return Mission{Order: msg.Order}, nil
+
+		case wire.KindEnroll:
+			if msg.Enroll == nil {
+				return Mission{}, errors.New("enrôlement vide reçu")
+			}
+			return Mission{Enroll: msg.Enroll}, nil
 
 		case wire.KindCancel:
-			return wire.Order{}, ErrCanceled
+			return Mission{}, ErrCanceled
 
 		default:
 			// Maintien de connexion, ou type ajouté après ce binaire. Le format

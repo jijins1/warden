@@ -86,10 +86,14 @@ func TestLOrdreEstRenduTelQuel(t *testing.T) {
 	})
 
 	c, _ := dispatch.New(url, jetonDeTest)
-	ordre, err := c.Await(t.Context())
+	mission, err := c.Await(t.Context())
 	if err != nil {
 		t.Fatalf("Await : %v", err)
 	}
+	if mission.Order == nil {
+		t.Fatal("la mission ne porte pas d'ordre de run")
+	}
+	ordre := mission.Order
 	if ordre.RunRef != ref {
 		t.Errorf("run_ref %q, attendu %q", ordre.RunRef, ref)
 	}
@@ -98,6 +102,9 @@ func TestLOrdreEstRenduTelQuel(t *testing.T) {
 	}
 	if len(ordre.GitToken) == 0 {
 		t.Error("le jeton de lecture est absent de l'ordre")
+	}
+	if mission.Enroll != nil {
+		t.Error("la mission porte AUSSI un enrôlement : les deux s'excluent")
 	}
 }
 
@@ -121,11 +128,11 @@ func TestLesTramesDeMaintienEtLesTypesInconnusSontIgnores(t *testing.T) {
 	})
 
 	c, _ := dispatch.New(url, jetonDeTest)
-	ordre, err := c.Await(t.Context())
+	mission, err := c.Await(t.Context())
 	if err != nil {
 		t.Fatalf("Await : %v", err)
 	}
-	if ordre.RunRef == "" {
+	if mission.Order == nil || mission.Order.RunRef == "" {
 		t.Error("l'ordre a été perdu au milieu des trames ignorées")
 	}
 }
@@ -245,5 +252,55 @@ func TestUneConfigurationInutilisableEchoueAvantToutAppel(t *testing.T) {
 				t.Fatal("configuration acceptée")
 			}
 		})
+	}
+}
+
+// TestUnOrdreDEnrolementEstDistingueDunRun.
+//
+// Le pod ne sait pas LEQUEL des deux il va recevoir avant de l'avoir reçu : il
+// ouvre un canal et écoute. Confondre les deux ferait matérialiser un commit
+// pour un enrôlement, ou tenter une connexion SSH pour un run.
+func TestUnOrdreDEnrolementEstDistingueDunRun(t *testing.T) {
+	const corps = `{"enroll":{"host":"db-prod-02","address":"10.20.0.42","port":22,` +
+		`"login":"ansible","password":"aHVudGVyMg==","public_key":"ssh-ed25519 AAAA warden-prod"}}`
+
+	url, _ := serveur(t, func(w http.ResponseWriter, f http.Flusher) {
+		_, _ = w.Write([]byte(trame("enroll", corps)))
+		f.Flush()
+	})
+
+	c, _ := dispatch.New(url, jetonDeTest)
+	mission, err := c.Await(t.Context())
+	if err != nil {
+		t.Fatalf("Await : %v", err)
+	}
+	if mission.Enroll == nil {
+		t.Fatal("la mission ne porte pas d'enrôlement")
+	}
+	if mission.Order != nil {
+		t.Error("la mission porte AUSSI un ordre de run : les deux s'excluent")
+	}
+	e := mission.Enroll
+	if e.Host != "db-prod-02" || e.Address != "10.20.0.42" || e.Login != "ansible" {
+		t.Errorf("enrôlement mal lu : %+v", e)
+	}
+	// Le mot de passe voyage en base64 — c'est ce que `Secret` garantit, et ce
+	// qui empêche une valeur multi-ligne de casser une trame SSE.
+	if string(e.Password.Reveal()) != "hunter2" {
+		t.Errorf("mot de passe = %q", e.Password.Reveal())
+	}
+}
+
+// Un enrôlement sans contenu est REFUSÉ plutôt que rendu vide : le runner
+// tenterait sinon une connexion vers une adresse absente.
+func TestUnEnrolementSansContenuEstRefuse(t *testing.T) {
+	url, _ := serveur(t, func(w http.ResponseWriter, f http.Flusher) {
+		_, _ = w.Write([]byte(trame("enroll", `{}`)))
+		f.Flush()
+	})
+
+	c, _ := dispatch.New(url, jetonDeTest)
+	if _, err := c.Await(t.Context()); err == nil {
+		t.Fatal("un enrôlement vide a été accepté")
 	}
 }

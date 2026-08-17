@@ -64,8 +64,8 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 
-	slog.Info("attente de l'ordre de run")
-	ordre, err := canal.Await(ctx)
+	slog.Info("attente de l'ordre")
+	mission, err := canal.Await(ctx)
 	if err != nil {
 		if errors.Is(err, dispatch.ErrCanceled) {
 			// Annulation avant l'ordre : le run a été interrompu pendant le
@@ -79,6 +79,20 @@ func Run(ctx context.Context, args []string) error {
 	// À partir d'ici le pod détient des credentials. Rien de ce qui suit ne les
 	// journalise : le type Secret de l'ADR-0018 les masque à l'impression, et le
 	// respecter ici est ce qui rend cette garantie utile.
+	switch {
+	case mission.Enroll != nil:
+		return enroler(ctx, *mission.Enroll, token)
+	case mission.Order != nil:
+		return jouerLeRun(ctx, *mission.Order, token)
+	default:
+		// Ni l'un ni l'autre : le client a rendu une mission vide, ce qu'il ne
+		// devrait jamais faire. Le dire plutôt que déréférencer.
+		return errors.New("mission reçue sans contenu")
+	}
+}
+
+// jouerLeRun matérialise le code puis exécute le playbook (§5.2).
+func jouerLeRun(ctx context.Context, ordre wire.Order, token string) error {
 	slog.Info("ordre reçu", slog.String("run_ref", ordre.RunRef),
 		slog.String("audit_sha", ordre.AuditSHA))
 

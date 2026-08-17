@@ -33,6 +33,15 @@ const (
 	// aucun run » de « pas encore connecté », et son propre diagnostic de
 	// démarrage deviendrait impossible.
 	KindHello Kind = "hello"
+	// KindEnroll est l'ordre d'enrôlement d'une machine : poser la clé publique
+	// de l'environnement dans son `authorized_keys`.
+	//
+	// Un second genre d'ordre plutôt qu'un champ de plus sur `Order`, parce que
+	// les deux n'ont RIEN en commun : celui-ci ne matérialise aucun commit,
+	// n'exécute aucun playbook, et porte le mot de passe d'un humain là où
+	// l'autre porte un jeton de lecture git. Les fondre obligerait chaque
+	// lecteur à se demander lequel des deux il tient.
+	KindEnroll Kind = "enroll"
 )
 
 // ErrProtocol signale un flux mal formé.
@@ -125,10 +134,51 @@ func (o Order) String() string {
 // GoString masque sous `%#v`, que String ne couvre pas.
 func (o Order) GoString() string { return o.String() }
 
+// Enroll est l'ordre d'enrôlement (§10.2).
+//
+// Il porte le seul credential du produit qui vienne d'un HUMAIN et non du
+// serveur : le mot de passe du compte cible. L'ADR-0020 borne son magasin aux
+// credentials que le serveur ÉMET ; celui-ci ne fait que transiter, par le seul
+// canal conçu pour ça, et n'est persisté nulle part.
+type Enroll struct {
+	// Host est le nom tel que l'inventaire Ansible le nomme, Address l'endroit
+	// où l'on se connecte. Les deux, parce qu'ils ne coïncident pas toujours et
+	// que confondre les deux ferait enrôler une machine pour une autre.
+	Host    string `json:"host"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+
+	// Login est le compte à ouvrir, Password son mot de passe.
+	Login    string `json:"login"`
+	Password Secret `json:"password,omitempty"`
+
+	// PublicKey est la ligne à poser dans `authorized_keys`.
+	PublicKey string `json:"public_key"`
+
+	// HostKey est l'empreinte ATTENDUE, vide au premier contact.
+	//
+	// Quand elle est fournie, un écart fait ÉCHOUER l'enrôlement : c'est le cas
+	// de l'intermédiaire, et le confondre avec une panne réseau serait la pire
+	// confusion possible du produit. Quand elle est vide, la connexion fait
+	// confiance à ce qui répond — et c'est précisément ce que déclarer
+	// l'empreinte à l'avance permet d'éviter.
+	HostKey string `json:"host_key,omitempty"`
+}
+
+// String rend un résumé sans le mot de passe.
+func (e Enroll) String() string {
+	return fmt.Sprintf("enroll(host=%s addr=%s:%d login=%s épinglée=%t)",
+		e.Host, e.Address, e.Port, e.Login, e.HostKey != "")
+}
+
+// GoString masque sous `%#v`, que String ne couvre pas.
+func (e Enroll) GoString() string { return e.String() }
+
 // Message est l'enveloppe d'un message de dispatch.
 type Message struct {
-	Kind  Kind   `json:"-"`
-	Order *Order `json:"order,omitempty"`
+	Kind   Kind    `json:"-"`
+	Order  *Order  `json:"order,omitempty"`
+	Enroll *Enroll `json:"enroll,omitempty"`
 	// Reason accompagne une annulation : « qui, et pourquoi » est ce que le
 	// §6.4 demande d'une terminaison, et un runner qui reçoit un ordre d'arrêt
 	// sans motif ne peut rien en journaliser.
@@ -229,6 +279,9 @@ func (d *Decoder) Next() (Message, error) {
 			m.Kind = kind
 			if m.Kind == KindOrder && m.Order == nil {
 				return Message{}, fmt.Errorf("%w: ordre sans contenu", ErrProtocol)
+			}
+			if m.Kind == KindEnroll && m.Enroll == nil {
+				return Message{}, fmt.Errorf("%w: enrôlement sans contenu", ErrProtocol)
 			}
 			return m, nil
 		}
