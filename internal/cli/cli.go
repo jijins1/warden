@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/client"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
 )
@@ -40,6 +41,10 @@ func Run(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "submit":
 		return commandeSubmit(ctx, args[1:], os.Stdout)
+	case "key":
+		return commandeCle(ctx, args[1:], os.Stdout)
+	case "host":
+		return commandeHote(ctx, args[1:], os.Stdout)
 	case "help", "-h", "--help":
 		return usage()
 	default:
@@ -47,10 +52,32 @@ func Run(ctx context.Context, args []string) error {
 	}
 }
 
-const texteUsage = `warden submit — capture l'état du dépôt et déclare un run
+const texteUsage = `warden — exécution auditée de playbooks Ansible
 
-Usage :
+Lancer un run :
   warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
+
+Administrer les clés d'accès :
+  warden key generate --env <nom>              frappe la paire ; la partie privée
+                                               ne quitte jamais le cluster
+  warden key import   --env <nom> --key-file <chemin> | --key-stdin
+  warden key show     --env <nom>              affiche la clé à poser dans
+                                               les authorized_keys
+  warden key list
+
+Administrer les machines enrôlées :
+  warden host declare -f <fichier.yaml> [--env <nom>]
+  warden host list    [--env <nom>]
+  warden host forget  --env <nom> --host <machine>
+
+Format d'un fichier de déclaration :
+  hosts:
+    - host: db-prod-02        # le nom TEL QUE l'inventaire Ansible le nomme
+      address: 10.20.0.42     # une ADRESSE : c'est là qu'on se connecte
+      login: ansible          # le compte que warden ouvre
+      port: 22                # facultatif
+      host_key: "ssh-ed25519 AAAA..."   # facultatif, mais c'est lui qui
+                                        # protège du premier contact aveugle
 
 Configuration (environnement) :
   WARDEN_SERVER    adresse de l'API du control plane
@@ -117,4 +144,83 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	_, _ = fmt.Fprintf(sortie, "  audit   %s\n", res.AuditSHA)
 	_, _ = fmt.Fprintf(sortie, "  contre  %s\n", res.MainlineSHA)
 	return nil
+}
+
+// apiSeule construit le client pour les commandes qui ne touchent pas à git.
+//
+// `WARDEN_GIT_URL` n'est PAS exigée ici : administrer des clés et des machines ne
+// pousse rien. L'exiger quand même ferait échouer `warden key list` sur une
+// variable qui n'a rien à voir avec ce qu'on demande.
+func apiSeule() (*client.Client, error) {
+	adresse := os.Getenv(EnvServeur)
+	if adresse == "" {
+		return nil, fmt.Errorf("%s doit être définie\n\n%s", EnvServeur, texteUsage)
+	}
+	return client.New(client.Config{BaseURL: adresse, Subject: os.Getenv(EnvSujet)})
+}
+
+func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage : warden key <generate|import|show|list>\n\n%s", texteUsage)
+	}
+
+	fs := flag.NewFlagSet("key", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	env := fs.String("env", "", "environnement")
+	keyFile := fs.String("key-file", "", "clé privée à importer")
+	keyStdin := fs.Bool("key-stdin", false, "lire la clé privée sur l'entrée standard")
+	if err := fs.Parse(args[1:]); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	api, err := apiSeule()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "generate":
+		return admin.PoserCle(ctx, api, admin.OptionsCle{Environment: *env, Generate: true}, sortie)
+	case "import":
+		return admin.PoserCle(ctx, api, admin.OptionsCle{
+			Environment: *env, KeyFile: *keyFile, KeyStdin: *keyStdin,
+		}, sortie)
+	case "show":
+		return admin.MontrerCle(ctx, api, *env, sortie)
+	case "list":
+		return admin.ListerCles(ctx, api, sortie)
+	default:
+		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+	}
+}
+
+func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage : warden host <declare|list|forget>\n\n%s", texteUsage)
+	}
+
+	fs := flag.NewFlagSet("host", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fichier := fs.String("f", "", "fichier de déclaration (YAML ou JSON)")
+	env := fs.String("env", "", "environnement")
+	hote := fs.String("host", "", "machine")
+	if err := fs.Parse(args[1:]); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	api, err := apiSeule()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "declare":
+		return admin.DeclarerHotes(ctx, api, *fichier, *env, sortie)
+	case "list":
+		return admin.ListerHotes(ctx, api, *env, sortie)
+	case "forget":
+		return admin.OublierHote(ctx, api, *env, *hote, sortie)
+	default:
+		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+	}
 }

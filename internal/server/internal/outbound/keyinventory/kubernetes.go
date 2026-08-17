@@ -115,7 +115,7 @@ func (k *Kubernetes) Issue(ctx context.Context, _, environment string, _ []strin
 }
 
 // Import pose une partie privée fournie par un opérateur.
-func (k *Kubernetes) Import(ctx context.Context, environment string, private []byte) (core.KeyDescriptor, error) {
+func (k *Kubernetes) Import(ctx context.Context, environment string, private []byte, by int64) (core.KeyDescriptor, error) {
 	if err := core.ValidateEnvironment(environment); err != nil {
 		return core.KeyDescriptor{}, err
 	}
@@ -128,7 +128,7 @@ func (k *Kubernetes) Import(ctx context.Context, environment string, private []b
 	// l'opérateur nomme souvent son poste, ce qui n'apprend rien à
 	// l'administrateur qui ouvrira l'`authorized_keys` d'une machine.
 	return k.poser(ctx, environment, private,
-		avecCommentaire(publique, environment), empreinte, core.KeyImported)
+		avecCommentaire(publique, environment), empreinte, core.KeyImported, by)
 }
 
 // Generate frappe une paire ed25519.
@@ -140,7 +140,7 @@ func (k *Kubernetes) Import(ctx context.Context, environment string, private []b
 // La partie privée NE QUITTE JAMAIS le cluster : elle est frappée ici, écrite
 // dans le Secret, et rendue à personne. C'est ce qui distingue ce chemin de
 // l'import.
-func (k *Kubernetes) Generate(ctx context.Context, environment string) (core.KeyDescriptor, error) {
+func (k *Kubernetes) Generate(ctx context.Context, environment string, by int64) (core.KeyDescriptor, error) {
 	if err := core.ValidateEnvironment(environment); err != nil {
 		return core.KeyDescriptor{}, err
 	}
@@ -164,7 +164,7 @@ func (k *Kubernetes) Generate(ctx context.Context, environment string) (core.Key
 		pem.EncodeToMemory(bloc),
 		avecCommentaire(ligneAutorisee(sshPub), environment),
 		ssh.FingerprintSHA256(sshPub),
-		core.KeyGenerated)
+		core.KeyGenerated, by)
 }
 
 // Describe rend ce qu'on peut dire d'une clé sans la révéler.
@@ -188,7 +188,7 @@ func (k *Kubernetes) Describe(ctx context.Context, environment string) (core.Key
 // L'inverse — Secret écrit, catalogue non — laisse une clé privée orpheline :
 // inerte, invisible, et remplacée au prochain essai.
 func (k *Kubernetes) poser(ctx context.Context, environment string,
-	privee []byte, publique, empreinte string, origine core.KeyOrigin,
+	privee []byte, publique, empreinte string, origine core.KeyOrigin, by int64,
 ) (core.KeyDescriptor, error) {
 	nom := core.SecretNameFor(environment)
 
@@ -224,6 +224,7 @@ func (k *Kubernetes) poser(ctx context.Context, environment string,
 		Fingerprint: empreinte,
 		SecretName:  nom,
 		Origin:      origine,
+		CreatedBy:   by,
 	}
 	if err := k.catalogue.SaveKey(ctx, d); err != nil {
 		return core.KeyDescriptor{}, err

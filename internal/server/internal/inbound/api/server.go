@@ -92,6 +92,17 @@ type Deps struct {
 	// que le control plane CONSTATE — le pod existe — et non sur la parole du
 	// pod, qui est du code hostile.
 	Running core.RunStateWriter
+
+	// Keys et KeyStore servent l'administration des clés d'accès (ADR-0020).
+	// Facultatifs, et séparés : lire un descripteur ne demande que PostgreSQL,
+	// poser une clé demande en plus l'accès au cluster. Un déploiement sans
+	// Kubernetes peut donc consulter l'inventaire sans pouvoir le modifier.
+	Keys     core.KeyCatalog
+	KeyStore core.KeyStore
+
+	// Hosts est l'inventaire des machines enrôlées (§10.2). Facultatif de
+	// même : sans lui l'administration répond 501 et le reste fonctionne.
+	Hosts core.HostCatalog
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -154,6 +165,21 @@ func (a *Server) Run(ctx context.Context) error {
 	// code.
 	router.HandleFunc("GET /admin/repos", a.HandleListRepos)
 	router.HandleFunc("PUT /admin/repos/{repo}", a.HandlePutRepo)
+
+	// Les clés d'accès (ADR-0020) et l'inventaire des machines (§10.2).
+	//
+	// Sous `/admin` comme les dépôts, et pas seulement par symétrie : la liste
+	// des environnements et celle des machines sont une carte de
+	// l'organisation. `adminOuRien` y répond 404 plutôt que 403.
+	router.HandleFunc("GET /admin/keys", a.HandleListKeys)
+	router.HandleFunc("GET /admin/keys/{environment}", a.HandleGetKey)
+	router.HandleFunc("PUT /admin/keys/{environment}", a.HandlePutKey)
+
+	// `/admin/hosts` et non `/hosts` : `GET /hosts/{host}/runs` existe déjà et
+	// sert la vue d'audit par machine du §6.5. Deux surfaces, deux publics.
+	router.HandleFunc("GET /admin/hosts", a.HandleListHosts)
+	router.HandleFunc("PUT /admin/hosts", a.HandleDeclareHosts)
+	router.HandleFunc("DELETE /admin/hosts/{environment}/{host}", a.HandleForgetHost)
 
 	// Apply authentication middleware to all routes
 	a.srv.Handler = a.AuthnMiddleware(router)

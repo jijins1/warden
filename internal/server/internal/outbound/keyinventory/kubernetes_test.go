@@ -106,7 +106,7 @@ func clePrivee(t *testing.T, phrase string) []byte {
 func TestUneCleFrappeeEstUtilisableDesLesDeuxCotes(t *testing.T) {
 	k, client, cat := monter(t)
 
-	d, err := k.Generate(t.Context(), "prod")
+	d, err := k.Generate(t.Context(), "prod", 7)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestUneCleFrappeeEstUtilisableDesLesDeuxCotes(t *testing.T) {
 func TestLesDeuxMoitiesFormentUnePaire(t *testing.T) {
 	k, client, _ := monter(t)
 
-	d, err := k.Generate(t.Context(), "prod")
+	d, err := k.Generate(t.Context(), "prod", 7)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestUneCleImporteeEstRelueEtNommee(t *testing.T) {
 	k, client, _ := monter(t)
 
 	privee := clePrivee(t, "")
-	d, err := k.Import(t.Context(), "staging", privee)
+	d, err := k.Import(t.Context(), "staging", privee, 7)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestUneCleImporteeEstRelueEtNommee(t *testing.T) {
 func TestIssueRendLaPartiePriveeDeLEnvironnement(t *testing.T) {
 	k, client, _ := monter(t)
 
-	if _, err := k.Generate(t.Context(), "prod"); err != nil {
+	if _, err := k.Generate(t.Context(), "prod", 7); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 
@@ -226,7 +226,7 @@ func TestIssueRendLaPartiePriveeDeLEnvironnement(t *testing.T) {
 func TestUneCleAPhraseSecreteEstRefuseeALImport(t *testing.T) {
 	k, client, cat := monter(t)
 
-	_, err := k.Import(t.Context(), "prod", clePrivee(t, "hunter2"))
+	_, err := k.Import(t.Context(), "prod", clePrivee(t, "hunter2"), 7)
 	if !errors.Is(err, keyinventory.ErrPassphrase) {
 		t.Fatalf("erreur = %v, attendu ErrPassphrase", err)
 	}
@@ -250,7 +250,7 @@ func TestUneCleIllisibleEstRefusee(t *testing.T) {
 	}
 	for nom, brut := range cas {
 		t.Run(nom, func(t *testing.T) {
-			if _, err := k.Import(t.Context(), "prod", brut); err == nil {
+			if _, err := k.Import(t.Context(), "prod", brut, 7); err == nil {
 				t.Fatal("accepté à tort")
 			}
 		})
@@ -265,7 +265,7 @@ func TestUnEnvironnementInutilisableCommeNomEstRefuse(t *testing.T) {
 
 	for _, env := range []string{"", "PROD", "prod.eu", "prod/eu", "-prod", "prod_eu", strings.Repeat("p", 56)} {
 		t.Run(fmt.Sprintf("%q", env), func(t *testing.T) {
-			if _, err := k.Generate(t.Context(), env); err == nil {
+			if _, err := k.Generate(t.Context(), env, 7); err == nil {
 				t.Fatal("accepté à tort")
 			}
 			if _, err := k.Issue(t.Context(), "alice", env, nil); err == nil {
@@ -309,11 +309,11 @@ func TestUnSecretVideNestPasPrisPourUneCle(t *testing.T) {
 func TestReposerUneCleRemplaceLAncienne(t *testing.T) {
 	k, client, _ := monter(t)
 
-	avant, err := k.Generate(t.Context(), "prod")
+	avant, err := k.Generate(t.Context(), "prod", 7)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	apres, err := k.Generate(t.Context(), "prod")
+	apres, err := k.Generate(t.Context(), "prod", 7)
 	if err != nil {
 		t.Fatalf("Generate (rotation): %v", err)
 	}
@@ -349,7 +349,7 @@ func TestReposerUneCleRemplaceLAncienne(t *testing.T) {
 func TestLaClePriveeEstMasqueeALImpression(t *testing.T) {
 	k, _, _ := monter(t)
 
-	if _, err := k.Generate(t.Context(), "prod"); err != nil {
+	if _, err := k.Generate(t.Context(), "prod", 7); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	cle, err := k.Issue(t.Context(), "alice", "prod", nil)
@@ -413,7 +413,28 @@ func TestUnCatalogueEnEchecFaitEchouerLaPose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := k.Generate(t.Context(), "prod"); err == nil {
+	if _, err := k.Generate(t.Context(), "prod", 7); err == nil {
 		t.Fatal("la pose a réussi malgré un catalogue en échec")
+	}
+}
+
+// L'auteur est retenu : la clé d'un environnement décide de ce qui peut joindre
+// la production, donc savoir qui l'a posée est du même ordre que savoir qui a
+// lancé un run.
+func TestLAuteurDeLaPoseEstRetenu(t *testing.T) {
+	k, _, cat := monter(t)
+
+	if _, err := k.Generate(t.Context(), "prod", 42); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if cat.par["prod"].CreatedBy != 42 {
+		t.Errorf("créée par = %d, attendu 42", cat.par["prod"].CreatedBy)
+	}
+
+	if _, err := k.Import(t.Context(), "prod", clePrivee(t, ""), 7); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if cat.par["prod"].CreatedBy != 7 {
+		t.Errorf("après rotation, créée par = %d, attendu 7", cat.par["prod"].CreatedBy)
 	}
 }

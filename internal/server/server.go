@@ -190,6 +190,7 @@ func runAPI(ctx context.Context) error {
 		dispatchAddr string
 		starter      core.RunLauncher
 		keys         core.KeyIssuer
+		keyStore     core.KeyStore
 
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
@@ -284,7 +285,7 @@ func runAPI(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			keys = ki
+			keys, keyStore = ki, ki
 		}
 
 		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
@@ -323,6 +324,13 @@ func runAPI(ctx context.Context) error {
 		Grants:    grants,
 		Starter:   starter,
 		Running:   st,
+		// Le catalogue et l'inventaire ne demandent que PostgreSQL : ils sont
+		// branchés toujours. Le MAGASIN de clés demande le cluster, donc il
+		// suit la même condition que le démarrage des runs — sans lui, poser
+		// une clé répond 501 et la consulter fonctionne.
+		Keys:     st,
+		Hosts:    st,
+		KeyStore: keyStore,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)

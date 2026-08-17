@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -871,6 +872,212 @@ func TestLIngestionNeVoitPasLesCles(t *testing.T) {
 		"poser une clé":     `INSERT INTO ssh_key (environment, public_key, fingerprint, secret_name, origin) VALUES ('x', 'ssh-ed25519 A x', 'SHA256:a', 'w', 'generated')`,
 		"effacer une clé":   `DELETE FROM ssh_key`,
 		"détourner une clé": `UPDATE ssh_key SET secret_name = 'ailleurs'`,
+	}
+	for nom, q := range interdits {
+		if _, err := restreint.Exec(ctx, q); err == nil {
+			t.Errorf("le rôle d'ingestion peut %s — le GRANT est trop large", nom)
+		}
+	}
+}
+
+// --- l'inventaire des machines (§10.2, migration 00008) ---
+
+func machine(env, nom, adresse string) core.ManagedHost {
+	return core.ManagedHost{
+		Name: nom, Environment: env,
+		Address: netip.MustParseAddr(adresse),
+		Port:    core.PortSSHParDefaut, Login: "ansible",
+		Mode: core.HostDeclared,
+	}
+}
+
+func TestUneMachineEstEnregistreeEtRelue(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	h := machine("prod", "db-prod-02", "10.20.0.42")
+	h.HostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemple"
+	if err := s.SaveHost(ctx, h); err != nil {
+		t.Fatalf("SaveHost: %v", err)
+	}
+
+	relue, err := s.HostByName(ctx, "prod", "db-prod-02")
+	if err != nil {
+		t.Fatalf("HostByName: %v", err)
+	}
+	// L'adresse fait l'aller-retour SANS le masque que le type `inet` ajoute :
+	// `10.20.0.42/32` ne se reconnecte à rien.
+	if relue.Address.String() != "10.20.0.42" {
+		t.Errorf("adresse relue = %q", relue.Address)
+	}
+	if relue.HostKey != h.HostKey || relue.Login != "ansible" || relue.Port != 22 {
+		t.Errorf("machine relue = %+v", relue)
+	}
+	if relue.EnrolledAt.IsZero() {
+		t.Error("enrolled_at non posé")
+	}
+
+	if _, err := s.HostByName(ctx, "prod", "inconnue"); !errors.Is(err, core.ErrNoHost) {
+		t.Errorf("erreur = %v, attendu core.ErrNoHost", err)
+	}
+}
+
+// IPv6 aussi : un découpage de chaîne à la main aurait cassé dessus, et c'est
+// pour ça que la conversion est faite par `host()` côté base.
+func TestUneAdresseIPv6TraverseIntacte(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SaveHost(ctx, machine("prod", "v6", "2001:db8::42")); err != nil {
+		t.Fatalf("SaveHost: %v", err)
+	}
+	relue, err := s.HostByName(ctx, "prod", "v6")
+	if err != nil {
+		t.Fatalf("HostByName: %v", err)
+	}
+	if relue.Address.String() != "2001:db8::42" {
+		t.Errorf("adresse relue = %q", relue.Address)
+	}
+}
+
+// Redéclarer une machine est le geste NORMAL — on corrige une adresse, on
+// réenrôle après réinstallation. Mais `enrolled_at` ne bouge pas : la question
+// posée en incident est « depuis quand est-elle dans le périmètre », pas
+// « quand a-t-on corrigé sa fiche ».
+func TestRedeclarerUneMachineNeRedatePasSonEnrolement(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SaveHost(ctx, machine("prod", "db", "10.0.0.1")); err != nil {
+		t.Fatalf("SaveHost: %v", err)
+	}
+	avant, _ := s.HostByName(ctx, "prod", "db")
+
+	corrigee := machine("prod", "db", "10.0.0.99")
+	corrigee.Login = "deploy"
+	if err := s.SaveHost(ctx, corrigee); err != nil {
+		t.Fatalf("SaveHost (correction): %v", err)
+	}
+
+	apres, err := s.HostByName(ctx, "prod", "db")
+	if err != nil {
+		t.Fatalf("HostByName: %v", err)
+	}
+	if apres.Address.String() != "10.0.0.99" || apres.Login != "deploy" {
+		t.Errorf("la correction n'a pas pris : %+v", apres)
+	}
+	if !apres.EnrolledAt.Equal(avant.EnrolledAt) {
+		t.Errorf("enrolled_at redaté : %v puis %v", avant.EnrolledAt, apres.EnrolledAt)
+	}
+
+	toutes, err := s.ListHosts(ctx, "prod")
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	if len(toutes) != 1 {
+		t.Errorf("%d machines, attendu 1 : la redéclaration a créé un doublon", len(toutes))
+	}
+}
+
+// Le même nom dans DEUX environnements est légitime — `db` en staging et `db`
+// en prod sont deux machines. Le même nom DANS un environnement ne l'est pas.
+func TestLeMemeNomVitDansDeuxEnvironnements(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	for _, env := range []string{"prod", "staging"} {
+		if err := s.SaveHost(ctx, machine(env, "db", "10.0.0.1")); err != nil {
+			t.Fatalf("SaveHost (%s): %v", env, err)
+		}
+	}
+
+	toutes, err := s.ListHosts(ctx, "")
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	if len(toutes) != 2 {
+		t.Fatalf("%d machines, attendu 2", len(toutes))
+	}
+	// Triées par (environnement, nom) : deux exécutions se comparent.
+	if toutes[0].Environment != "prod" || toutes[1].Environment != "staging" {
+		t.Errorf("ordre inattendu : %s puis %s", toutes[0].Environment, toutes[1].Environment)
+	}
+}
+
+func TestOublierUneMachine(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SaveHost(ctx, machine("prod", "db", "10.0.0.1")); err != nil {
+		t.Fatalf("SaveHost: %v", err)
+	}
+	if err := s.ForgetHost(ctx, "prod", "db"); err != nil {
+		t.Fatalf("ForgetHost: %v", err)
+	}
+	if _, err := s.HostByName(ctx, "prod", "db"); !errors.Is(err, core.ErrNoHost) {
+		t.Errorf("la machine est encore là : %v", err)
+	}
+	// Oublier ce qui n'existe pas le DIT plutôt que de réussir en silence : un
+	// script qui boucle sur des noms doit pouvoir voir sa faute de frappe.
+	if err := s.ForgetHost(ctx, "prod", "db"); !errors.Is(err, core.ErrNoHost) {
+		t.Errorf("erreur = %v, attendu core.ErrNoHost", err)
+	}
+}
+
+// L'ingestion écrit des events. Elle n'a AUCUNE raison de connaître la flotte.
+func TestLIngestionNeVoitPasLesMachines(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	admin := connect(t, dsn)
+	defer admin.Close(ctx)
+	for _, q := range []string{
+		`CREATE ROLE ingest_login LOGIN PASSWORD 'ingest'`,
+		`GRANT warden_ingest TO ingest_login`,
+	} {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatalf("préparation du rôle: %v", err)
+		}
+	}
+
+	restreint := connect(t, swapUser(dsn, "ingest_login", "ingest"))
+	defer restreint.Close(ctx)
+
+	interdits := map[string]string{
+		"lire la flotte":     `SELECT count(*) FROM managed_host`,
+		"enrôler":            `INSERT INTO managed_host (name, environment, address, login, enrollment_mode) VALUES ('x','prod','10.0.0.1','ansible','declared')`,
+		"désépingler":        `UPDATE managed_host SET host_key = NULL`,
+		"vider l'inventaire": `DELETE FROM managed_host`,
 	}
 	for nom, q := range interdits {
 		if _, err := restreint.Exec(ctx, q); err == nil {

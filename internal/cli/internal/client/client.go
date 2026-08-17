@@ -31,6 +31,15 @@ var ErrRepoNonConfigure = errors.New("ce dépôt n'a pas encore de configuration
 // ErrAuthentification : le serveur n'a pas reconnu l'appelant.
 var ErrAuthentification = errors.New("authentification refusée par le serveur")
 
+// ErrIntrouvable : le serveur a répondu 404 sur la surface d'ADMINISTRATION.
+//
+// Le message est délibérément ambigu parce que la réalité l'est : cette surface
+// répond 404 à qui n'est pas administrateur, précisément pour ne pas confirmer
+// son existence à un utilisateur ordinaire. Affirmer « cette clé n'existe pas »
+// serait donc faux une fois sur deux, et enverrait l'utilisateur chercher au
+// mauvais endroit.
+var ErrIntrouvable = errors.New("introuvable, ou hors de votre portée")
+
 // Config configure le client.
 type Config struct {
 	// BaseURL est l'adresse de l'API. C'est la SEULE valeur que la CLI a le
@@ -183,6 +192,11 @@ func (c *Client) appeler(ctx context.Context, methode, chemin string, corps, sor
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusNotImplemented:
 		return fmt.Errorf("%w (%s)", ErrAuthentification, strings.TrimSpace(string(brut)))
 	case resp.StatusCode == http.StatusNotFound:
+		// Deux 404 de natures différentes, et les confondre égarerait. Sur
+		// `/admin`, il ne dit RIEN de plus que « pas pour vous, ou pas là ».
+		if strings.HasPrefix(chemin, "/admin/") {
+			return fmt.Errorf("%w", ErrIntrouvable)
+		}
 		return fmt.Errorf("%w : %s", ErrRepoNonConfigure, strings.TrimSpace(string(brut)))
 	case resp.StatusCode >= 400:
 		// Le corps est repris tel quel : ces messages sont rédigés côté serveur
@@ -197,4 +211,112 @@ func (c *Client) appeler(ctx context.Context, methode, chemin string, corps, sor
 		}
 	}
 	return nil
+}
+
+// --- administration : clés d'accès et machines enrôlées ---
+
+// Key est ce qu'on peut dire d'une clé sans la révéler.
+//
+// La partie PRIVÉE n'y figure pas : le serveur ne la rend à personne. Ce que la
+// CLI affiche est la partie publique, qui est faite pour être copiée dans un
+// `authorized_keys`, et l'empreinte, qui est faite pour être comparée.
+type Key struct {
+	Environment string `json:"environment"`
+	PublicKey   string `json:"public_key"`
+	Fingerprint string `json:"fingerprint"`
+	Origin      string `json:"origin"`
+	CreatedAt   string `json:"created_at"`
+	RotatedAt   string `json:"rotated_at,omitempty"`
+}
+
+// PutKey pose la clé d'un environnement.
+//
+// Les deux modes sont exclusifs : soit `private` porte une clé existante, soit
+// `generate` demande au serveur de la frapper. La partie privée ne revient
+// jamais.
+type PutKey struct {
+	PrivateKey string `json:"private_key,omitempty"`
+	Generate   bool   `json:"generate,omitempty"`
+}
+
+// SetKey pose ou remplace la clé d'un environnement.
+//
+// Remplacer EST la rotation, et c'est le seul mécanisme de révocation dont le
+// produit dispose (ADR-0020).
+func (c *Client) SetKey(ctx context.Context, environment string, p PutKey) (Key, error) {
+	var out Key
+	err := c.appeler(ctx, http.MethodPut, "/admin/keys/"+url.PathEscape(environment), p, &out)
+	return out, err
+}
+
+// GetKey rend le descripteur d'une clé.
+func (c *Client) GetKey(ctx context.Context, environment string) (Key, error) {
+	var out Key
+	err := c.appeler(ctx, http.MethodGet, "/admin/keys/"+url.PathEscape(environment), nil, &out)
+	return out, err
+}
+
+// ListKeys rend les descripteurs de toutes les clés.
+func (c *Client) ListKeys(ctx context.Context) ([]Key, error) {
+	var out []Key
+	err := c.appeler(ctx, http.MethodGet, "/admin/keys", nil, &out)
+	return out, err
+}
+
+// Host est le formalisme d'une machine enrôlée, tel qu'il circule.
+//
+// L'adresse est obligatoire : c'est là que l'enrôlement se connecte, et un nom
+// d'hôte n'en tient pas lieu — dépendre d'une résolution faite dans le pod
+// ferait enrôler une machine que l'opérateur croyait désigner.
+type Host struct {
+	Name        string `json:"host"        yaml:"host"`
+	Environment string `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Address     string `json:"address"     yaml:"address"`
+	Port        int    `json:"port,omitempty" yaml:"port,omitempty"`
+	Login       string `json:"login"       yaml:"login"`
+	HostKey     string `json:"host_key,omitempty" yaml:"host_key,omitempty"`
+
+	// Renseignés par le serveur, jamais lus d'un fichier de déclaration.
+	Mode       string `json:"mode,omitempty"        yaml:"-"`
+	EnrolledAt string `json:"enrolled_at,omitempty" yaml:"-"`
+}
+
+// Inventory est le document que `warden host declare` envoie.
+type Inventory struct {
+	Hosts []Host `json:"hosts" yaml:"hosts"`
+}
+
+// DeclareHosts enregistre des machines déclarées par un opérateur.
+//
+// Une seule requête pour tout le document : une flotte se déclare d'un fichier,
+// et N requêtes laisseraient un inventaire à moitié appliqué sur la première
+// erreur.
+func (c *Client) DeclareHosts(ctx context.Context, environment string, inv Inventory) ([]Host, error) {
+	chemin := "/admin/hosts"
+	if environment != "" {
+		chemin += "?environment=" + url.QueryEscape(environment)
+	}
+	var out []Host
+	err := c.appeler(ctx, http.MethodPut, chemin, inv, &out)
+	return out, err
+}
+
+// ListHosts rend l'inventaire, filtré par environnement quand il est donné.
+func (c *Client) ListHosts(ctx context.Context, environment string) ([]Host, error) {
+	chemin := "/admin/hosts"
+	if environment != "" {
+		chemin += "?environment=" + url.QueryEscape(environment)
+	}
+	var out []Host
+	err := c.appeler(ctx, http.MethodGet, chemin, nil, &out)
+	return out, err
+}
+
+// ForgetHost retire une machine de l'inventaire.
+//
+// Elle ne retire RIEN de la machine : sa clé publique reste dans son
+// `authorized_keys`. L'appelant doit le dire à l'utilisateur.
+func (c *Client) ForgetHost(ctx context.Context, environment, name string) error {
+	return c.appeler(ctx, http.MethodDelete,
+		"/admin/hosts/"+url.PathEscape(environment)+"/"+url.PathEscape(name), nil, nil)
 }

@@ -151,10 +151,15 @@ type KeyStore interface {
 	// `ssh-add` avant de lancer le playbook ; une clé protégée ferait attendre
 	// une saisie qui ne viendra jamais, et le run resterait bloqué jusqu'à
 	// `activeDeadlineSeconds`.
-	Import(ctx context.Context, environment string, private []byte) (KeyDescriptor, error)
+	//
+	// `by` est l'administrateur, et il est exigé pour la même raison que sur la
+	// configuration d'un dépôt : la clé d'un environnement décide de ce qui peut
+	// joindre la production, donc savoir qui l'a posée est du même ordre que
+	// savoir qui a lancé un run.
+	Import(ctx context.Context, environment string, private []byte, by int64) (KeyDescriptor, error)
 
 	// Generate frappe une paire. La partie privée ne quitte jamais le cluster.
-	Generate(ctx context.Context, environment string) (KeyDescriptor, error)
+	Generate(ctx context.Context, environment string, by int64) (KeyDescriptor, error)
 
 	// Describe rend ce qu'on peut dire d'une clé sans la révéler. Erreur
 	// enveloppant ErrNoKey quand l'environnement n'en a pas.
