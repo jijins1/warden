@@ -8,9 +8,9 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/jijins1/warden/internal/cli/internal/client"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
@@ -24,10 +24,14 @@ type OptionsCle struct {
 	// quitte alors jamais le cluster, ce qui en fait le chemin à préférer.
 	Generate bool
 
-	// KeyFile et KeyStdin désignent une clé EXISTANTE à importer. Exclusifs
-	// entre eux et avec Generate.
-	KeyFile  string
-	KeyStdin bool
+	// Cle désigne une clé EXISTANTE à importer, et d'où elle vient. Exclusive
+	// avec Generate.
+	//
+	// Un `*prompt.Source` et non trois champs : la décision « fichier, entrée
+	// standard, ou invite » est la même pour toutes les valeurs sensibles du
+	// produit — le mot de passe d'un enrôlement, celui de `become` demain — et
+	// elle est portée une fois.
+	Cle *prompt.Source
 }
 
 // PoserCle importe ou frappe la clé d'un environnement.
@@ -41,23 +45,17 @@ func PoserCle(ctx context.Context, api *client.Client, o OptionsCle, sortie io.W
 		return fmt.Errorf("--env est requis")
 	}
 
-	nb := 0
-	for _, choisi := range []bool{o.Generate, o.KeyFile != "", o.KeyStdin} {
-		if choisi {
-			nb++
-		}
-	}
-	switch nb {
-	case 1:
-	case 0:
-		return fmt.Errorf("choisir --generate, --key-file <chemin> ou --key-stdin")
-	default:
-		return fmt.Errorf("--generate, --key-file et --key-stdin s'excluent")
+	fournie := o.Cle != nil && o.Cle.Fournie()
+	switch {
+	case o.Generate && fournie:
+		return errors.New("--generate et l'import d'une clé existante s'excluent")
+	case !o.Generate && !fournie:
+		return errors.New("choisir --generate, --key-file <chemin> ou --key-stdin")
 	}
 
 	p := client.PutKey{Generate: o.Generate}
 	if !o.Generate {
-		secret, err := lireCle(o)
+		secret, err := o.Cle.Lire(ctx)
 		if err != nil {
 			return err
 		}
@@ -77,22 +75,6 @@ func PoserCle(ctx context.Context, api *client.Client, o OptionsCle, sortie io.W
 	_, _ = fmt.Fprintf(sortie, "\nÀ poser dans l'authorized_keys de chaque machine de « %s » :\n\n  %s\n",
 		o.Environment, cle.PublicKey)
 	return nil
-}
-
-// lireCle lit la partie privée, jamais depuis argv.
-//
-// La ligne de commande d'un processus est lisible par tout utilisateur de la
-// machine : il n'y a donc pas de `--key <valeur>`, et il n'y en aura pas.
-func lireCle(o OptionsCle) (prompt.Secret, error) {
-	if o.KeyStdin {
-		return prompt.ReadAll(os.Stdin)
-	}
-	f, err := os.Open(o.KeyFile) // #nosec G304 -- chemin fourni par l'opérateur, c'est l'objet de la commande
-	if err != nil {
-		return nil, fmt.Errorf("lecture de la clé : %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	return prompt.ReadAll(f)
 }
 
 // MontrerCle affiche le descripteur d'un environnement.

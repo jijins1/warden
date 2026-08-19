@@ -17,6 +17,7 @@ import (
 
 	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/client"
+	"github.com/jijins1/warden/internal/cli/internal/prompt"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
 )
 
@@ -167,8 +168,10 @@ func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
 	fs := flag.NewFlagSet("key", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	env := fs.String("env", "", "environnement")
-	keyFile := fs.String("key-file", "", "clé privée à importer")
-	keyStdin := fs.Bool("key-stdin", false, "lire la clé privée sur l'entrée standard")
+	// Multiligne : une clé PEM ne se saisit pas à l'aveugle, l'utilisateur ne
+	// verrait rien de ce qu'il colle. Le registre le sait et refuse l'invite en
+	// le disant.
+	cle := prompt.DeclarerMultiligne(fs, "key", "la clé privée")
 	if err := fs.Parse(args[1:]); err != nil {
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)
 	}
@@ -182,9 +185,7 @@ func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
 	case "generate":
 		return admin.PoserCle(ctx, api, admin.OptionsCle{Environment: *env, Generate: true}, sortie)
 	case "import":
-		return admin.PoserCle(ctx, api, admin.OptionsCle{
-			Environment: *env, KeyFile: *keyFile, KeyStdin: *keyStdin,
-		}, sortie)
+		return admin.PoserCle(ctx, api, admin.OptionsCle{Environment: *env, Cle: cle}, sortie)
 	case "show":
 		return admin.MontrerCle(ctx, api, *env, sortie)
 	case "list":

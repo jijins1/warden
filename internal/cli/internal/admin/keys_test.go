@@ -11,6 +11,7 @@ import (
 
 	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/client"
+	"github.com/jijins1/warden/internal/cli/internal/prompt"
 )
 
 const clePrivee = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\nBBBB\n-----END OPENSSH PRIVATE KEY-----\n"
@@ -48,7 +49,8 @@ func TestLImportEnvoieLaCleLueDansLeFichier(t *testing.T) {
 
 	var out strings.Builder
 	err := admin.PoserCle(context.Background(), api, admin.OptionsCle{
-		Environment: "prod", KeyFile: ecrireCle(t, clePrivee),
+		Environment: "prod",
+		Cle:         &prompt.Source{Quoi: "la clé privée", Multiligne: true, Fichier: ecrireCle(t, clePrivee)},
 	}, &out)
 	if err != nil {
 		t.Fatalf("PoserCle: %v", err)
@@ -104,11 +106,14 @@ func TestLeCheminDImportNEstJamaisImplicite(t *testing.T) {
 		t.Error("le serveur a été appelé alors que la commande est incomplète")
 	})
 
+	source := func(f string, stdin bool) *prompt.Source {
+		return &prompt.Source{Quoi: "la clé privée", Multiligne: true, Fichier: f, Stdin: stdin}
+	}
 	cas := map[string]admin.OptionsCle{
-		"aucune source":         {Environment: "prod"},
-		"deux sources":          {Environment: "prod", Generate: true, KeyStdin: true},
-		"fichier et génération": {Environment: "prod", Generate: true, KeyFile: "/tmp/x"},
-		"fichier et stdin":      {Environment: "prod", KeyFile: "/tmp/x", KeyStdin: true},
+		"aucune source":         {Environment: "prod", Cle: source("", false)},
+		"génération et stdin":   {Environment: "prod", Generate: true, Cle: source("", true)},
+		"fichier et génération": {Environment: "prod", Generate: true, Cle: source("/tmp/x", false)},
+		"fichier et stdin":      {Environment: "prod", Cle: source("/tmp/x", true)},
 		"sans environnement":    {Generate: true},
 	}
 	for nom, o := range cas {
@@ -126,19 +131,28 @@ func TestUnFichierDeCleAbsentOuVideEstRefuse(t *testing.T) {
 		t.Error("le serveur a été appelé")
 	})
 
+	fichier := func(chemin string) *prompt.Source {
+		return &prompt.Source{Quoi: "la clé privée", Multiligne: true, Fichier: chemin}
+	}
+
 	var out strings.Builder
 	err := admin.PoserCle(context.Background(), api, admin.OptionsCle{
-		Environment: "prod", KeyFile: "/n/existe/pas",
+		Environment: "prod", Cle: fichier("/n/existe/pas"),
 	}, &out)
 	if err == nil {
 		t.Error("un fichier absent a été accepté")
 	}
 
 	err = admin.PoserCle(context.Background(), api, admin.OptionsCle{
-		Environment: "prod", KeyFile: ecrireCle(t, ""),
+		Environment: "prod", Cle: fichier(ecrireCle(t, "")),
 	}, &out)
 	if err == nil {
 		t.Error("un fichier vide a été accepté")
+	}
+	// Le message nomme le FICHIER, pas « saisie vide » : c'est ce que
+	// l'utilisateur doit aller regarder.
+	if err != nil && !strings.Contains(err.Error(), "vide") {
+		t.Errorf("erreur = %v", err)
 	}
 }
 
