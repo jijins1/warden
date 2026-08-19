@@ -317,9 +317,14 @@ func poser(ctx context.Context, client *ssh.Client, publique string) (bool, erro
 	// vient du serveur, mais l'interpoler dans un shell distant ferait de sa
 	// valeur du code. `Setenv` échoue si sshd n'accepte pas la variable, d'où
 	// le repli sur `stdin`.
-	var sortie bytes.Buffer
+	//
+	// DEUX tampons et non un seul partagé : `x/crypto/ssh` recopie la sortie
+	// standard et la sortie d'erreur dans DEUX goroutines, et `bytes.Buffer`
+	// n'est pas sûr en concurrence. Le détecteur de courses l'a trouvé ; à l'œil
+	// nu, ça ressemblait à une économie de variable.
+	var sortie, erreurs bytes.Buffer
 	session.Stdout = &sortie
-	session.Stderr = &sortie
+	session.Stderr = &erreurs
 
 	// `AcceptEnv` est restrictif chez presque tout le monde : la clé passe donc
 	// par l'entrée standard, que rien ne filtre, et le script la lit.
@@ -344,7 +349,9 @@ func poser(ctx context.Context, client *ssh.Client, publique string) (bool, erro
 		if errors.As(err, &sortieErr) && sortieErr.ExitStatus() == CodeDejaPresente {
 			return true, nil
 		}
-		return false, fmt.Errorf("pose de la clé : %w (%s)", err, resume(sortie.String()))
+		// Les deux tampons sont lus APRÈS `Run`, qui attend ses goroutines de
+		// recopie : la lecture est donc ordonnée par rapport aux écritures.
+		return false, fmt.Errorf("pose de la clé : %w (%s)", err, resume(sortie.String()+erreurs.String()))
 
 	case <-time.After(DelaiSession):
 		return false, errors.New("pose de la clé : la machine ne répond plus")
