@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -101,5 +102,33 @@ func TestUneAdresseNonHTTPEstRefusee(t *testing.T) {
 		if _, err := client.New(client.Config{BaseURL: adresse}); err == nil {
 			t.Errorf("adresse acceptée : %q", adresse)
 		}
+	}
+}
+
+// Régression. `JoinPath` échappe le `?` : un filtre partait comme un segment de
+// chemin littéral, et le serveur répondait 404 sur une requête valide. Le
+// symptôme — « introuvable » sur `warden host list --env prod` — n'accusait
+// rien de ce qui était en cause.
+func TestUneQueryNEstPasAvaleeParLeChemin(t *testing.T) {
+	var vuChemin, vuQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vuChemin, vuQuery = r.URL.Path, r.URL.Query().Get("environment")
+		_ = json.NewEncoder(w).Encode([]client.Host{})
+	}))
+	defer srv.Close()
+
+	api, err := client.New(client.Config{BaseURL: srv.URL, Subject: "alice"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := api.ListHosts(t.Context(), "prod"); err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+
+	if vuChemin != "/admin/hosts" {
+		t.Errorf("chemin reçu = %q, attendu /admin/hosts", vuChemin)
+	}
+	if vuQuery != "prod" {
+		t.Errorf("environment reçu = %q, attendu prod", vuQuery)
 	}
 }

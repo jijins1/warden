@@ -165,7 +165,15 @@ func (c *Client) appeler(ctx context.Context, methode, chemin string, corps, sor
 		body = bytes.NewReader(brut)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, methode, c.base.JoinPath(chemin).String(), body)
+	// Le chemin et la QUERY sont séparés avant d'être joints : `JoinPath`
+	// échappe le `?`, ce qui transformait `/admin/hosts?environment=prod` en un
+	// segment de chemin littéral — donc en une route qui n'existe pas. Le
+	// symptôme était un 404 sur un filtre parfaitement valide.
+	cheminSeul, requete, _ := strings.Cut(chemin, "?")
+	u := c.base.JoinPath(cheminSeul)
+	u.RawQuery = requete
+
+	req, err := http.NewRequestWithContext(ctx, methode, u.String(), body)
 	if err != nil {
 		return fmt.Errorf("construction de la requête : %w", err)
 	}
@@ -194,7 +202,7 @@ func (c *Client) appeler(ctx context.Context, methode, chemin string, corps, sor
 	case resp.StatusCode == http.StatusNotFound:
 		// Deux 404 de natures différentes, et les confondre égarerait. Sur
 		// `/admin`, il ne dit RIEN de plus que « pas pour vous, ou pas là ».
-		if strings.HasPrefix(chemin, "/admin/") {
+		if strings.HasPrefix(cheminSeul, "/admin/") {
 			return fmt.Errorf("%w", ErrIntrouvable)
 		}
 		return fmt.Errorf("%w : %s", ErrRepoNonConfigure, strings.TrimSpace(string(brut)))
@@ -319,4 +327,33 @@ func (c *Client) ListHosts(ctx context.Context, environment string) ([]Host, err
 func (c *Client) ForgetHost(ctx context.Context, environment, name string) error {
 	return c.appeler(ctx, http.MethodDelete,
 		"/admin/hosts/"+url.PathEscape(environment)+"/"+url.PathEscape(name), nil, nil)
+}
+
+// NewEnrollment est ce que `warden enroll` déclare.
+//
+// Le mot de passe ne survit PAS à cette requête : le serveur le range dans une
+// consigne éphémère, et la livraison de l'ordre au pod le consomme.
+type NewEnrollment struct {
+	RunRef      string `json:"run_ref"`
+	Environment string `json:"environment"`
+
+	Host    string `json:"host"`
+	Address string `json:"address"`
+	Port    int    `json:"port,omitempty"`
+	Login   string `json:"login"`
+
+	Password string `json:"password"`
+}
+
+// EnrollmentCreated est ce que le serveur a décidé.
+type EnrollmentCreated struct {
+	RunRef string `json:"run_ref"`
+	Pod    string `json:"pod,omitempty"`
+}
+
+// CreateEnrollment déclare et démarre un run d'enrôlement.
+func (c *Client) CreateEnrollment(ctx context.Context, n NewEnrollment) (EnrollmentCreated, error) {
+	var out EnrollmentCreated
+	err := c.appeler(ctx, http.MethodPost, "/admin/enrollments", n, &out)
+	return out, err
 }

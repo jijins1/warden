@@ -18,6 +18,7 @@ import (
 	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/client"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
+	"github.com/jijins1/warden/internal/cli/internal/stream"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
 )
 
@@ -46,6 +47,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeCle(ctx, args[1:], os.Stdout)
 	case "host":
 		return commandeHote(ctx, args[1:], os.Stdout)
+	case "enroll":
+		return commandeEnroler(ctx, args[1:], os.Stdout)
 	case "help", "-h", "--help":
 		return usage()
 	default:
@@ -70,6 +73,13 @@ Administrer les machines enrôlées :
   warden host declare -f <fichier.yaml> [--env <nom>]
   warden host list    [--env <nom>]
   warden host forget  --env <nom> --host <machine>
+
+Enrôler une machine (warden pose la clé lui-même) :
+  warden enroll --env <nom> --host <machine> --address <ip> --login <compte>
+                                               le mot de passe est demandé au
+                                               terminal ; --password-file et
+                                               --password-stdin existent pour
+                                               les usages non interactifs
 
 Format d'un fichier de déclaration :
   hosts:
@@ -224,4 +234,41 @@ func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 	default:
 		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
 	}
+}
+
+func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error {
+	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	env := fs.String("env", "", "environnement")
+	hote := fs.String("host", "", "nom de la machine, tel que l'inventaire Ansible la nomme")
+	adresse := fs.String("address", "", "adresse où se connecter")
+	port := fs.Int("port", 22, "port SSH")
+	login := fs.String("login", "", "compte à ouvrir sur la machine")
+	runRef := fs.String("run-ref", "", "reprendre un enrôlement interrompu")
+	// Sans provenance explicite, la saisie au terminal est prise par défaut :
+	// c'est le geste attendu de cette commande.
+	mdp := prompt.Declarer(fs, "password", "le mot de passe du compte")
+
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	api, err := apiSeule()
+	if err != nil {
+		return err
+	}
+	suiveur, err := stream.New(os.Getenv(EnvServeur), os.Getenv(EnvSujet))
+	if err != nil {
+		return err
+	}
+
+	return admin.Enroler(ctx, api, suiveur, admin.OptionsEnrolement{
+		Environment: *env, Host: *hote, Address: *adresse, Port: *port,
+		Login: *login, RunRef: *runRef, MotDePasse: mdp,
+		// La revue humaine du premier contact. Elle lit l'entrée standard, qui
+		// est un terminal dans le cas nominal — et si elle ne l'est pas, la
+		// réponse ne sera pas un oui franc et la déclaration sera abandonnée.
+		Confirmer: admin.ConfirmerAuTerminal(os.Stdin, sortie),
+	}, sortie)
 }
