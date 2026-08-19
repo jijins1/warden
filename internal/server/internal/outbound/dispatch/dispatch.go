@@ -51,6 +51,20 @@ type Pods interface {
 // amendée).
 type Orders interface {
 	OrderFor(ctx context.Context, runID int64) (wire.Order, error)
+
+	// EnrollFor compose l'ordre d'enrôlement. Séparée d'OrderFor parce que les
+	// deux genres n'ont rien en commun : l'un porte un jeton de lecture git,
+	// l'autre le mot de passe d'un humain.
+	EnrollFor(ctx context.Context, runID int64) (wire.Enroll, error)
+}
+
+// Kinds dit de quel genre est un run.
+//
+// Le dispatcher ne peut pas le deviner : il tient un `run_id` et rien d'autre.
+// Un port d'une méthode plutôt qu'un champ sur `PodState` — celui-ci décrit le
+// POD, et le genre appartient au run.
+type Kinds interface {
+	RunKindByID(ctx context.Context, runID int64) (core.RunKind, error)
 }
 
 // Dispatcher route les ordres vers les pods connectés à CE réplica.
@@ -62,18 +76,51 @@ type Orders interface {
 type Dispatcher struct {
 	pods   Pods
 	orders Orders
+	genres Kinds
 
 	mu     sync.Mutex
 	canaux map[int64]map[chan struct{}]struct{}
 }
 
 // New construit un dispatcher.
-func New(pods Pods, orders Orders) *Dispatcher {
+//
+// `genres` est facultatif : sans lui, tout run est traité comme un playbook —
+// ce qu'était le seul genre existant avant la migration 00009.
+func New(pods Pods, orders Orders, genres Kinds) *Dispatcher {
 	return &Dispatcher{
 		pods:   pods,
 		orders: orders,
+		genres: genres,
 		canaux: make(map[int64]map[chan struct{}]struct{}),
 	}
+}
+
+// composer rend le message à livrer pour un run, quel que soit son genre.
+func (d *Dispatcher) composer(ctx context.Context, runID int64) (wire.Message, error) {
+	genre := core.RunPlaybook
+	if d.genres != nil {
+		g, err := d.genres.RunKindByID(ctx, runID)
+		if err != nil {
+			return wire.Message{}, err
+		}
+		if g != "" {
+			genre = g
+		}
+	}
+
+	if genre == core.RunEnrollment {
+		e, err := d.orders.EnrollFor(ctx, runID)
+		if err != nil {
+			return wire.Message{}, err
+		}
+		return wire.Message{Kind: wire.KindEnroll, Enroll: &e}, nil
+	}
+
+	o, err := d.orders.OrderFor(ctx, runID)
+	if err != nil {
+		return wire.Message{}, err
+	}
+	return wire.Message{Kind: wire.KindOrder, Order: &o}, nil
 }
 
 // Wake réveille les canaux d'un pod.

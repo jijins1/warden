@@ -116,11 +116,16 @@ func (s *RunStarter) Start(ctx context.Context, run Run) (string, error) {
 	if run.ID == 0 || run.RunRef == "" {
 		return "", fmt.Errorf("démarrage : run sans identifiant")
 	}
-	if run.Repo == "" {
-		return "", fmt.Errorf("démarrage du run %s : sans dépôt, le runner n'a rien à tirer", run.RunRef)
-	}
-	if run.AuditSHA == "" {
-		return "", fmt.Errorf("démarrage du run %s : sans commit d'audit, il n'y a rien à exécuter", run.RunRef)
+	// Un enrôlement n'a ni dépôt ni commit : il ne tire rien et n'exécute rien
+	// de l'utilisateur. Les deux contrôles ci-dessous ne valent donc que pour un
+	// playbook, comme les contraintes du schéma depuis la migration 00009.
+	if run.Kind != RunEnrollment {
+		if run.Repo == "" {
+			return "", fmt.Errorf("démarrage du run %s : sans dépôt, le runner n'a rien à tirer", run.RunRef)
+		}
+		if run.AuditSHA == "" {
+			return "", fmt.Errorf("démarrage du run %s : sans commit d'audit, il n'y a rien à exécuter", run.RunRef)
+		}
 	}
 
 	token, err := NewPodToken()
@@ -143,8 +148,13 @@ func (s *RunStarter) Start(ctx context.Context, run Run) (string, error) {
 	// La ref que le runner verra comme sa seule ref (ADR-0007). Le rôle `git`
 	// compose lui-même le chemin réel, imbrication comprise : l'écrire à la main
 	// produit un chemin qui n'est jamais annoncé, sans erreur ni trace (ADR-0026).
-	if err := s.spaces.CreateRunNamespace(ctx, run.Repo, RunNamespaceFor(run.RunRef), run.AuditSHA); err != nil {
-		return "", fmt.Errorf("démarrage du run %s : espace de noms : %w", run.RunRef, err)
+	//
+	// PAS pour un enrôlement : il ne fetch rien, et lui ouvrir un espace de noms
+	// lui donnerait un accès en lecture au dépôt dont il n'a aucun usage.
+	if run.Kind != RunEnrollment {
+		if err := s.spaces.CreateRunNamespace(ctx, run.Repo, RunNamespaceFor(run.RunRef), run.AuditSHA); err != nil {
+			return "", fmt.Errorf("démarrage du run %s : espace de noms : %w", run.RunRef, err)
+		}
 	}
 
 	if err := s.launcher.LaunchPod(ctx, PodSpec{

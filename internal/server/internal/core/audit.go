@@ -73,6 +73,13 @@ type Run struct {
 	Inventory   string
 	Playbook    string
 
+	// Kind distingue un run de playbook d'un run d'enrôlement. Vide vaut
+	// `playbook` : c'est ce que toutes les lignes antérieures sont.
+	Kind RunKind
+
+	// EnrollTarget n'est renseignée que pour un enrôlement.
+	EnrollTarget *EnrollTarget
+
 	AuditSHA    string
 	BaseSHA     string
 	MainlineRef string

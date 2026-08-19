@@ -26,10 +26,28 @@ type NewRun = core.NewRun
 // seule source, et c'est elle qui déterminera la partition de tous les events
 // du run.
 func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
-	// Contrepartie du DROP DEFAULT de la migration 00004 : un run sans dépôt
-	// s'insérerait sans bruit et son artefact deviendrait introuvable des mois
-	// plus tard, au moment précis où quelqu'un en a besoin. L'échec est ici.
-	if n.Repo == "" {
+	genre := n.Kind
+	if genre == "" {
+		genre = core.RunPlaybook
+	}
+	if !genre.Valid() {
+		return 0, fmt.Errorf("genre de run %q inconnu", genre)
+	}
+
+	// Un enrôlement n'a ni dépôt ni commit : ce qu'il exige, c'est une cible.
+	// Les deux contrôles sont donc conditionnés au genre, comme les contraintes
+	// du schéma le sont depuis la migration 00009.
+	if genre == core.RunEnrollment {
+		if n.EnrollTarget == nil {
+			return 0, errors.New("run d'enrôlement sans cible : il ne saurait pas quoi joindre")
+		}
+		if err := n.EnrollTarget.Validate(); err != nil {
+			return 0, err
+		}
+	} else if n.Repo == "" {
+		// Contrepartie du DROP DEFAULT de la migration 00004 : un run sans dépôt
+		// s'insérerait sans bruit et son artefact deviendrait introuvable des
+		// mois plus tard, au moment précis où quelqu'un en a besoin.
 		return 0, errors.New("run créé sans dépôt : ses diffs d'audit seraient incalculables (§6.5)")
 	}
 
@@ -38,12 +56,27 @@ func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
 		flags = json.RawMessage(`{}`)
 	}
 
+	var cible any
+	if n.EnrollTarget != nil {
+		brut, err := json.Marshal(n.EnrollTarget)
+		if err != nil {
+			return 0, fmt.Errorf("cible d'enrôlement du run %s: %w", n.RunRef, err)
+		}
+		cible = brut
+	}
+
+	// Les colonnes de playbook passent par NULLIF : le schéma les veut NULL
+	// pour un enrôlement, et la chaîne vide y violerait la contrainte de forme
+	// des SHA.
 	const q = `
 INSERT INTO run (run_ref, user_id, repo, environment, inventory, playbook,
                  audit_sha, base_sha, mainline_ref, mainline_sha, flags,
-                 runner_image, runner_image_digest, state, termination_cause)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-        NULLIF($12, ''), NULLIF($13, ''), $14, $15)
+                 runner_image, runner_image_digest, state, termination_cause,
+                 kind, enroll_target)
+VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''),
+        NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11,
+        NULLIF($12, ''), NULLIF($13, ''), $14, $15,
+        $16, $17)
 RETURNING id`
 
 	var id int64
@@ -52,6 +85,7 @@ RETURNING id`
 		n.AuditSHA, n.BaseSHA, n.MainlineRef, n.MainlineSHA, flags,
 		n.RunnerImage, n.RunnerImageDigest,
 		string(core.RunInterrupted), string(core.CauseUnknown),
+		string(genre), cible,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("création du run %s: %w", n.RunRef, err)
@@ -152,25 +186,32 @@ type Run = core.Run
 // RunByRef lit un run par son identifiant public.
 func (s *Store) RunByRef(ctx context.Context, runRef string) (Run, error) {
 	const q = `
-SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
-       audit_sha, base_sha, mainline_ref, mainline_sha,
+SELECT id, run_ref, user_id, run_day, repo, environment,
+       coalesce(inventory, ''), coalesce(playbook, ''),
+       coalesce(audit_sha, ''), coalesce(base_sha, ''),
+       coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       artifact_pruned_at
+       artifact_pruned_at, kind, enroll_target
   FROM run
  WHERE run_ref = $1`
 
 	var r Run
+	var genre string
+	var cible []byte
 	err := s.pool.QueryRow(ctx, q, runRef).Scan(
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.ArtifactPrunedAt,
+		&r.ArtifactPrunedAt, &genre, &cible,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, ErrNotFound)
 	}
 	if err != nil {
 		return Run{}, fmt.Errorf("lecture du run %s: %w", runRef, err)
+	}
+	if err := poserLeGenre(&r, genre, cible); err != nil {
+		return Run{}, fmt.Errorf("run %s: %w", runRef, err)
 	}
 	return r, nil
 }
@@ -185,19 +226,23 @@ SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
 // établi côté serveur et jamais accepté d'une requête.
 func (s *Store) RunByID(ctx context.Context, id int64) (Run, error) {
 	const q = `
-SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
-       audit_sha, base_sha, mainline_ref, mainline_sha,
+SELECT id, run_ref, user_id, run_day, repo, environment,
+       coalesce(inventory, ''), coalesce(playbook, ''),
+       coalesce(audit_sha, ''), coalesce(base_sha, ''),
+       coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       artifact_pruned_at
+       artifact_pruned_at, kind, enroll_target
   FROM run
  WHERE id = $1`
 
 	var r Run
+	var genre string
+	var cible []byte
 	err := s.pool.QueryRow(ctx, q, id).Scan(
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.ArtifactPrunedAt,
+		&r.ArtifactPrunedAt, &genre, &cible,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %d: %w", id, ErrNotFound)
@@ -205,7 +250,45 @@ SELECT id, run_ref, user_id, run_day, repo, environment, inventory, playbook,
 	if err != nil {
 		return Run{}, fmt.Errorf("lecture du run %d: %w", id, err)
 	}
+	if err := poserLeGenre(&r, genre, cible); err != nil {
+		return Run{}, fmt.Errorf("run %d: %w", id, err)
+	}
 	return r, nil
+}
+
+// RunKindByID rend le genre d'un run.
+//
+// Une requête d'une colonne plutôt qu'un `RunByID` complet : le dispatcher
+// appelle ceci à chaque tour de boucle sur chaque pod connecté, et lire toute la
+// ligne pour un mot serait payé par le chemin le plus chaud du produit.
+func (s *Store) RunKindByID(ctx context.Context, id int64) (core.RunKind, error) {
+	var genre string
+	err := s.pool.QueryRow(ctx, `SELECT kind FROM run WHERE id = $1`, id).Scan(&genre)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("run %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("genre du run %d: %w", id, err)
+	}
+	return core.RunKind(genre), nil
+}
+
+// poserLeGenre reconstitue le genre du run et sa cible d'enrôlement.
+//
+// Une cible illisible est une ERREUR et non une valeur vide : le composeur
+// d'ordres enverrait sinon un enrôlement sans adresse, que le runner tenterait
+// de joindre nulle part.
+func poserLeGenre(r *Run, genre string, cible []byte) error {
+	r.Kind = core.RunKind(genre)
+	if len(cible) == 0 {
+		return nil
+	}
+	var t core.EnrollTarget
+	if err := json.Unmarshal(cible, &t); err != nil {
+		return fmt.Errorf("cible d'enrôlement illisible: %w", err)
+	}
+	r.EnrollTarget = &t
+	return nil
 }
 
 // PreviousRun rend le run qui précède celui-ci sur (dépôt, environnement,

@@ -141,3 +141,75 @@ type HostCatalog interface {
 	// méthode, et l'appelant doit le dire à l'utilisateur.
 	ForgetHost(ctx context.Context, environment, name string) error
 }
+
+// --- l'enrôlement comme genre de run ---
+
+// RunKind distingue ce qu'un run fait.
+//
+// Les deux sont des runs PARCE QUE les deux sont des actions auditées sur la
+// production : l'un exécute le code d'un utilisateur, l'autre pose une clé
+// d'accès sur une machine. Tout le reste — le pod, le canal, les events, la
+// clôture — leur est commun, et c'est ce qui a décidé de ne pas créer une table
+// parallèle.
+type RunKind string
+
+const (
+	RunPlaybook   RunKind = "playbook"
+	RunEnrollment RunKind = "enrollment"
+)
+
+// Valid dit si le genre fait partie de ceux que le schéma accepte.
+func (k RunKind) Valid() bool {
+	return k == RunPlaybook || k == RunEnrollment
+}
+
+// EnrollTarget est la machine qu'un run d'enrôlement doit joindre.
+//
+// Elle ne porte PAS le mot de passe : celui-ci vient d'un humain, ne sert
+// qu'une fois, et n'a rien à faire dans un journal répliqué, sauvegardé et
+// jamais purgé (ADR-0013). Il transite par un magasin éphémère, lu à la
+// livraison de l'ordre et détruit ensuite.
+type EnrollTarget struct {
+	Host    string `json:"host"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+	Login   string `json:"login"`
+}
+
+// Validate applique les invariants de la cible.
+func (t EnrollTarget) Validate() error {
+	// La cible réutilise la validation d'une machine enrôlée, parce que c'est
+	// bien ce qu'elle deviendra : la faire diverger produirait un enrôlement qui
+	// réussit et une déclaration que la base refuse.
+	h := ManagedHost{
+		Name: t.Host, Environment: "x", Login: t.Login,
+		Port: t.Port, Mode: HostAssisted,
+	}
+	addr, err := netip.ParseAddr(t.Address)
+	if err != nil {
+		return fmt.Errorf("cible %s : adresse %q illisible — une ADRESSE est attendue, "+
+			"pas un nom : c'est là que l'enrôlement se connecte", t.Host, t.Address)
+	}
+	h.Address = addr
+	if err := h.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SecretStash range une valeur sensible le temps qu'elle serve.
+//
+// Le mot de passe d'un enrôlement est créé par `POST /admin/enrollments` et lu
+// à la LIVRAISON de l'ordre, quelques secondes plus tard. Entre les deux il faut
+// bien qu'il soit quelque part, et ce quelque part ne peut pas être PostgreSQL :
+// l'ADR-0018 pose qu'aucun credential n'y est persisté, WAL compris.
+//
+// `Take` et non `Get` : la lecture CONSOMME. Une valeur qui ne sert qu'une fois
+// et qu'on peut relire est une valeur qui traîne.
+type SecretStash interface {
+	Stash(ctx context.Context, cle string, valeur []byte) error
+	Take(ctx context.Context, cle string) ([]byte, error)
+}
+
+// ErrNoStash signale une valeur absente ou déjà consommée.
+var ErrNoStash = errors.New("valeur éphémère absente ou déjà consommée")

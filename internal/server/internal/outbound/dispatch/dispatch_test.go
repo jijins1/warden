@@ -120,9 +120,38 @@ func (p *podsFake) PodStates(_ context.Context, podIDs []int64) ([]core.PodState
 // c'est ainsi qu'on vérifie qu'AUCUN credential n'est assemblé avant le claim
 // (§8.3, « aucun credential avant le claim »).
 type ordersFake struct {
-	mu     sync.Mutex
-	appels int
-	err    error
+	mu       sync.Mutex
+	appels   int
+	enrols   int
+	err      error
+	enrolErr error
+}
+
+// EnrollFor compose l'ordre d'enrôlement. Le doublon avec OrderFor est le
+// point : le dispatcher choisit selon le genre du run, et le test doit pouvoir
+// constater LEQUEL il a appelé.
+func (o *ordersFake) EnrollFor(_ context.Context, _ int64) (wire.Enroll, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.enrols++
+	if o.enrolErr != nil {
+		return wire.Enroll{}, o.enrolErr
+	}
+	return wire.Enroll{
+		Host: "db-prod-02", Address: "10.20.0.42", Port: 22,
+		Login: "ansible", Password: wire.Secret("hunter2"),
+		PublicKey: "ssh-ed25519 AAAA warden-prod",
+	}, nil
+}
+
+// genresFake dit de quel genre est un run.
+type genresFake struct {
+	genre core.RunKind
+	err   error
+}
+
+func (g genresFake) RunKindByID(context.Context, int64) (core.RunKind, error) {
+	return g.genre, g.err
 }
 
 func (o *ordersFake) OrderFor(_ context.Context, runID int64) (wire.Order, error) {
@@ -228,10 +257,20 @@ func monter(t *testing.T) (*dispatch.Dispatcher, *podsFake, *ordersFake, *httpte
 	t.Helper()
 	pods := nouveauxPods()
 	orders := &ordersFake{}
-	d := dispatch.New(pods, orders)
+	d := dispatch.New(pods, orders, genresFake{genre: core.RunPlaybook})
 	srv := httptest.NewServer(d)
 	t.Cleanup(srv.Close)
 	return d, pods, orders, srv
+}
+
+// monterEnrolement monte un dispatcher dont les runs sont des ENRÔLEMENTS.
+func monterEnrolement(t *testing.T) (*podsFake, *ordersFake, *httptest.Server) {
+	t.Helper()
+	pods := nouveauxPods()
+	orders := &ordersFake{}
+	srv := httptest.NewServer(dispatch.New(pods, orders, genresFake{genre: core.RunEnrollment}))
+	t.Cleanup(srv.Close)
+	return pods, orders, srv
 }
 
 // Le test négatif que l'ADR-0018 exige pour ce troisième port : un pod chaud
@@ -479,4 +518,42 @@ func attendre(t *testing.T, delai time.Duration, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("condition non atteinte en %s", delai)
+}
+
+// Un run d'ENRÔLEMENT reçoit un message d'enrôlement, pas un ordre de playbook.
+//
+// Le dispatcher tient un `run_id` et rien d'autre : c'est le genre du run qui
+// décide. Se tromper enverrait un pod cloner un dépôt qui n'existe pas, ou
+// tenter une connexion SSH pour un playbook.
+func TestUnRunDEnrolementRecoitUnOrdreDEnrolement(t *testing.T) {
+	pods, orders, srv := monterEnrolement(t)
+	tok := pods.enregistrer(42)
+
+	c, code := ouvrir(t, srv, tok.Reveal())
+	if code != http.StatusOK {
+		t.Fatalf("code = %d", code)
+	}
+	c.suivant(time.Second, "hello")
+
+	pods.muter(42, func(st *core.PodState) { st.RunID = 7 })
+
+	m := c.suivant(3*pollInterval, "l'enrôlement")
+	if m.Kind != wire.KindEnroll {
+		t.Fatalf("genre = %q, attendu %q", m.Kind, wire.KindEnroll)
+	}
+	if m.Enroll == nil {
+		t.Fatal("le message ne porte pas d'enrôlement")
+	}
+	if m.Enroll.Host != "db-prod-02" {
+		t.Errorf("cible = %q", m.Enroll.Host)
+	}
+	if m.Order != nil {
+		t.Error("le message porte AUSSI un ordre de playbook")
+	}
+
+	// Et l'ordre de playbook n'a jamais été composé : composer un ordre, c'est
+	// frapper un jeton de lecture git, et un enrôlement n'en a pas besoin.
+	if n := orders.nombreDAppels(); n != 0 {
+		t.Errorf("OrderFor appelé %d fois pour un enrôlement", n)
+	}
 }

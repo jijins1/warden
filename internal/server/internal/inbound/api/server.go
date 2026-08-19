@@ -103,6 +103,11 @@ type Deps struct {
 	// Hosts est l'inventaire des machines enrôlées (§10.2). Facultatif de
 	// même : sans lui l'administration répond 501 et le reste fonctionne.
 	Hosts core.HostCatalog
+
+	// Stash range le mot de passe d'un enrôlement le temps qu'il serve.
+	// Facultatif : sans lui, le mode assisté répond 501 et le mode déclaratif
+	// continue de fonctionner.
+	Stash core.SecretStash
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -180,6 +185,11 @@ func (a *Server) Run(ctx context.Context) error {
 	router.HandleFunc("GET /admin/hosts", a.HandleListHosts)
 	router.HandleFunc("PUT /admin/hosts", a.HandleDeclareHosts)
 	router.HandleFunc("DELETE /admin/hosts/{environment}/{host}", a.HandleForgetHost)
+
+	// Le mode ASSISTÉ. Sous `/admin` comme le reste, parce qu'il pose une clé
+	// d'accès sur une machine de production — c'est de la configuration, pas
+	// un run que n'importe qui déclare.
+	router.HandleFunc("POST /admin/enrollments", a.HandleCreateEnrollment)
 
 	// Apply authentication middleware to all routes
 	a.srv.Handler = a.AuthnMiddleware(router)

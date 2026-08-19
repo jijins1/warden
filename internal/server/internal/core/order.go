@@ -36,6 +36,27 @@ type OrderBuilder struct {
 	keys    KeyIssuer
 	gitBase string
 	fetchTL time.Duration
+
+	// Les trois suivants ne servent qu'aux runs d'enrôlement. Facultatifs
+	// ensemble : sans eux, un enrôlement ne peut pas être composé et la
+	// livraison échoue en le disant — ce qui vaut mieux qu'un ordre incomplet.
+	hosts    HostCatalog
+	cles     KeyCatalog
+	consigne SecretStash
+}
+
+// AvecEnrolement branche de quoi composer un ordre d'enrôlement.
+//
+// Une option et non trois paramètres de plus : `NewOrderBuilder` en a déjà
+// quatre, et l'enrôlement est un chemin qu'un déploiement peut parfaitement ne
+// pas avoir.
+//
+// `cles` est le CATALOGUE et non l'émetteur : ce qu'un enrôlement pose est la
+// partie PUBLIQUE, et demander sa partie privée pour n'en lire que la moitié
+// ferait passer une opération d'administration par le magasin de secrets.
+func (b *OrderBuilder) AvecEnrolement(hosts HostCatalog, cles KeyCatalog, consigne SecretStash) *OrderBuilder {
+	b.hosts, b.cles, b.consigne = hosts, cles, consigne
+	return b
 }
 
 // FetchGrantTTL borne la vie du jeton de lecture remis au runner.
@@ -91,6 +112,12 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 	run, err := b.runs.RunByID(ctx, runID)
 	if err != nil {
 		return wire.Order{}, fmt.Errorf("lecture du run %d : %w", runID, err)
+	}
+	if run.Kind == RunEnrollment {
+		// Le dispatcher demande « l'ordre de ce run » sans savoir de quel genre
+		// il est. Rendre une erreur ici plutôt qu'un ordre vide : un ordre de
+		// playbook composé pour un enrôlement ferait cloner un dépôt inexistant.
+		return wire.Order{}, fmt.Errorf("run %s est un enrôlement, pas un playbook", run.RunRef)
 	}
 
 	// L'ordre ne part PAS sans commit à exécuter. Un runner qui recevrait un
@@ -173,4 +200,64 @@ func (b *OrderBuilder) cleDAcces(ctx context.Context, run Run) (wire.Secret, err
 		return nil, fmt.Errorf("clé d'accès du run %s : %w", run.RunRef, err)
 	}
 	return wire.Secret(cle.Reveal()), nil
+}
+
+// EnrollFor compose l'ordre d'enrôlement d'un run.
+//
+// Symétrique d'`OrderFor`, et séparée d'elle : les deux ne partagent que la
+// lecture du run. Les fondre obligerait chaque appelant à se demander lequel
+// des deux retours est renseigné.
+//
+// Le MOT DE PASSE est lu ici, à la livraison, et sa lecture le DÉTRUIT. C'est
+// le même principe que le jeton git et la clé d'accès — rien de sensible n'est
+// composé avant le moment où ça part.
+func (b *OrderBuilder) EnrollFor(ctx context.Context, runID int64) (wire.Enroll, error) {
+	run, err := b.runs.RunByID(ctx, runID)
+	if err != nil {
+		return wire.Enroll{}, fmt.Errorf("lecture du run %d : %w", runID, err)
+	}
+	if run.Kind != RunEnrollment {
+		return wire.Enroll{}, fmt.Errorf("run %s n'est pas un enrôlement", run.RunRef)
+	}
+	if run.EnrollTarget == nil {
+		return wire.Enroll{}, fmt.Errorf("run %s : enrôlement sans cible", run.RunRef)
+	}
+	if b.hosts == nil || b.cles == nil || b.consigne == nil {
+		return wire.Enroll{}, fmt.Errorf("run %s : l'enrôlement n'est pas configuré sur ce déploiement", run.RunRef)
+	}
+
+	cible := *run.EnrollTarget
+
+	// La clé PUBLIQUE de l'environnement : c'est elle qu'on va poser. Un
+	// environnement sans clé ne peut pas enrôler — contrairement à un run de
+	// playbook, où l'absence est un état légitime.
+	descripteur, err := b.cles.KeyByEnvironment(ctx, run.Environment)
+	if err != nil {
+		return wire.Enroll{}, fmt.Errorf("run %s : %w", run.RunRef, err)
+	}
+
+	// L'empreinte ATTENDUE vient de l'inventaire quand la machine y est déjà :
+	// réenrôler une machine connue est alors épinglé, sans que personne ait à y
+	// penser. Une machine inconnue n'en a pas, et c'est la première rencontre.
+	var empreinte string
+	if connue, err := b.hosts.HostByName(ctx, run.Environment, cible.Host); err == nil {
+		empreinte = connue.HostKey
+	} else if !errors.Is(err, ErrNoHost) {
+		return wire.Enroll{}, fmt.Errorf("run %s : %w", run.RunRef, err)
+	}
+
+	motDePasse, err := b.consigne.Take(ctx, run.RunRef)
+	if err != nil {
+		return wire.Enroll{}, fmt.Errorf("run %s : mot de passe d'enrôlement : %w", run.RunRef, err)
+	}
+
+	return wire.Enroll{
+		Host:      cible.Host,
+		Address:   cible.Address,
+		Port:      cible.Port,
+		Login:     cible.Login,
+		Password:  wire.Secret(motDePasse),
+		PublicKey: descripteur.PublicKey,
+		HostKey:   empreinte,
+	}, nil
 }

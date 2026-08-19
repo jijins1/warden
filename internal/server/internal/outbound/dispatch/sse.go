@@ -109,7 +109,7 @@ func (d *Dispatcher) loop(ctx context.Context, w http.ResponseWriter, flusher ht
 			return
 		default:
 			if etat.Claimed() && !ordreLivre {
-				ordre, err := d.orders.OrderFor(ctx, etat.RunID)
+				message, err := d.composer(ctx, etat.RunID)
 				if err != nil {
 					// Même raisonnement : `key-inventory` indisponible ne doit
 					// pas coûter le canal. On réessaie au tour suivant, et le
@@ -120,7 +120,7 @@ func (d *Dispatcher) loop(ctx context.Context, w http.ResponseWriter, flusher ht
 					}
 					break
 				}
-				if !d.write(w, flusher, wire.Message{Kind: wire.KindOrder, Order: &ordre}) {
+				if !d.write(w, flusher, message) {
 					return
 				}
 				ordreLivre = true

@@ -191,6 +191,7 @@ func runAPI(ctx context.Context) error {
 		starter      core.RunLauncher
 		keys         core.KeyIssuer
 		keyStore     core.KeyStore
+		consigne     core.SecretStash
 
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
@@ -286,6 +287,10 @@ func runAPI(ctx context.Context) error {
 				return err
 			}
 			keys, keyStore = ki, ki
+
+			// L'orchestrateur tient déjà le cycle de vie des Secrets d'un pod ;
+			// la consigne des valeurs de passage y vit pour la même raison.
+			consigne = orch
 		}
 
 		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
@@ -305,7 +310,13 @@ func runAPI(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("composeur d'ordres: %w", err)
 			}
-			dispatcher = dispatch.New(st, ob)
+			// L'enrôlement n'est branché que si le cluster l'est : la consigne
+			// du mot de passe est un Secret Kubernetes, et sans elle un ordre
+			// d'enrôlement ne peut pas être composé.
+			if consigne != nil {
+				ob = ob.AvecEnrolement(st, st, consigne)
+			}
+			dispatcher = dispatch.New(st, ob, st)
 			dispatchAddr = adresse
 		}
 	}
@@ -331,6 +342,7 @@ func runAPI(ctx context.Context) error {
 		Keys:     st,
 		Hosts:    st,
 		KeyStore: keyStore,
+		Stash:    consigne,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)

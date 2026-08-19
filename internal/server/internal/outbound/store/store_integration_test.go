@@ -1085,3 +1085,175 @@ func TestLIngestionNeVoitPasLesMachines(t *testing.T) {
 		}
 	}
 }
+
+// --- le run d'enrôlement (migration 00009) ---
+
+func cibleValide() *core.EnrollTarget {
+	return &core.EnrollTarget{
+		Host: "db-prod-02", Address: "10.20.0.42",
+		Port: core.PortSSHParDefaut, Login: "ansible",
+	}
+}
+
+func TestUnRunDEnrolementSePasseDeDepotEtDeCommit(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	u, err := s.UpsertUser(ctx, store.Identity{
+		Type: core.UserLocal, Subject: "alice", DisplayName: "Alice",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	// Ni repo, ni playbook, ni SHA : c'est tout l'objet du genre.
+	id, err := s.CreateRun(ctx, store.NewRun{
+		RunRef: testULID, UserID: u.ID, Environment: "prod",
+		Kind: core.RunEnrollment, EnrollTarget: cibleValide(),
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	r, err := s.RunByID(ctx, id)
+	if err != nil {
+		t.Fatalf("RunByID: %v", err)
+	}
+	if r.Kind != core.RunEnrollment {
+		t.Errorf("genre = %q, attendu %q", r.Kind, core.RunEnrollment)
+	}
+	if r.EnrollTarget == nil {
+		t.Fatal("la cible n'a pas été relue")
+	}
+	if r.EnrollTarget.Host != "db-prod-02" || r.EnrollTarget.Address != "10.20.0.42" {
+		t.Errorf("cible relue = %+v", *r.EnrollTarget)
+	}
+	// Le genre est aussi lisible seul : c'est ce que le dispatcher interroge à
+	// chaque tour de boucle.
+	if genre, err := s.RunKindByID(ctx, id); err != nil || genre != core.RunEnrollment {
+		t.Errorf("RunKindByID = %q, %v", genre, err)
+	}
+}
+
+// Un run de playbook reste COMPLET : la relaxation des NOT NULL ne doit pas
+// dégénérer en « tout est facultatif ».
+func TestUnRunDePlaybookResteComplet(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	seedRun(t, s)
+
+	r, err := s.RunByRef(ctx, testULID)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
+	// Vide vaut `playbook` : c'est ce que toutes les lignes antérieures sont.
+	if r.Kind != core.RunPlaybook {
+		t.Errorf("genre = %q, attendu %q", r.Kind, core.RunPlaybook)
+	}
+	if r.EnrollTarget != nil {
+		t.Error("un run de playbook porte une cible d'enrôlement")
+	}
+
+	// Et la contrainte tient : un playbook privé de son commit est refusé par
+	// le SCHÉMA, pas seulement par le code.
+	conn := connect(t, dsn)
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, `
+INSERT INTO run (run_ref, user_id, environment, state, termination_cause, kind)
+VALUES ('01JZQ00000000000000000ZZZZ', $1, 'prod', 'interrupted', 'unknown', 'playbook')`, r.UserID)
+	if err == nil {
+		t.Error("un run de playbook sans commit d'audit a été accepté par le schéma")
+	}
+}
+
+// Les deux contraintes symétriques : un enrôlement sans cible ne saurait pas
+// quoi joindre, un playbook avec une cible décrirait deux choses à la fois.
+func TestLeGenreEtLaCibleVontEnsemble(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	seedRun(t, s)
+
+	r, _ := s.RunByRef(ctx, testULID)
+	conn := connect(t, dsn)
+	defer conn.Close(ctx)
+
+	cas := map[string]string{
+		"enrôlement sans cible": `
+INSERT INTO run (run_ref, user_id, environment, state, termination_cause, kind)
+VALUES ('01JZQ00000000000000000YYYY', $1, 'prod', 'interrupted', 'unknown', 'enrollment')`,
+		"playbook avec cible": `
+INSERT INTO run (run_ref, user_id, environment, inventory, playbook, audit_sha,
+                 base_sha, mainline_ref, mainline_sha, state, termination_cause,
+                 kind, enroll_target)
+VALUES ('01JZQ00000000000000000XXXX', $1, 'prod', 'inv', 'site.yml',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'refs/heads/main',
+        'cccccccccccccccccccccccccccccccccccccccc', 'interrupted', 'unknown',
+        'playbook', '{"host":"x"}'::jsonb)`,
+		"genre inconnu": `
+INSERT INTO run (run_ref, user_id, environment, state, termination_cause, kind)
+VALUES ('01JZQ00000000000000000WWWW', $1, 'prod', 'interrupted', 'unknown', 'autre')`,
+	}
+	for nom, q := range cas {
+		if _, err := conn.Exec(ctx, q, r.UserID); err == nil {
+			t.Errorf("%s : accepté par le schéma", nom)
+		}
+	}
+}
+
+// Le code refuse AVANT la base, et nomme ce qui manque : une violation de
+// contrainte PostgreSQL ne dit pas quelle cible est en cause.
+func TestUnEnrolementMalFormeEstRefuseParLeCode(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	u, err := s.UpsertUser(ctx, store.Identity{
+		Type: core.UserLocal, Subject: "alice", DisplayName: "Alice",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	base := store.NewRun{
+		RunRef: testULID, UserID: u.ID, Environment: "prod", Kind: core.RunEnrollment,
+	}
+	cas := map[string]*core.EnrollTarget{
+		"sans cible":     nil,
+		"sans adresse":   {Host: "db", Port: 22, Login: "ansible"},
+		"nom en adresse": {Host: "db", Address: "db-prod-02", Port: 22, Login: "ansible"},
+		"compte refusé":  {Host: "db", Address: "10.0.0.1", Port: 22, Login: "Root!"},
+	}
+	for nom, cible := range cas {
+		t.Run(nom, func(t *testing.T) {
+			n := base
+			n.EnrollTarget = cible
+			if _, err := s.CreateRun(ctx, n); err == nil {
+				t.Fatal("accepté à tort")
+			}
+		})
+	}
+}

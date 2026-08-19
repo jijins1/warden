@@ -28,6 +28,14 @@ type NewRun struct {
 	Inventory   string
 	Playbook    string
 
+	// Kind vaut `playbook` quand il est vide : c'est le genre de tout ce que la
+	// CLI crée par `warden submit`.
+	Kind RunKind
+
+	// EnrollTarget est exigée pour un enrôlement, et refusée sinon. Elle ne
+	// porte JAMAIS le mot de passe.
+	EnrollTarget *EnrollTarget
+
 	AuditSHA string // le commit d'audit poussé par la CLI (§5.2)
 	BaseSHA  string // son parent (ADR-0003)
 
