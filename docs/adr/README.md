@@ -42,6 +42,7 @@ d'implémentation prises en cours de route.
 | [0027](0027-ecriture-du-role-git.md) | Écriture du rôle `git` : quarantaine native, fraîcheur des objets, ref d'audit écrite une fois | Accepted |
 | [0028](0028-jeton-de-push-auto-porteur.md) | Les jetons git portent leur propre portée signée ; le serveur écrit le miroir de la principale | Accepted |
 | [0029](0029-remontee-devents-du-runner.md) | Remontée d'events du runner : un seul message montant, qui clôt aussi le run | Accepted |
+| [0030](0030-enrolement-des-machines.md) | Enrôlement des machines : deux modes, deux magasins, et l'egress qu'on a ouvert | Accepted |
 
 ## Convention
 

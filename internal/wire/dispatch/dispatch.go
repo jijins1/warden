@@ -110,6 +110,14 @@ type Order struct {
 	// claim (ADR-0020). Jamais monté, jamais présent avant le claim (§8.3).
 	SSHKey Secret `json:"ssh_key,omitempty"`
 
+	// BecomePassword est le mot de passe d'élévation du §5.5, vide quand
+	// l'utilisateur ne l'a pas demandé.
+	//
+	// Il vient d'un HUMAIN et non du serveur, comme le mot de passe d'un
+	// enrôlement : l'ADR-0020 borne son magasin aux credentials que le serveur
+	// ÉMET, et celui-ci ne fait que transiter.
+	BecomePassword Secret `json:"become_password,omitempty"`
+
 	// ForwardEnv porte les variables du shell de l'utilisateur retenues par
 	// l'allowlist du §5.4.1. Les NOMS ne sont pas sensibles — ils sont déclarés
 	// dans le fichier projet, versionné — mais les valeurs le sont : ce sont

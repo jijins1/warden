@@ -151,6 +151,9 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		// voir ici, c'est le seul endroit du runner où la clé d'accès sort de
 		// son enveloppe masquée.
 		SSHKey: ordre.SSHKey.Reveal(),
+		// Le mot de passe d'élévation vient de l'utilisateur, pas du serveur :
+		// il ne relève pas du magasin de l'ADR-0020 et ne fait que transiter.
+		BecomePassword: ordre.BecomePassword.Reveal(),
 	})
 	if err != nil {
 		// Le run est clos malgré tout : sans cela il resterait `running` pour

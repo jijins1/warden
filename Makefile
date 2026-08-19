@@ -107,9 +107,13 @@ images: ## Construit les deux images en local, sans rien pousser
 # /workspace comme seul volume inscriptible — parce que c'est justement là que
 # le dernier défaut s'était logé.
 #
-# UN SEUL test est lancé, et c'est nécessaire : le binaire compilé contient
-# aussi les tests d'étage 1, qui lisent `testdata/` relativement à leur paquet.
-# Ce répertoire n'est pas dans l'image, et il n'a rien à y faire.
+# Seuls les tests qui EXIGENT l'image sont lancés, et c'est nécessaire : le
+# binaire compilé contient aussi les tests d'étage 1, qui lisent `testdata/`
+# relativement à leur paquet. Ce répertoire n'est pas dans l'image, et il n'a
+# rien à y faire.
+#
+# Celui du mot de passe d'élévation se saute faute de `sudo` dans l'image — il
+# se vérifie à la main, sur une image de mesure qui en a un.
 EXEC_TEST := $(CURDIR)/.exec.test
 
 .PHONY: test-runner-image
@@ -119,7 +123,7 @@ test-runner-image: images ## Vérifie le pilotage d'ansible-runner dans l'image 
 	  --tmpfs /workspace:rw,uid=65534,gid=65534 --tmpfs /tmp:rw \
 	  -v $(EXEC_TEST):/t/exec.test:ro --entrypoint /t/exec.test \
 	  $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) \
-	  -test.run TestLeVraiAnsibleRunnerEstPilote -test.v
+	  -test.run 'TestLeVraiAnsibleRunnerEstPilote|TestLeMotDePasseDElevation' -test.v
 	rm -f $(EXEC_TEST)
 
 .PHONY: images-push

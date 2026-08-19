@@ -356,3 +356,81 @@ func TestSansCleAucunFichierNEstPose(t *testing.T) {
 		t.Error("un fichier de clé a été posé alors qu'il n'y a pas de clé")
 	}
 }
+
+// --- le mot de passe d'élévation (§5.5) ---
+
+// Il va dans `<pdd>/env/extravars`, et le chemin a été MESURÉ contre les deux
+// autres : `passwords` en kwargs fait basculer ansible-runner sous pexpect et le
+// flux perd sa structure — plus de champ `event`, plus de `job_events`, l'audit
+// disparaît en silence. `-e ansible_become_password=…` le mettrait sur argv.
+func TestLeMotDePasseDElevationVaDansExtravars(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.BecomePassword = []byte("hunter2")
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	chemin := filepath.Join(cfg.PrivateDataDir, "env", "extravars")
+	brut, err := os.ReadFile(chemin) // #nosec G304 -- chemin construit par le test
+	if err != nil {
+		t.Fatalf("le mot de passe n'a pas été posé : %v", err)
+	}
+
+	var vars map[string]string
+	if err := json.Unmarshal(brut, &vars); err != nil {
+		t.Fatalf("extravars illisibles : %v", err)
+	}
+	if vars["ansible_become_password"] != "hunter2" {
+		t.Errorf("extravars = %v", vars)
+	}
+
+	fi, err := os.Stat(chemin)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("permissions = %v, attendu 0600", fi.Mode().Perm())
+	}
+}
+
+// Un mot de passe contenant des caractères que YAML ou un shell interpréteraient
+// doit traverser INTACT : `encoding/json` échappe ce qu'il faut, et le
+// contourner produirait un fichier illisible dont l'erreur parlerait de YAML.
+func TestUnMotDePasseAvecDesCaracteresDelicatsTraverse(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	const delicat = "gui\"llemet\nsaut: deux-points #dièse\\antislash"
+	cfg := config(t)
+	cfg.BecomePassword = []byte(delicat)
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	brut, err := os.ReadFile(filepath.Join(cfg.PrivateDataDir, "env", "extravars")) // #nosec G304
+	if err != nil {
+		t.Fatalf("lecture : %v", err)
+	}
+	var vars map[string]string
+	if err := json.Unmarshal(brut, &vars); err != nil {
+		t.Fatalf("extravars illisibles : %v", err)
+	}
+	if vars["ansible_become_password"] != delicat {
+		t.Errorf("mot de passe altéré : %q", vars["ansible_become_password"])
+	}
+}
+
+// Sans mot de passe, AUCUN fichier n'est posé : un `extravars` vide ferait
+// passer un `-e @fichier` inutile à chaque run.
+func TestSansMotDePasseDElevationAucunExtravars(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.PrivateDataDir, "env", "extravars")); err == nil {
+		t.Error("un extravars a été posé alors qu'il n'y a pas de mot de passe")
+	}
+}

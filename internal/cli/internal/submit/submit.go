@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jijins1/warden/internal/cli/internal/client"
+	"github.com/jijins1/warden/internal/cli/internal/prompt"
 	"github.com/jijins1/warden/internal/cli/internal/upload"
 	"github.com/jijins1/warden/internal/git"
 )
@@ -28,6 +29,13 @@ type Options struct {
 	Environment string
 	Inventory   string
 	Playbook    string
+
+	// BecomePassword est le mot de passe d'élévation du §5.5, vide quand
+	// l'utilisateur ne l'a pas demandé.
+	//
+	// Il ne transite QUE par le corps de `POST /runs` : jamais argv, jamais
+	// l'environnement, et le serveur ne le persiste pas.
+	BecomePassword prompt.Secret
 
 	// GitURL est l'adresse du rôle `git`, distincte de celle de l'API : deux
 	// ports, deux surfaces, deux politiques réseau (ADR-0027).
@@ -163,6 +171,9 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		Inventory:   opts.Inventory,
 		Playbook:    opts.Playbook,
 		BaseSHA:     base.String(),
+		// `Reveal` : le seul endroit où le mot de passe d'élévation sort de son
+		// enveloppe masquée, et il doit se voir en revue.
+		BecomePassword: string(opts.BecomePassword.Reveal()),
 	})
 	if err != nil {
 		// La ref est poussée mais le run n'est pas déclaré. Le dire précisément

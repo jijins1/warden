@@ -310,9 +310,9 @@ func runAPI(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("composeur d'ordres: %w", err)
 			}
-			// L'enrôlement n'est branché que si le cluster l'est : la consigne
-			// du mot de passe est un Secret Kubernetes, et sans elle un ordre
-			// d'enrôlement ne peut pas être composé.
+			// La consigne sert DEUX chemins : le mot de passe d'un enrôlement et
+			// celui d'élévation d'un playbook. Les deux viennent d'un humain et
+			// ne font que passer, d'où le même magasin.
 			if consigne != nil {
 				ob = ob.AvecEnrolement(st, st, consigne)
 			}

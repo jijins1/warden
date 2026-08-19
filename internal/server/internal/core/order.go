@@ -147,6 +147,18 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		return wire.Order{}, err
 	}
 
+	// Le mot de passe d'élévation, s'il a été consigné. Lu à la LIVRAISON et
+	// détruit par sa lecture, comme celui d'un enrôlement : les deux viennent
+	// d'un humain et ne font que passer.
+	var become wire.Secret
+	if b.consigne != nil {
+		if v, err := b.consigne.Take(ctx, CleBecome(run.RunRef)); err == nil {
+			become = wire.Secret(v)
+		} else if !errors.Is(err, ErrNoStash) {
+			return wire.Order{}, fmt.Errorf("mot de passe d'élévation du run %s : %w", run.RunRef, err)
+		}
+	}
+
 	return wire.Order{
 		RunRef:      run.RunRef,
 		AuditSHA:    run.AuditSHA,
@@ -165,7 +177,8 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		// L'ADR-0020 pose qu'en v1 l'autorisation repose sur la NetworkPolicy
 		// egress, et celle-ci est aujourd'hui ouverte. Cette clé ouvre donc
 		// tout ce qui l'accepte.
-		SSHKey: cle,
+		SSHKey:         cle,
+		BecomePassword: become,
 
 		// ForwardEnv reste vide : les variables du shell de l'utilisateur
 		// transitent par la CLI (§5.4), qui ne les envoie pas encore.
@@ -261,3 +274,15 @@ func (b *OrderBuilder) EnrollFor(ctx context.Context, runID int64) (wire.Enroll,
 		HostKey:   empreinte,
 	}, nil
 }
+
+// CleBecome nomme la consigne du mot de passe d'élévation.
+//
+// EXPORTÉE et non recomposée de chaque côté : l'endpoint la range sous ce nom,
+// le composeur d'ordres la lit sous ce nom. Deux compositions jumelles finissent
+// par diverger, et la panne ne se voit alors qu'à l'exécution — c'est la leçon
+// que ce dépôt a déjà payée avec `WARDEN_DISPATCH_URL`.
+//
+// Distincte de celle d'un enrôlement — le `run_ref` nu — parce qu'un run ne peut
+// pas être les deux, mais que deux clefs homonymes se marcheraient dessus le
+// jour où quelque chose change.
+func CleBecome(runRef string) string { return runRef + "-become" }

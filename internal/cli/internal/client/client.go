@@ -131,6 +131,10 @@ type NewRun struct {
 	Playbook    string          `json:"playbook"`
 	BaseSHA     string          `json:"base_sha"`
 	Flags       json.RawMessage `json:"flags,omitempty"`
+
+	// BecomePassword ne survit pas à la requête : le serveur le range dans une
+	// consigne éphémère, et la livraison de l'ordre au pod le consomme.
+	BecomePassword string `json:"become_password,omitempty"`
 }
 
 // RunCreated est ce que le serveur a décidé.

@@ -73,6 +73,23 @@ type Config struct {
 	// du code arbitraire (§2).
 	SSHKey []byte
 
+	// BecomePassword est le mot de passe d'élévation (§5.5), vide le plus
+	// souvent.
+	//
+	// Il passe par `<pdd>/env/extravars`, et le chemin a été MESURÉ contre les
+	// deux autres :
+	//
+	//   - `passwords` en kwargs fait basculer ansible-runner sous pexpect : le
+	//     plugin d'audit n'est plus utilisé, les trames perdent leur champ
+	//     `event`, `job_events` reste VIDE. L'audit disparaîtrait en silence —
+	//     exactement ce que l'ADR-0021 redoute d'`ANSIBLE_STDOUT_CALLBACK` ;
+	//   - `-e ansible_become_password=…` mettrait la valeur sur la ligne de
+	//     commande, lisible par tout le monde sur la machine.
+	//
+	// Avec `extravars`, le flux reste entièrement structuré, la commande porte
+	// `-e @<fichier>`, et la valeur n'apparaît nulle part dans le flux.
+	BecomePassword []byte
+
 	// DelaiApresSignal est le sursis accordé après le SIGINT du §5.6.
 	// Zéro vaut DelaiApresSignalParDefaut.
 	DelaiApresSignal time.Duration
@@ -141,6 +158,9 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 		return "", fmt.Errorf("préparation du répertoire de travail : %w", err)
 	}
 	if err := r.poserLaCle(); err != nil {
+		return "", err
+	}
+	if err := r.poserLeBecome(); err != nil {
 		return "", err
 	}
 
@@ -295,6 +315,40 @@ func (r *Runner) poserLaCle() error {
 	// Le message ne cite jamais le contenu, et le chemin suffit à diagnostiquer.
 	if err := os.WriteFile(filepath.Join(env, "ssh_key"), r.cfg.SSHKey, 0o600); err != nil {
 		return fmt.Errorf("écriture de la clé d'accès : %w", err)
+	}
+	return nil
+}
+
+// poserLeBecome écrit le mot de passe d'élévation là où Ansible le lira.
+//
+// Le fichier est écrit ICI et non laissé à `ansible-runner` : celui-ci pose bien
+// 0600 — c'est mesuré — mais s'en remettre à un comportement qu'on n'a pas écrit
+// pour la protection d'un mot de passe, c'est le perdre le jour où il change.
+//
+// Rien n'est écrit quand il n'y en a pas : un `extravars` vide ferait passer un
+// `-e @fichier` inutile à chaque run.
+func (r *Runner) poserLeBecome() error {
+	if len(r.cfg.BecomePassword) == 0 {
+		return nil
+	}
+
+	env := filepath.Join(r.cfg.PrivateDataDir, "env")
+	if err := os.MkdirAll(env, 0o700); err != nil {
+		return fmt.Errorf("préparation du répertoire d'environnement : %w", err)
+	}
+
+	// `encoding/json` échappe ce qu'il faut : un mot de passe contenant un
+	// guillemet ou un saut de ligne produirait sinon un fichier illisible, et
+	// l'erreur parlerait de YAML plutôt que du mot de passe.
+	brut, err := json.Marshal(map[string]string{
+		"ansible_become_password": string(r.cfg.BecomePassword),
+	})
+	if err != nil {
+		// Le message ne cite jamais la valeur.
+		return errors.New("mot de passe d'élévation : encodage impossible")
+	}
+	if err := os.WriteFile(filepath.Join(env, "extravars"), brut, 0o600); err != nil {
+		return fmt.Errorf("écriture du mot de passe d'élévation : %w", err)
 	}
 	return nil
 }

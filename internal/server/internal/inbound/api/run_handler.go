@@ -28,6 +28,15 @@ type createRunPayload struct {
 
 	RunnerImage       string `json:"runner_image,omitempty"`
 	RunnerImageDigest string `json:"runner_image_digest,omitempty"`
+
+	// BecomePassword ne survit PAS à cette requête : il part en consigne
+	// éphémère, et la livraison de l'ordre au pod le consomme. Ni journalisé,
+	// ni écrit en base (ADR-0018).
+	//
+	// Il vient d'un HUMAIN et non du serveur : l'ADR-0020 borne son magasin aux
+	// credentials que le serveur ÉMET, et celui-ci fait exception au même titre
+	// que le mot de passe d'un enrôlement.
+	BecomePassword string `json:"become_password,omitempty"`
 }
 
 // createRunResponse rend ce que le serveur a décidé, et non ce que le client a
@@ -133,6 +142,25 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		// évite une chasse au fantôme.
 		http.Error(w, "no audit commit was pushed for this run", http.StatusBadRequest)
 		return
+	}
+
+	// La consigne AVANT la création, et pour la même raison que sur un
+	// enrôlement : si le mot de passe n'arrive pas à destination, rien n'a été
+	// créé. L'inverse laisserait un run qui démarre sans pouvoir s'élever, et
+	// échouerait tâche par tâche sur la production.
+	if payload.BecomePassword != "" {
+		if a.deps.Stash == nil {
+			http.Error(w, "become password is not supported on this deployment",
+				http.StatusNotImplemented)
+			return
+		}
+		if err := a.deps.Stash.Stash(r.Context(), core.CleBecome(payload.RunRef),
+			[]byte(payload.BecomePassword)); err != nil {
+			slog.Error("consigne du mot de passe d'élévation en échec",
+				slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	id, err := a.deps.Creator.CreateRun(r.Context(), core.NewRun{

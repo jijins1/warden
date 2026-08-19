@@ -60,6 +60,8 @@ const texteUsage = `warden — exécution auditée de playbooks Ansible
 
 Lancer un run :
   warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
+                [--ask-become-pass]            demande le mot de passe
+                                               d'élévation au terminal
 
 Administrer les clés d'accès :
   warden key generate --env <nom>              frappe la paire ; la partie privée
@@ -109,6 +111,9 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	// même SHA (ADR-0025) : la reprise est sûre, à condition de reprendre le même
 	// identifiant.
 	runRef := fs.String("run-ref", "", "reprendre une soumission interrompue")
+	// La MÊME mécanique de saisie que pour une clé ou un enrôlement : trois
+	// drapeaux nommés pareil, jamais argv, jamais l'environnement.
+	become := prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)
@@ -132,6 +137,17 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		return fmt.Errorf("répertoire courant illisible : %w", err)
 	}
 
+	// Facultatif : il n'est demandé que si on l'a réclamé. C'est ce que
+	// `Fournie` distingue.
+	var motDePasseBecome prompt.Secret
+	if become.Fournie() {
+		motDePasseBecome, err = become.Lire(ctx)
+		if err != nil {
+			return err
+		}
+		defer motDePasseBecome.Wipe()
+	}
+
 	res, err := submit.Run(ctx, api, submit.Options{
 		RepoDir:     cwd,
 		Repo:        *repo,
@@ -140,6 +156,8 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		Playbook:    *playbook,
 		GitURL:      git,
 		RunRef:      *runRef,
+
+		BecomePassword: motDePasseBecome,
 	})
 	if err != nil {
 		return err
