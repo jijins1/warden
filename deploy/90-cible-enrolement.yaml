@@ -1,0 +1,73 @@
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ CIBLE DE TEST. N'A RIEN À FAIRE EN PRODUCTION.                           │
+# │                                                                          │
+# │ Ce pod sert un sshd qui accepte le MOT DE PASSE, ce qu'aucune machine    │
+# │ gérée ne devrait faire au-delà de son enrôlement. Il existe pour qu'un   │
+# │ `warden enroll` ait quelque chose à enrôler dans un cluster de           │
+# │ développement, et pour rien d'autre.                                     │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Pourquoi un POD et pas une VM : reproductible, jetable, et joignable depuis le
+# runner sans rien ouvrir. La cible est délibérément NUE — ni Python, ni sudo —
+# parce que c'est le cas qu'un enrôlement doit couvrir : une machine
+# fraîchement installée.
+#
+# Sa clé d'hôte est frappée à chaque démarrage. Conséquence à connaître : la
+# RECRÉER change son empreinte, et un réenrôlement échouera alors sur
+# `ErrEmpreinteChangee` — ce qui est le comportement voulu, et une bonne façon
+# de vérifier que l'épinglage fonctionne pour de vrai.
+
+# Le Secret n'est PAS dans ce fichier, et c'est délibéré : un mot de passe
+# d'exemple dans un manifeste qu'on applique finit toujours par tourner quelque
+# part. Même raison que `20-secrets.example.yaml`. À créer avant d'appliquer :
+#
+#   kubectl create secret generic warden-cible-enrolement -n warden-dev \
+#     --from-literal=password="$(openssl rand -base64 24)"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: warden-cible-enrolement
+  namespace: warden-dev
+  labels:
+    app.kubernetes.io/name: warden-cible-enrolement
+    app.kubernetes.io/component: test-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: warden-cible-enrolement
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: warden-cible-enrolement
+        app.kubernetes.io/component: test-target
+    spec:
+      # PAS de jeton de service : cette cible n'a aucune raison de parler à
+      # l'API Kubernetes, et un playbook d'essai qui tournerait dessus non plus.
+      automountServiceAccountToken: false
+      containers:
+        - name: sshd
+          image: gitea.ruokki.ovh/ruokki/warden-cible-enrolement:dev
+          imagePullPolicy: Always
+          env:
+            - name: CIBLE_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: warden-cible-enrolement, key: password }
+          ports:
+            - { name: ssh, containerPort: 22 }
+          readinessProbe:
+            tcpSocket: { port: ssh }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: warden-cible-enrolement
+  namespace: warden-dev
+spec:
+  selector:
+    app.kubernetes.io/name: warden-cible-enrolement
+  ports: [{ name: ssh, port: 22, targetPort: ssh }]
