@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,6 +40,20 @@ const prefixeConsigne = "warden-transit-"
 // CleConsigne est la clé de données du Secret.
 const CleConsigne = "value"
 
+// nomSecret compose le nom du Secret, en MINUSCULES.
+//
+// Un ULID est en majuscules — l'ADR-0021 le veut ainsi, son alphabet étant sûr
+// comme nom de ref git — et un nom de Secret Kubernetes doit être un label RFC
+// 1123, donc minuscule. Sans cette conversion, l'API refuse la création avec un
+// message sur les sous-domaines qui ne nomme jamais le ULID.
+//
+// `start.go` fait déjà exactement cela pour le nom du pod ; l'avoir oublié ici
+// est le genre de défaut qu'aucun test à clientset factice ne montre — celui-ci
+// accepte les majuscules.
+func nomSecret(cle string) string {
+	return prefixeConsigne + strings.ToLower(cle)
+}
+
 // Stash range une valeur pour un seul usage.
 //
 // Écrase ce qui existait : reprendre un enrôlement interrompu doit remplacer le
@@ -53,7 +68,7 @@ func (k *Kubernetes) Stash(ctx context.Context, cle string, valeur []byte) error
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      prefixeConsigne + cle,
+			Name:      nomSecret(cle),
 			Namespace: k.cfg.Namespace,
 			Labels: map[string]string{
 				LabelComposant:                "warden",
@@ -88,7 +103,7 @@ func (k *Kubernetes) Take(ctx context.Context, cle string) ([]byte, error) {
 	if cle == "" {
 		return nil, errors.New("consigne : clé absente")
 	}
-	nom := prefixeConsigne + cle
+	nom := nomSecret(cle)
 	api := k.client.CoreV1().Secrets(k.cfg.Namespace)
 
 	secret, err := api.Get(ctx, nom, metav1.GetOptions{})

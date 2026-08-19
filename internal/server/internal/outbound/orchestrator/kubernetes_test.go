@@ -374,3 +374,32 @@ func TestUnOrchestrateurSansAdresseRefuseDeDemarrer(t *testing.T) {
 		})
 	}
 }
+
+// Un run d'ENRÔLEMENT n'a pas de dépôt : il ne tire aucun code. L'étiquette est
+// alors absente plutôt que vide — Kubernetes refuse une valeur vide, ce qui
+// faisait échouer le lancement sur un message parlant de politique réseau, très
+// loin de la cause.
+func TestUnPodSansDepotEstLancableEtResteSelectionnable(t *testing.T) {
+	k, client := monter(t)
+
+	spec := specValide(t)
+	spec.Pool.Repo = "" // un enrôlement
+	if err := k.LaunchPod(t.Context(), spec); err != nil {
+		t.Fatalf("LaunchPod : %v", err)
+	}
+
+	pod, err := client.CoreV1().Pods(ns).Get(t.Context(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("pod absent : %v", err)
+	}
+	if _, present := pod.Labels[orchestrator.LabelDepot]; present {
+		t.Errorf("l'étiquette de dépôt est posée à vide : %v", pod.Labels)
+	}
+	// Ce que la NetworkPolicy sélectionne doit rester là, quoi qu'il arrive.
+	if pod.Labels[orchestrator.LabelComposant] != orchestrator.ValeurComposant {
+		t.Errorf("le pod n'est plus sélectionnable par la politique réseau : %v", pod.Labels)
+	}
+	if pod.Labels[orchestrator.LabelEnvironment] == "" {
+		t.Error("l'étiquette d'environnement a disparu")
+	}
+}

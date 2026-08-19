@@ -183,10 +183,20 @@ func (k *Kubernetes) LaunchPod(ctx context.Context, spec core.PodSpec) error {
 
 // etiquettes compose les étiquettes du pod, ou échoue.
 //
-// Échouer plutôt qu'omettre est le point : une étiquette manquante signifie que
-// la NetworkPolicy ne sélectionne pas le pod, donc qu'un conteneur exécutant du
-// code arbitraire tourne avec un egress non borné. Mieux vaut un run refusé qu'un
-// run non confiné.
+// Échouer plutôt qu'omettre est le point pour les étiquettes qui S'APPLIQUENT :
+// une valeur invalide signifie que la NetworkPolicy ne sélectionne pas le pod,
+// donc qu'un conteneur exécutant du code arbitraire tourne avec un egress non
+// borné. Mieux vaut un run refusé qu'un run non confiné.
+//
+// Le DÉPÔT fait exception, et c'est une distinction et non un assouplissement :
+// un run d'enrôlement n'en a pas — il ne tire aucun code — et l'étiquette est
+// alors ABSENTE plutôt que vide. Inventer une valeur mettrait un nom de dépôt
+// faux sur l'objet que le produit liste et journalise le plus ; une valeur vide
+// est refusée par Kubernetes, ce qui faisait échouer le lancement sur un
+// message parlant de politique réseau — très loin de la cause.
+//
+// L'étiquette de COMPOSANT, elle, reste obligatoire : c'est la seule sur
+// laquelle la NetworkPolicy sélectionne aujourd'hui.
 func (k *Kubernetes) etiquettes(pool core.PodPool) (map[string]string, error) {
 	if pool.UserID <= 0 {
 		return nil, fmt.Errorf("clé de pool sans utilisateur : la politique réseau ne pourrait pas s'appliquer")
@@ -194,8 +204,10 @@ func (k *Kubernetes) etiquettes(pool core.PodPool) (map[string]string, error) {
 	etiq := map[string]string{
 		LabelComposant:   ValeurComposant,
 		LabelUtilisateur: strconv.FormatInt(pool.UserID, 10),
-		LabelDepot:       pool.Repo,
 		LabelEnvironment: pool.Environment,
+	}
+	if pool.Repo != "" {
+		etiq[LabelDepot] = pool.Repo
 	}
 	for cle, valeur := range etiq {
 		if !valeurEtiquette.MatchString(valeur) {

@@ -72,7 +72,7 @@ func optionsEnrolement(t *testing.T, mdp string) admin.OptionsEnrolement {
 		Environment: "prod", Host: "db-prod-02", Address: "10.20.0.42",
 		Port: 22, Login: "ansible",
 		MotDePasse: &prompt.Source{Quoi: "le mot de passe", Fichier: ecrireCle(t, mdp)},
-		Confirmer:  func(string) bool { return true },
+		Confirmer:  func(admin.Empreinte) bool { return true },
 	}
 }
 
@@ -146,7 +146,7 @@ func TestUnRefusDeLEmpreinteNeDeclarePasLaMachine(t *testing.T) {
 	})
 
 	o := optionsEnrolement(t, "hunter2")
-	o.Confirmer = func(string) bool { return false }
+	o.Confirmer = func(admin.Empreinte) bool { return false }
 
 	var out strings.Builder
 	err := admin.Enroler(context.Background(), api, deroulementReussi(), o, &out)
@@ -179,7 +179,8 @@ func TestLaConfirmationRefuseParDefaut(t *testing.T) {
 	for reponse, attendu := range cas {
 		t.Run(reponse, func(t *testing.T) {
 			var out strings.Builder
-			got := admin.ConfirmerAuTerminal(strings.NewReader(reponse+"\n"), &out)(empreinteLisible)
+			got := admin.ConfirmerAuTerminal(strings.NewReader(reponse+"\n"), &out)(
+				admin.Empreinte{Valeur: empreinteLisible, Algorithme: "ssh-ed25519"})
 			if got != attendu {
 				t.Errorf("réponse %q → %v, attendu %v", reponse, got, attendu)
 			}
@@ -265,5 +266,158 @@ func TestUneCibleIncompleteEstRefuseeAvantToutAppel(t *testing.T) {
 				t.Fatal("accepté à tort")
 			}
 		})
+	}
+}
+
+// LE défaut trouvé sur une vraie machine. Un sshd sert plusieurs clés d'hôte et
+// c'est la NÉGOCIATION qui décide laquelle : la question doit nommer le fichier
+// de l'algorithme réellement retenu, sinon l'utilisateur constate un écart
+// légitime — et apprend à passer outre sur une question de sécurité.
+func TestLaQuestionNommeLeFichierDeLAlgorithmeNegocie(t *testing.T) {
+	cas := map[string]string{
+		"ssh-ed25519":         "/etc/ssh/ssh_host_ed25519_key.pub",
+		"ecdsa-sha2-nistp256": "/etc/ssh/ssh_host_ecdsa_key.pub",
+		"ecdsa-sha2-nistp521": "/etc/ssh/ssh_host_ecdsa_key.pub",
+		"ssh-rsa":             "/etc/ssh/ssh_host_rsa_key.pub",
+		"rsa-sha2-512":        "/etc/ssh/ssh_host_rsa_key.pub",
+	}
+	for algo, fichier := range cas {
+		t.Run(algo, func(t *testing.T) {
+			var out strings.Builder
+			admin.ConfirmerAuTerminal(strings.NewReader("n\n"), &out)(
+				admin.Empreinte{Valeur: empreinteLisible, Algorithme: algo})
+			if !strings.Contains(out.String(), fichier) {
+				t.Errorf("la question ne nomme pas %s :\n%s", fichier, out.String())
+			}
+		})
+	}
+
+	// Un algorithme inconnu ne doit désigner AUCUN fichier au hasard : mieux
+	// vaut inviter à les lister tous que faire comparer la mauvaise clé.
+	var out strings.Builder
+	admin.ConfirmerAuTerminal(strings.NewReader("n\n"), &out)(
+		admin.Empreinte{Valeur: empreinteLisible, Algorithme: "algo-du-futur"})
+	if !strings.Contains(out.String(), "ssh_host_*_key.pub") {
+		t.Errorf("un algorithme inconnu désigne un fichier précis :\n%s", out.String())
+	}
+}
+
+// L'algorithme est celui de la ligne rapportée par le pod, pas une supposition.
+func TestLAlgorithmeAfficheVientDeLaCleConstatee(t *testing.T) {
+	api := serveur(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(client.EnrollmentCreated{RunRef: "x"})
+	})
+
+	var vue admin.Empreinte
+	o := optionsEnrolement(t, "hunter2")
+	o.Confirmer = func(e admin.Empreinte) bool { vue = e; return false }
+
+	var out strings.Builder
+	_ = admin.Enroler(context.Background(), api, deroulementReussi(), o, &out)
+
+	if vue.Algorithme != "ssh-ed25519" {
+		t.Errorf("algorithme = %q, attendu celui de la clé constatée", vue.Algorithme)
+	}
+	if vue.Valeur != empreinteLisible {
+		t.Errorf("empreinte = %q", vue.Valeur)
+	}
+}
+
+// Le `run_ref` accompagne la déclaration : sans lui le serveur ne peut pas
+// CONSTATER que warden s'est connecté, et la machine serait notée `declared` —
+// ce qui dirait que le produit n'a jamais vu de mot de passe, alors qu'il en a
+// vu un. Le mode n'est pas dans le corps, il est déduit côté serveur.
+func TestLaDeclarationPorteLeRunDEnrolement(t *testing.T) {
+	var cree client.NewEnrollment
+	var requeteHosts string
+
+	api := serveur(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/admin/enrollments":
+			_ = json.NewDecoder(r.Body).Decode(&cree)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(client.EnrollmentCreated{RunRef: cree.RunRef})
+		case "/admin/hosts":
+			requeteHosts = r.URL.RawQuery
+			_ = json.NewEncoder(w).Encode([]client.Host{})
+		}
+	})
+
+	var out strings.Builder
+	if err := admin.Enroler(context.Background(), api, deroulementReussi(),
+		optionsEnrolement(t, "hunter2"), &out); err != nil {
+		t.Fatalf("Enroler: %v", err)
+	}
+
+	if !strings.Contains(requeteHosts, "enrollment="+cree.RunRef) {
+		t.Errorf("la déclaration ne porte pas le run d'enrôlement : %q", requeteHosts)
+	}
+	if !strings.Contains(requeteHosts, "environment=prod") {
+		t.Errorf("la déclaration ne porte pas l'environnement : %q", requeteHosts)
+	}
+}
+
+// LE cas de l'intermédiaire, vu depuis la CLI. Le runner le distingue par
+// l'état `unreachable` ; la CLI doit dire d'ENQUÊTER, pas de réessayer — un
+// message générique produit exactement la mauvaise conduite.
+func TestUneMachineSubstitueeEstNommeeCommeTelle(t *testing.T) {
+	declaree := false
+	api := serveur(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/hosts" {
+			declaree = true
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(client.EnrollmentCreated{RunRef: "x"})
+	})
+
+	suiveur := &suiveurFactice{
+		frames: []ws.EventFrame{
+			etape(0, "connexion à 10.20.0.42:22 en tant que ansible", events.StateOK),
+			etape(1, "l'empreinte de la machine ne correspond pas à celle attendue",
+				events.StateUnreachable),
+		},
+		fin: stream.Fin{Status: "failed"},
+	}
+
+	var out strings.Builder
+	err := admin.Enroler(context.Background(), api, suiveur, optionsEnrolement(t, "x"), &out)
+	if err == nil {
+		t.Fatal("une machine substituée a été acceptée")
+	}
+	if declaree {
+		t.Error("la machine substituée a été déclarée")
+	}
+
+	// Le message doit décourager la reprise et nommer les deux causes
+	// possibles : sans cela, l'utilisateur relance la commande.
+	for _, attendu := range []string{"N'insistez pas", "réinstallée", "répond à sa place"} {
+		if !strings.Contains(out.String(), attendu) {
+			t.Errorf("la sortie ne dit pas %q :\n%s", attendu, out.String())
+		}
+	}
+}
+
+// Un échec ORDINAIRE ne doit pas porter le message de substitution : crier au
+// loup sur un mot de passe erroné apprendrait à ignorer le vrai avertissement.
+func TestUnEchecOrdinaireNeCriePasALaSubstitution(t *testing.T) {
+	api := serveur(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(client.EnrollmentCreated{RunRef: "x"})
+	})
+
+	suiveur := &suiveurFactice{
+		frames: []ws.EventFrame{
+			etape(0, "la machine a refusé le login et le mot de passe", events.StateFailed),
+		},
+		fin: stream.Fin{Status: "failed"},
+	}
+
+	var out strings.Builder
+	if err := admin.Enroler(context.Background(), api, suiveur, optionsEnrolement(t, "x"), &out); err == nil {
+		t.Fatal("un échec a été traité comme un succès")
+	}
+	if strings.Contains(out.String(), "N'insistez pas") {
+		t.Errorf("un échec ordinaire porte le message de substitution :\n%s", out.String())
 	}
 }

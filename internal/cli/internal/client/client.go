@@ -304,9 +304,31 @@ type Inventory struct {
 // et N requêtes laisseraient un inventaire à moitié appliqué sur la première
 // erreur.
 func (c *Client) DeclareHosts(ctx context.Context, environment string, inv Inventory) ([]Host, error) {
-	chemin := "/admin/hosts"
+	return c.declarer(ctx, environment, "", inv)
+}
+
+// DeclareEnrolledHost déclare la machine qu'un run d'enrôlement vient de
+// joindre.
+//
+// Le `run_ref` n'est pas décoratif : c'est lui qui permet au serveur de
+// CONSTATER que warden s'est bien connecté, et donc d'enregistrer le mode
+// `assisted`. Sans lui, la machine serait notée `declared` — ce qui reviendrait
+// à dire que le produit n'a jamais vu de mot de passe, alors qu'il en a vu un.
+func (c *Client) DeclareEnrolledHost(ctx context.Context, environment, runRef string, h Host) ([]Host, error) {
+	return c.declarer(ctx, environment, runRef, Inventory{Hosts: []Host{h}})
+}
+
+func (c *Client) declarer(ctx context.Context, environment, runRef string, inv Inventory) ([]Host, error) {
+	q := url.Values{}
 	if environment != "" {
-		chemin += "?environment=" + url.QueryEscape(environment)
+		q.Set("environment", environment)
+	}
+	if runRef != "" {
+		q.Set("enrollment", runRef)
+	}
+	chemin := "/admin/hosts"
+	if len(q) > 0 {
+		chemin += "?" + q.Encode()
 	}
 	var out []Host
 	err := c.appeler(ctx, http.MethodPut, chemin, inv, &out)

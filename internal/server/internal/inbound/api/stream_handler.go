@@ -25,6 +25,9 @@ var upgrader = websocket.Upgrader{
 
 // streamHandler manages a single WebSocket client streaming run events.
 type streamHandler struct {
+	// runRef sert à RELIRE l'issue du run à la fermeture du flux : l'annoncer
+	// sans la lire ferait passer un échec pour un succès.
+	runRef string
 	runID  int64
 	offset int64
 	events core.EventFollower
@@ -67,6 +70,7 @@ func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	h := &streamHandler{
 		runID:  runID,
+		runRef: runRef,
 		offset: fromOffset,
 		events: a.deps.Events,
 		ws:     ws,
@@ -116,8 +120,15 @@ func (h *streamHandler) streamEvents(ctx context.Context, server *Server) error 
 				if err := stream.Err(); err != nil {
 					return err
 				}
-				// Run ended normally
-				return h.sendEnd(core.RunSucceeded, "")
+				// Le flux d'events est terminé : le run est clos. Son ISSUE est
+				// relue en base, jamais supposée.
+				//
+				// Cette ligne rendait `succeeded` en dur, ce qui annonçait
+				// « réussi » à qui regardait un playbook en échec. C'est le pire
+				// mensonge possible d'un produit d'audit — et il est devenu
+				// load-bearing quand `warden enroll` s'est mis à décider, sur
+				// cette valeur, s'il fallait déclarer la machine.
+				return h.sendEnd(server.issueDuRun(ctx, h.runRef))
 			}
 
 			// Send event to client
@@ -173,6 +184,22 @@ func (h *streamHandler) send(msg wire.Message) error {
 // sendEnd signals that the run has ended.
 func (h *streamHandler) sendEnd(status core.RunState, reason string) error {
 	return h.send(wire.NewEndMessage(string(status), reason))
+}
+
+// issueDuRun relit l'état final d'un run.
+//
+// Une relecture qui échoue rend `interrupted` / `unknown` plutôt que
+// `succeeded` : ne pas savoir comment un run s'est terminé est exactement ce que
+// `unknown` existe pour dire (§6.4), et supposer la réussite serait le mode de
+// défaillance le plus coûteux d'un produit d'audit.
+func (a *Server) issueDuRun(ctx context.Context, runRef string) (core.RunState, string) {
+	run, err := a.deps.Runs.RunByRef(ctx, runRef)
+	if err != nil {
+		slog.Warn("issue du run illisible",
+			slog.String("run_ref", runRef), slog.String("error", err.Error()))
+		return core.RunInterrupted, string(core.CauseUnknown)
+	}
+	return run.State, string(run.TerminationCause)
 }
 
 // sendError sends an error frame and closes the connection.

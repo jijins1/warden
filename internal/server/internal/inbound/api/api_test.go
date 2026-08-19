@@ -484,3 +484,62 @@ func TestReconnectWithOffset(t *testing.T) {
 		t.Errorf("reconnection replayed seq %d, already delivered up to %d", seq, lastSeq)
 	}
 }
+
+// TestStreamEndDitLIssueReelle.
+//
+// Le test ci-dessus ne ferme le run qu'en `succeeded`, et la trame de fin
+// rendait cette valeur EN DUR : le défaut ne pouvait donc pas s'y voir. Un
+// playbook en échec était annoncé « réussi » à qui le regardait, ce qui est le
+// pire mensonge possible d'un produit d'audit — et devenu load-bearing quand
+// `warden enroll` s'est mis à décider, sur cette valeur, s'il fallait déclarer
+// une machine.
+func TestStreamEndDitLIssueReelle(t *testing.T) {
+	cas := []struct {
+		nom    string
+		etat   core.RunState
+		cause  core.TerminationCause
+		statut string
+		motif  string
+	}{
+		{"échec", core.RunFailed, "", "failed", ""},
+		{"interruption", core.RunInterrupted, core.CauseUserInterrupt, "interrupted", "user_interrupt"},
+		{"succès", core.RunSucceeded, "", "succeeded", ""},
+	}
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			h := setup(t)
+			ctx := context.Background()
+
+			runRef := h.createRun(t, ctx)
+			run, err := h.store.RunByRef(ctx, runRef)
+			if err != nil {
+				t.Fatalf("RunByRef: %v", err)
+			}
+			h.pushEvents(t, run.ID, 1)
+
+			ws := h.dialWS(t, runRef, 0)
+			_ = readWSMessage(t, ws, 5*time.Second)
+
+			if err := h.store.CloseRun(ctx, run.ID, c.etat, c.cause); err != nil {
+				t.Fatalf("CloseRun: %v", err)
+			}
+
+			msg := readWSMessage(t, ws, 5*time.Second)
+			if msg.Type != wsproto.TypeEnd {
+				t.Fatalf("type = %s, attendu end", msg.Type)
+			}
+			var frame wsproto.EndFrame
+			if err := json.Unmarshal(msg.Body, &frame); err != nil {
+				t.Fatalf("trame de fin illisible : %v", err)
+			}
+			if frame.Status != c.statut {
+				t.Errorf("statut = %q, attendu %q — la trame de fin ne lit pas l'état du run",
+					frame.Status, c.statut)
+			}
+			// « Interrompu » sans la cause est presque inutile (§6.4).
+			if frame.Reason != c.motif {
+				t.Errorf("motif = %q, attendu %q", frame.Reason, c.motif)
+			}
+		})
+	}
+}

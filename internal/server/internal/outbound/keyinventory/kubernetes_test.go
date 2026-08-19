@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
@@ -31,9 +32,12 @@ const ns = "warden-dev"
 
 // catalogueFactice tient la partie publique en mémoire.
 type catalogueFactice struct {
-	mu  sync.Mutex
-	par map[string]core.KeyDescriptor
-	err error
+	mu sync.Mutex
+	// horodate imite `created_at DEFAULT now()` : la date vient de la base et
+	// non du descripteur qu'on lui passe.
+	horodate bool
+	par      map[string]core.KeyDescriptor
+	err      error
 }
 
 func nouveauCatalogue() *catalogueFactice {
@@ -45,6 +49,9 @@ func (c *catalogueFactice) SaveKey(_ context.Context, d core.KeyDescriptor) erro
 	defer c.mu.Unlock()
 	if c.err != nil {
 		return c.err
+	}
+	if c.horodate {
+		d.CreatedAt = time.Now().UTC()
 	}
 	c.par[d.Environment] = d
 	return nil
@@ -436,5 +443,27 @@ func TestLAuteurDeLaPoseEstRetenu(t *testing.T) {
 	}
 	if cat.par["prod"].CreatedBy != 7 {
 		t.Errorf("après rotation, créée par = %d, attendu 7", cat.par["prod"].CreatedBy)
+	}
+}
+
+// Les dates viennent de la BASE, pas du descripteur composé en mémoire : sans
+// relecture, `warden key show` affichait « posée le 0001-01-01 ».
+func TestLeDescripteurRenduPorteLesDatesDeLaBase(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	cat := nouveauCatalogue()
+	// Le catalogue horodate, comme le fait la colonne `created_at DEFAULT now()`.
+	cat.horodate = true
+
+	k, err := keyinventory.New(client, ns, cat)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	d, err := k.Generate(t.Context(), "prod", 7)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if d.CreatedAt.IsZero() {
+		t.Error("le descripteur rendu ne porte pas sa date de création")
 	}
 }

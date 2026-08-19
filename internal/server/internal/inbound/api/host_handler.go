@@ -128,12 +128,17 @@ func (a *Server) HandleListHosts(w http.ResponseWriter, r *http.Request) {
 
 // HandleDeclareHosts enregistre des machines déclarées par un opérateur.
 //
-// PUT /admin/hosts
+// PUT /admin/hosts[?enrollment=<run_ref>]
 //
-// C'est le MODE A de l'enrôlement : l'opérateur a posé la clé publique sur ses
-// machines lui-même, et déclare ici ce qu'il a fait. Warden n'a rien vérifié —
-// il enregistre. Le mode est donc `declared`, et la distinction compte : dans
-// ce mode le produit n'a jamais vu de mot de passe.
+// Sans `enrollment`, c'est le MODE A : l'opérateur a posé la clé publique
+// lui-même et déclare ce qu'il a fait. Warden n'a rien vérifié — il enregistre.
+//
+// Avec `enrollment`, c'est la seconde moitié du MODE B : un run d'enrôlement
+// vient de poser la clé, et la CLI déclare la machine qu'il a jointe. Le mode
+// devient `assisted` — mais SEULEMENT si le serveur peut le CONSTATER. Il
+// vérifie que ce run existe, qu'il est bien un enrôlement, qu'il a RÉUSSI, et
+// qu'il visait cette machine-là. Croire l'appelant sur parole ferait enregistrer
+// « warden s'est connecté » à propos d'une machine qu'il n'a jamais vue.
 //
 // TOUT OU RIEN : le document entier est validé avant qu'une seule ligne parte en
 // base. Un fichier à moitié appliqué laisserait un inventaire dont personne ne
@@ -156,11 +161,23 @@ func (a *Server) HandleDeclareHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	environnement := r.URL.Query().Get("environment")
+	mode, cibleEnrolee, ok := a.modeDeclaration(w, r, environnement)
+	if !ok {
+		return
+	}
+
 	// Validation d'ABORD, écriture ensuite. Le message nomme la machine
 	// fautive : sans lui, l'opérateur ne peut que relire son fichier en entier.
 	hotes := make([]core.ManagedHost, 0, len(doc.Hosts))
 	for _, p := range doc.Hosts {
-		h, err := versManagedHost(p, r.URL.Query().Get("environment"), core.HostDeclared)
+		genre := mode
+		if cibleEnrolee != "" && p.Name != cibleEnrolee {
+			// Le run d'enrôlement ne couvre QU'UNE machine. Les autres lignes
+			// du même document restent déclaratives : warden ne les a pas vues.
+			genre = core.HostDeclared
+		}
+		h, err := versManagedHost(p, environnement, genre)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -186,6 +203,52 @@ func (a *Server) HandleDeclareHosts(w http.ResponseWriter, r *http.Request) {
 		out = append(out, versHostPayload(h))
 	}
 	ecrireJSON(w, out)
+}
+
+// modeDeclaration décide si la déclaration peut se dire `assisted`.
+//
+// Elle rend le mode, le nom de la machine que le run d'enrôlement visait, et si
+// la requête peut continuer. Le mode n'est JAMAIS lu du corps : il est déduit
+// d'un fait que le serveur constate en base.
+func (a *Server) modeDeclaration(w http.ResponseWriter, r *http.Request, environnement string) (core.EnrollmentMode, string, bool) {
+	ref := r.URL.Query().Get("enrollment")
+	if ref == "" {
+		return core.HostDeclared, "", true
+	}
+	if a.deps.Runs == nil {
+		http.Error(w, "run lookup is not available", http.StatusNotImplemented)
+		return "", "", false
+	}
+
+	run, err := a.deps.Runs.RunByRef(r.Context(), ref)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
+			http.Error(w, "unknown enrollment "+ref, http.StatusBadRequest)
+			return "", "", false
+		}
+		slog.Error("lecture du run d'enrôlement en échec", slog.String("error", err.Error()))
+		http.Error(w, "could not verify the enrollment", http.StatusInternalServerError)
+		return "", "", false
+	}
+
+	switch {
+	case run.Kind != core.RunEnrollment:
+		http.Error(w, "run "+ref+" is not an enrollment", http.StatusBadRequest)
+		return "", "", false
+	case run.State != core.RunSucceeded:
+		// Un enrôlement qui a échoué n'établit rien. Déclarer sur sa foi
+		// enregistrerait une machine que warden n'a pas réussi à joindre.
+		http.Error(w, "enrollment "+ref+" did not succeed", http.StatusBadRequest)
+		return "", "", false
+	case run.EnrollTarget == nil:
+		http.Error(w, "enrollment "+ref+" has no target", http.StatusBadRequest)
+		return "", "", false
+	case environnement != "" && run.Environment != environnement:
+		// Un enrôlement de `staging` ne fait pas foi pour une machine de `prod`.
+		http.Error(w, "enrollment "+ref+" belongs to another environment", http.StatusBadRequest)
+		return "", "", false
+	}
+	return core.HostAssisted, run.EnrollTarget.Host, true
 }
 
 // HandleForgetHost retire une machine de l'inventaire.

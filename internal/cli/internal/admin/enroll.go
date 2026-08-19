@@ -38,7 +38,7 @@ type OptionsEnrolement struct {
 	// C'est LA revue humaine du premier contact : sans empreinte déclarée à
 	// l'avance, l'enrôlement fait confiance à ce qui répond, et ce moment est le
 	// seul où quelqu'un peut encore dire non.
-	Confirmer func(empreinte string) bool
+	Confirmer func(Empreinte) bool
 }
 
 // Suiveur suit le déroulement d'un run. Déclaré ici, du côté qui l'appelle.
@@ -109,6 +109,18 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 		if res.Fingerprint != "" {
 			_, _ = fmt.Fprintf(sortie, "\nempreinte constatée : %s\n", res.Fingerprint)
 		}
+		if res.Substituee {
+			// Le cas de l'intermédiaire, nommé comme tel. Un message générique
+			// ferait RÉESSAYER, ce qui est précisément la mauvaise conduite : ce
+			// qui répond à cette adresse n'est pas la machine attendue.
+			_, _ = fmt.Fprintf(sortie,
+				"\nLa machine qui répond à %s n'est PAS celle enrôlée sous le nom « %s ».\n"+
+					"N'insistez pas : réessayer ne changera rien. Soit la machine a été\n"+
+					"réinstallée — auquel cas retirez-la de l'inventaire puis réenrôlez-la —,\n"+
+					"soit quelque chose d'autre répond à sa place.\n",
+				o.Address, o.Host)
+			return fmt.Errorf("empreinte de %s : la machine n'est pas celle attendue", o.Host)
+		}
 		return fmt.Errorf("l'enrôlement de %s a échoué (%s)", o.Host, fin.Status)
 	}
 	if res.HostKey == "" {
@@ -117,17 +129,22 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 		return fmt.Errorf("l'enrôlement de %s s'est terminé sans rapporter d'empreinte", o.Host)
 	}
 
-	_, _ = fmt.Fprintf(sortie, "\nempreinte de %s :\n  %s\n", o.Host, res.Fingerprint)
-	if o.Confirmer != nil && !o.Confirmer(res.Fingerprint) {
+	emp := Empreinte{Valeur: res.Fingerprint, Algorithme: algorithmeDe(res.HostKey)}
+	_, _ = fmt.Fprintf(sortie, "\nempreinte de %s :\n  %s  (%s)\n", o.Host, emp.Valeur, emp.Algorithme)
+	if o.Confirmer != nil && !o.Confirmer(emp) {
 		_, _ = fmt.Fprintf(sortie, "\nDéclaration abandonnée. La clé EST posée sur %s ;\n"+
 			"la machine n'est simplement pas enregistrée dans l'inventaire.\n", o.Host)
 		return errors.New("déclaration refusée")
 	}
 
-	if _, err := api.DeclareHosts(ctx, o.Environment, client.Inventory{Hosts: []client.Host{{
+	// Le `run_ref` accompagne la déclaration : c'est lui qui permet au serveur
+	// de constater que warden s'est bien connecté, donc d'enregistrer
+	// `assisted`. Sans lui la machine serait notée `declared`, ce qui dirait
+	// que le produit n'a jamais vu de mot de passe alors qu'il en a vu un.
+	if _, err := api.DeclareEnrolledHost(ctx, o.Environment, runRef, client.Host{
 		Name: o.Host, Environment: o.Environment, Address: o.Address,
 		Port: port, Login: o.Login, HostKey: res.HostKey,
-	}}}); err != nil {
+	}); err != nil {
 		return fmt.Errorf("la machine est enrôlée mais n'a pas pu être déclarée : %w", err)
 	}
 
@@ -152,11 +169,56 @@ func (o OptionsEnrolement) valider() error {
 	return nil
 }
 
+// Empreinte est ce qu'on soumet à l'utilisateur.
+//
+// Elle porte l'ALGORITHME et pas seulement la valeur, et ce n'est pas un détail
+// d'affichage. Un sshd sert plusieurs clés d'hôte — ed25519, ECDSA, RSA — et
+// c'est la NÉGOCIATION qui décide laquelle. Mesuré sur une vraie machine : la
+// clé retenue était l'ECDSA alors que le message invitait à comparer avec le
+// fichier ed25519, dont l'empreinte est évidemment différente.
+//
+// Une question de sécurité qui produit un écart quand tout va bien est pire
+// qu'une absence de question : elle apprend à passer outre.
+type Empreinte struct {
+	Valeur     string // SHA256:…
+	Algorithme string // ssh-ed25519, ecdsa-sha2-nistp256, ssh-rsa…
+}
+
+// Fichier rend le chemin du fichier de clé publique correspondant sur la
+// machine, pour que la comparaison porte sur la BONNE clé.
+func (e Empreinte) Fichier() string {
+	switch {
+	case strings.HasPrefix(e.Algorithme, "ssh-ed25519"):
+		return "/etc/ssh/ssh_host_ed25519_key.pub"
+	case strings.HasPrefix(e.Algorithme, "ecdsa-sha2-"):
+		return "/etc/ssh/ssh_host_ecdsa_key.pub"
+	case strings.HasPrefix(e.Algorithme, "ssh-rsa"), strings.HasPrefix(e.Algorithme, "rsa-sha2-"):
+		return "/etc/ssh/ssh_host_rsa_key.pub"
+	default:
+		// Un algorithme qu'on ne connaît pas : plutôt que de désigner un fichier
+		// au hasard, on invite à les lister tous. La comparaison reste possible.
+		return "/etc/ssh/ssh_host_*_key.pub"
+	}
+}
+
+// algorithmeDe extrait le type d'une ligne `authorized_keys`.
+func algorithmeDe(ligne string) string {
+	if i := strings.IndexByte(ligne, ' '); i > 0 {
+		return ligne[:i]
+	}
+	return ligne
+}
+
 // resultatEnrolement est ce que le pod rapporte de la machine.
 type resultatEnrolement struct {
 	HostKey      string `json:"warden_host_key"`
 	Fingerprint  string `json:"warden_fingerprint"`
 	DejaPresente bool   `json:"warden_deja_presente"`
+
+	// Substituee dit que la machine jointe n'est pas celle qui était épinglée.
+	// Elle ne vient pas d'un payload mais de l'ÉTAT d'un event : le runner
+	// émet `unreachable` pour ce cas précis, et `failed` pour tout le reste.
+	Substituee bool `json:"-"`
 }
 
 // suivreLEnrolement affiche le déroulement et retient l'empreinte.
@@ -171,7 +233,18 @@ func suivreLEnrolement(ctx context.Context, suiveur Suiveur, runRef string, sort
 		// L'empreinte d'abord : c'est la seule donnée qu'on retient.
 		var r resultatEnrolement
 		if err := json.Unmarshal(e.Payload, &r); err == nil && r.HostKey != "" {
+			// Le drapeau de substitution est préservé : il vient d'un ÉTAT
+			// d'event et non d'un payload, donc l'écrasement le perdrait.
+			r.Substituee = res.Substituee
 			res = r
+		}
+
+		// `unreachable` porte ici un sens précis : la machine jointe n'est pas
+		// celle qu'on visait. Le runner le distingue de `failed` exprès, et
+		// c'est cette distinction qui permet de dire à l'utilisateur d'enquêter
+		// plutôt que de réessayer.
+		if e.State == events.StateUnreachable {
+			res.Substituee = true
 		}
 
 		var etape struct {
@@ -210,11 +283,14 @@ func marqueur(etat events.State) string {
 // Le refus est le DÉFAUT quand la réponse n'est pas un oui franc : accepter une
 // empreinte par distraction est exactement ce que cette question existe pour
 // empêcher.
-func ConfirmerAuTerminal(entree io.Reader, sortie io.Writer) func(string) bool {
-	return func(empreinte string) bool {
+func ConfirmerAuTerminal(entree io.Reader, sortie io.Writer) func(Empreinte) bool {
+	return func(emp Empreinte) bool {
+		// Le fichier nommé est celui de l'algorithme RÉELLEMENT négocié : en
+		// désigner un autre ferait constater un écart légitime à l'utilisateur,
+		// et lui apprendrait à passer outre.
 		_, _ = fmt.Fprintf(sortie, "\nCette empreinte est-elle celle de la machine attendue ?\n"+
-			"Comparez-la avec `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` sur la machine.\n"+
-			"Déclarer et épingler ? [o/N] ")
+			"Sur la machine :  ssh-keygen -lf %s\n"+
+			"Déclarer et épingler ? [o/N] ", emp.Fichier())
 
 		reponse, err := prompt.ReadLine(entree)
 		if err != nil {

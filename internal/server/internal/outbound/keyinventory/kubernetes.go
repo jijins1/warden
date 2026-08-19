@@ -229,5 +229,16 @@ func (k *Kubernetes) poser(ctx context.Context, environment string,
 	if err := k.catalogue.SaveKey(ctx, d); err != nil {
 		return core.KeyDescriptor{}, err
 	}
+
+	// Le descripteur est RELU après écriture, et ce n'est pas de la
+	// superstition : `created_at` et `rotated_at` sont posées par la BASE, donc
+	// celui qu'on vient de composer les porte à zéro. Le rendre tel quel
+	// affichait « posée le 0001-01-01 » à l'utilisateur.
+	//
+	// Une relecture qui échoue ne fait pas échouer la pose : la clé EST
+	// installée, et prétendre le contraire enverrait l'opérateur la reposer.
+	if relu, err := k.catalogue.KeyByEnvironment(ctx, environment); err == nil {
+		return relu, nil
+	}
 	return d, nil
 }
