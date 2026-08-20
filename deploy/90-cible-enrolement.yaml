@@ -47,7 +47,10 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: sshd
-          image: gitea.ruokki.ovh/ruokki/warden-cible-enrolement:dev
+          # L'image AVEC Python : Ansible exécute ses modules en Python sur la
+          # machine distante. Celle des tests d'enrôlement en est dépourvue, et
+          # doit le rester — voir `deploy/cible/Dockerfile`.
+          image: gitea.ruokki.ovh/ruokki/warden-cible-playbook:dev
           imagePullPolicy: Always
           env:
             - name: CIBLE_PASSWORD

@@ -46,6 +46,22 @@ const (
 // (§8.2 — un pod n'est jamais réutilisé).
 const CheminEspace = "/workspace"
 
+// CheminTemporaire est le second volume inscriptible du pod.
+//
+// Il paraît redondant avec CheminEspace et ne l'est pas. MESURÉ sur le
+// cluster : `ansible-runner` enveloppe `ansible-playbook` dans un `ssh-agent`
+// dès qu'une clé d'accès est fournie, et `ssh-agent` crée sa socket dans
+// `/tmp` — pas ailleurs, pas sous `$HOME`. Avec `readOnlyRootFilesystem` (§7) et
+// sans ce volume, il échoue sur « mkdtemp: private socket dir: Read-only file
+// system », et le run reste bloqué sans jamais rien rapporter.
+//
+// La mesure en conteneur ne pouvait pas le montrer : elle tournait avec
+// `--tmpfs /tmp:rw`, donc avec le volume que le pod n'avait pas.
+//
+// Un emptyDir et non une entorse au §7 : la racine reste en lecture seule, et
+// ce répertoire meurt avec le pod.
+const CheminTemporaire = "/tmp"
+
 // CheminJeton est le point de montage du jeton d'amorçage.
 //
 // Un volume et non une variable d'environnement : l'objet `Pod` est celui que le
@@ -289,8 +305,16 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 					},
 				},
 				{
-					// Le seul endroit inscriptible du conteneur. Voir CheminEspace.
+					// L'espace de travail : arbre matérialisé et artefacts. Voir
+					// CheminEspace.
 					Name:         "warden-workspace",
+					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+				},
+				{
+					// `/tmp`, sans lequel `ssh-agent` ne peut pas créer sa socket
+					// et tout run portant une clé d'accès se bloque. Voir
+					// CheminTemporaire.
+					Name:         "warden-tmp",
 					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 				},
 			},
@@ -313,6 +337,10 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 					{
 						Name:      "warden-workspace",
 						MountPath: CheminEspace,
+					},
+					{
+						Name:      "warden-tmp",
+						MountPath: CheminTemporaire,
 					},
 				},
 				// Les NOMS viennent du contrat de fil, que le runner lit aussi :

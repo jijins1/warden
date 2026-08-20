@@ -403,3 +403,45 @@ func TestUnPodSansDepotEstLancableEtResteSelectionnable(t *testing.T) {
 		t.Error("l'étiquette d'environnement a disparu")
 	}
 }
+
+// `/tmp` doit être INSCRIPTIBLE, et ce n'est pas du confort.
+//
+// MESURÉ sur le cluster : `ansible-runner` enveloppe `ansible-playbook` dans un
+// `ssh-agent` dès qu'une clé d'accès est fournie, et `ssh-agent` crée sa socket
+// dans `/tmp`. Avec `readOnlyRootFilesystem` et sans ce volume, il échoue sur
+// « mkdtemp: private socket dir: Read-only file system » — et le run se BLOQUE
+// au lieu d'échouer.
+func TestLePodADeQuoiEcrireDansTmp(t *testing.T) {
+	k, client := monter(t)
+	spec := specValide(t)
+	if err := k.LaunchPod(t.Context(), spec); err != nil {
+		t.Fatalf("LaunchPod : %v", err)
+	}
+	pod, _ := client.CoreV1().Pods(ns).Get(t.Context(), spec.Name, metav1.GetOptions{})
+
+	var monte string
+	for _, vm := range pod.Spec.Containers[0].VolumeMounts {
+		if vm.MountPath == orchestrator.CheminTemporaire {
+			monte = vm.Name
+		}
+	}
+	if monte == "" {
+		t.Fatalf("%s n'est pas monté : ssh-agent ne pourrait pas créer sa socket",
+			orchestrator.CheminTemporaire)
+	}
+
+	// Et c'est bien un volume éphémère, pas une entorse au §7 : la racine reste
+	// en lecture seule.
+	var ephemere bool
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == monte && v.EmptyDir != nil {
+			ephemere = true
+		}
+	}
+	if !ephemere {
+		t.Errorf("le volume %q n'est pas un emptyDir", monte)
+	}
+	if ro := pod.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem; ro == nil || !*ro {
+		t.Error("la racine n'est plus en lecture seule (§7)")
+	}
+}
