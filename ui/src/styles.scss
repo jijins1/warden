@@ -1,0 +1,127 @@
+// Material Theme
+@use '@angular/material' as mat;
+
+// Define a custom theme
+$warden-primary: mat.define-palette(mat.$indigo-palette, 600, 50, 900);
+$warden-accent: mat.define-palette(mat.$amber-palette, A200, A100, A400);
+$warden-warn: mat.define-palette(mat.$red-palette, 600, 500, 800);
+
+// Create the theme
+$warden-theme: mat.define-light-theme(
+  (
+    color: (
+      primary: $warden-primary,
+      accent: $warden-accent,
+      warn: $warden-warn
+    ),
+    typography: mat.define-typography-config(),
+    density: 0
+  )
+);
+
+// Apply the theme
+@include mat.all-component-themes($warden-theme);
+
+// Global styles
+:root {
+  --color-success: #2e7d32;
+  --color-warning: #ff9800;
+  --color-error: #c62828;
+  --color-info: #1565c0;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: Roboto, "Helvetica Neue", sans-serif;
+  background-color: #f5f5f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+// Scrollbar styling
+a ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+a ::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+a ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+// Run state colors
+.run-state {
+  &-pending {
+    color: var(--color-info);
+  }
+  &-running {
+    color: var(--color-info);
+  }
+  &-succeeded {
+    color: var(--color-success);
+  }
+  &-failed {
+    color: var(--color-error);
+  }
+  &-cancelled {
+    color: var(--color-warning);
+  }
+}
+
+// Code blocks
+code {
+  font-family: 'Courier New', monospace;
+  background-color: #f5f5f5;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+pre {
+  background-color: #263238;
+  color: #e0e0e0;
+  padding: 16px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+// Utility classes
+.fill-remaining {
+  flex: 1 1 auto;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Table styling
+.mat-table {
+  width: 100%;
+}
+
+.mat-row, .mat-header-row {
+  min-height: 48px;
+}
+
+// Card styling
+.mat-card {
+  margin: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+// Button spacing
+button + button {
+  margin-left: 8px;
+}

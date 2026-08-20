@@ -1,6 +1,6 @@
-# Intégration continue — étages 1 et 2 de l'ADR-0010.
+# Intégration continue — étapes 1 et 2 de l'ADR-0010.
 #
-# L'étage 3 (bout en bout : cold start §12 phase 0, egress du runner ADR-0007,
+# L'étape 3 (bout en bout : cold start §12 phase 0, egress du runner ADR-0007,
 # run tué brutalement §6.4) est DÉLIBÉRÉMENT ABSENT de ce workflow : il exige le
 # cluster k3s réel, qui n'est pas joignable depuis un runner GitHub hébergé. Il
 # fera l'objet d'un workflow distinct sur runner self-hosted. Le remplacer ici
@@ -77,7 +77,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Ce job tient les arêtes entre rôles serveur de l'ADR-0006, que le
+      # Ce job tient les arrêts entre rôles serveur de l'ADR-0006, que le
       # compilateur ne couvre PAS : `api`, `gitd`, `controller` et `ingest` sont
       # frères sous le même `internal/`, donc mutuellement visibles. Voir
       # l'en-tête de .golangci.yml.
@@ -89,7 +89,7 @@ jobs:
           version: v2.12.2
 
   test:
-    name: Tests — étage 1 (unitaire)
+    name: Tests — étape 1 (unitaire)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -99,14 +99,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Propriété à tenir (ADR-0011) : cet étage ne réclame ni Docker ni
+      # Propriété à tenir (ADR-0011) : cet étape ne réclame ni Docker ni
       # cluster. S'il se met à en avoir besoin, c'est qu'un test a glissé
-      # d'étage.
+      # d'étape.
       - name: go test
         run: go test -race ./...
 
   integration:
-    name: Tests — étage 2 (intégration)
+    name: Tests — étape 2 (intégration)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -126,3 +126,105 @@ jobs:
 
       - name: go test -tags=integration
         run: go test -race -tags=integration ./...
+
+  # ============================================================================
+  # UI Build Job
+  # ============================================================================
+  ui-build:
+    name: Build UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    # Only run on main branch or PRs that modify UI files
+    if: github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ui') || contains(fromJson('[' + github.event.pull_request.body + ']'), 'ui')
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      # Setup Node.js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'ui/package-lock.json'
+
+      # Install UI dependencies
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci --no-audit --no-fund
+
+      # Lint UI
+      - name: Lint UI
+        working-directory: ui
+        run: npm run lint
+
+      # Build UI for production
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+      # Upload UI build artifact
+      - name: Upload UI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: warden-ui-build
+          path: ui/dist/
+          retention-days: 7
+
+  # ============================================================================
+  # UI Docker Image Build and Push
+  # ============================================================================
+  ui-docker:
+    name: Docker UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [ui-build]
+    
+    # Only run on main branch
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      # Download UI build artifact
+      - name: Download UI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: warden-ui-build
+          path: ui/dist/
+
+      # Setup Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login to GitHub Container Registry
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata (tags, labels) for Docker
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/warden-ui
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # Build and push Docker image
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ui
+          file: ui/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.DS_Store
+*.md
+*.tsbuildinfo
+src/**/*.spec.ts
+angular.json
+.tsconfig.json
+.tsconfig.app.json
+.tsconfig.spec.json
+package-lock.json
