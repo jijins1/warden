@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -86,7 +87,7 @@ func Run(ctx context.Context, r Role) error {
 	case RoleGit:
 		return runGit(ctx)
 	case RoleController:
-		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+		return runController(ctx)
 	default:
 		return fmt.Errorf("rôle %q: pas encore implémenté", r)
 	}
@@ -129,6 +130,122 @@ func runIngest(ctx context.Context) error {
 	defer fermer()
 
 	return servirIngestion(ctx, adresse, h)
+}
+
+// runController réconcilie l'état de la base sur ce que le cluster montre.
+//
+// C'est la marche 3 de la machine à états du §6.4, et sans elle le produit MENT :
+// un run dont le pod est évincé, tué par l'OOM ou emporté avec son nœud reste
+// « en cours » pour toujours, alors que la question d'audit qui compte — qu'est-ce
+// qui avait déjà été modifié — a une réponse dans le journal d'events.
+//
+// Il ne sert AUCUN port. C'est délibéré : rien ne doit pouvoir le solliciter de
+// l'extérieur, et il n'a rien à répondre à personne.
+//
+// PAS DE LEADER ELECTION à ce stade, alors que l'ADR-0006 la prévoit. Elle ne
+// changerait rien à la correction : la garde `ended_at IS NULL` rend la clôture
+// idempotente, et le ramassage ne touche que des pods déjà terminés. Deux
+// contrôleurs en parallèle feraient donc du travail en double, pas du travail
+// faux — et le Lease s'ajoutera quand le coût du doublon comptera.
+func runController(ctx context.Context) error {
+	dsn, err := databaseURL(EnvDatabaseURL)
+	if err != nil {
+		return err
+	}
+	ns := os.Getenv(EnvPodNamespace)
+	if ns == "" {
+		// Sans namespace, il n'y a rien à observer. Démarrer quand même donnerait
+		// un contrôleur qui tourne, ne réconcilie rien et paraît sain — la pire
+		// des trois issues.
+		return fmt.Errorf("rôle controller : %s est requise", EnvPodNamespace)
+	}
+
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("ouverture du magasin: %w", err)
+	}
+	defer st.Close()
+
+	k8s, err := clientKubernetes()
+	if err != nil {
+		return err
+	}
+	// Les adresses de dispatch et d'ingestion sont exigées par le constructeur de
+	// l'orchestrateur parce qu'un pod LANCÉ sans elles ne saurait qui appeler. Le
+	// contrôleur n'en lance aucun ; les valeurs posées ici ne partent nulle part,
+	// et les inventer serait plus honnête que d'affaiblir un contrôle qui protège
+	// le chemin de lancement.
+	orch, err := orchestrator.New(k8s, orchestrator.Config{
+		Namespace:   ns,
+		DispatchURL: valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid"),
+		IngestURL:   valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid"),
+	})
+	if err != nil {
+		return err
+	}
+
+	rec, err := core.NewReconciler(st, orch)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("contrôleur démarré",
+		slog.String("namespace", ns),
+		slog.Duration("intervalle", core.IntervalleReconciliation))
+
+	err = rec.Boucler(ctx, core.IntervalleReconciliation, journaliserBilan)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// journaliserBilan rend un passage lisible sans le noyer.
+//
+// Le passage à vide est le cas NORMAL et il est journalisé en debug : à trente
+// secondes d'intervalle, l'écrire en info remplirait les logs de bruit, et le
+// bruit est ce qui fait qu'on ne voit pas la line qui compte.
+func journaliserBilan(b core.Bilan, err error) {
+	if err != nil {
+		slog.Error("passage de réconciliation en échec",
+			slog.String("error", err.Error()),
+			slog.Int("examinés", b.Examines), slog.Int("clos", b.Clos))
+		return
+	}
+	if b.Clos == 0 && b.Ramasses == 0 {
+		slog.Debug("réconciliation : rien à faire", slog.Int("examinés", b.Examines))
+		return
+	}
+	slog.Info("réconciliation",
+		slog.Int("examinés", b.Examines),
+		slog.Int("clos", b.Clos),
+		slog.Int("ramassés", b.Ramasses))
+}
+
+// secondesDeDeadline lit le plafond de durée d'un run.
+//
+// Une valeur illisible fait ÉCHOUER le démarrage plutôt que retomber sur le
+// défaut : « 30m » écrit là où des secondes sont attendues donnerait
+// silencieusement deux heures, et personne ne le verrait avant d'avoir besoin du
+// plafond — c'est-à-dire quand un run pend.
+func secondesDeDeadline() (int64, error) {
+	brut := os.Getenv(EnvRunDeadlineSeconds)
+	if brut == "" {
+		return 0, nil // l'orchestrateur applique son défaut
+	}
+	n, err := strconv.ParseInt(brut, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s=%q : un nombre de SECONDES strictement positif est attendu",
+			EnvRunDeadlineSeconds, brut)
+	}
+	return n, nil
+}
+
+func valeurOuDefaut(nom, defaut string) string {
+	if v := os.Getenv(nom); v != "" {
+		return v
+	}
+	return defaut
 }
 
 func runAPI(ctx context.Context) error {
@@ -265,8 +382,18 @@ func runAPI(ctx context.Context) error {
 			if ingestURL == "" {
 				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvIngestRunnerURL)
 			}
+			// Le plafond de durée d'un run vient du DÉPLOIEMENT, faute d'une
+			// configuration projet (ADR-0014). C'est la décision actée n°13 : ce
+			// qui borne un run qui pend même contrôleur mort, donc la seule
+			// protection qui ne dépend d'aucun de nos processus. Absente, la
+			// valeur par défaut de l'orchestrateur s'applique.
+			deadline, err := secondesDeDeadline()
+			if err != nil {
+				return err
+			}
 			orch, err := orchestrator.New(k8s, orchestrator.Config{
 				Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
+				DeadlineSeconds: deadline,
 			})
 			if err != nil {
 				return err
@@ -413,6 +540,13 @@ const (
 	EnvIngestRunnerURL = "WARDEN_INGEST_RUNNER_URL"
 	EnvPodNamespace    = "WARDEN_POD_NAMESPACE" // namespace où vivent les pods runner
 	EnvRunnerImage     = "WARDEN_RUNNER_IMAGE"  // image du runner, en attendant la configuration projet (ADR-0014)
+
+	// EnvRunDeadlineSeconds borne la durée d'un run, en SECONDES. C'est la
+	// décision actée n°13 : `activeDeadlineSeconds` sur le pod arrête un run qui
+	// pend même si le contrôleur est mort, donc c'est la seule protection qui ne
+	// dépend d'aucun de nos processus. Absente, le défaut de l'orchestrateur
+	// s'applique — deux heures.
+	EnvRunDeadlineSeconds = "WARDEN_RUN_DEADLINE_SECONDS"
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il

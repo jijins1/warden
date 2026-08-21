@@ -408,3 +408,50 @@ func attendre(t *testing.T, ok func() bool, delai time.Duration) {
 	}
 	t.Fatalf("condition non atteinte en %s", delai)
 }
+
+// --- abandon au réconciliateur ---
+
+// Le pod meurt SOUS le run. Ce que le runner sait, ce sont ses events — et le
+// §6.3 dit que c'est ce qui compte le plus, la question d'audit étant
+// « qu'est-ce qui avait déjà été modifié ». Ce qu'il ne sait pas, c'est
+// pourquoi il meurt.
+func TestAbandonnerRemonteLesEventsSansTramerTerminale(t *testing.T) {
+	r, rc := monter(t)
+
+	r.Send(evt(`{"deja":"modifie"}`))
+	if err := r.Abandonner(t.Context()); err != nil {
+		t.Fatalf("Abandonner: %v", err)
+	}
+
+	if n := len(rc.tousLesEvents()); n != 1 {
+		t.Errorf("events remontés = %d, attendu 1 : ce qui avait déjà été "+
+			"modifié a été perdu", n)
+	}
+	for _, l := range rc.recus() {
+		if l.Final != nil {
+			t.Fatalf("une trame terminale a été envoyée : issue=%q cause=%q — "+
+				"le runner a prononcé une issue qu'il n'a pas observée",
+				l.Final.Status, l.Final.Cause)
+		}
+	}
+}
+
+// Exclusive de Close : le chemin d'arrêt passe par plusieurs `defer`, et
+// abandonner puis clore enverrait une trame terminale après coup — donc
+// devancerait le réconciliateur avec l'issue qu'on refusait justement d'écrire.
+func TestApresAbandonnerCloseNEcritRien(t *testing.T) {
+	r, rc := monter(t)
+
+	if err := r.Abandonner(t.Context()); err != nil {
+		t.Fatalf("Abandonner: %v", err)
+	}
+	if err := r.Close(t.Context(), wire.Final{Status: wire.StatusFailed}); err != nil {
+		t.Errorf("Close après Abandonner: %v", err)
+	}
+
+	for _, l := range rc.recus() {
+		if l.Final != nil {
+			t.Fatalf("trame terminale émise après un abandon : issue=%q", l.Final.Status)
+		}
+	}
+}

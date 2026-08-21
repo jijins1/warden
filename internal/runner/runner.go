@@ -173,14 +173,33 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		return joindre(clore(ctx, rapporteur, ingestwire.StatusFailed, ""),
 			fmt.Errorf("run %s : %w", ordre.RunRef, errReport))
 	}
+	// Le pod meurt SOUS le run. MESURÉ sur le cluster : à l'expiration
+	// d'`activeDeadlineSeconds`, le signal annule le contexte, `ansible-runner`
+	// est interrompu et rapporte « failed » — que le playbook ait échoué ou non.
+	// Le clore ici inscrirait « votre playbook a échoué » à propos d'un playbook
+	// qui n'a rien dit, c'est-à-dire un mensonge dans le journal d'audit.
+	//
+	// Le runner rapporte donc ce qu'il SAIT — ses events, ce qui avait déjà été
+	// modifié (§6.3) — et laisse la clôture au réconciliateur, seul à voir
+	// « DeadlineExceeded », « Evicted » ou « OOMKilled » (§6.4, marche 3). Ce
+	// renvoi n'est sûr que parce que ce composant existe : avant lui, le run
+	// serait resté en vol pour toujours.
+	//
+	// Un succès CONSTATÉ fait exception : si `ansible-runner` a rapporté
+	// « successful », le playbook est allé au bout et le signal est arrivé après.
+	// C'est un fait observé, pas une supposition, et le taire perdrait l'issue
+	// d'un run qui a réussi.
+	if ctx.Err() != nil && !(err == nil && statut == exec.StatutReussi) {
+		slog.Warn("run abandonné au réconciliateur",
+			slog.String("run_ref", ordre.RunRef),
+			slog.String("motif", "le pod s'arrête ; l'issue observée ne serait pas celle du playbook"))
+		return joindre(abandonner(ctx, rapporteur),
+			fmt.Errorf("run %s : arrêt du pod : %w", ordre.RunRef, ctx.Err()))
+	}
+
 	if err != nil {
-		// Panne de PILOTAGE, distincte d'un playbook qui échoue. Si le contexte
-		// est annulé, c'est le Ctrl-C du §5.6 et non un défaut.
-		final, cause := ingestwire.StatusFailed, ingestwire.Cause("")
-		if ctx.Err() != nil {
-			final, cause = ingestwire.StatusInterrupted, ingestwire.CauseUserInterrupt
-		}
-		return joindre(clore(ctx, rapporteur, final, cause),
+		// Panne de PILOTAGE, distincte d'un playbook qui échoue.
+		return joindre(clore(ctx, rapporteur, ingestwire.StatusFailed, ""),
 			fmt.Errorf("run %s : %w", ordre.RunRef, err))
 	}
 
@@ -205,6 +224,15 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 // Le contexte est DÉTACHÉ de celui du run : l'annulation du §5.6 est justement
 // le moment où il reste le plus à dire, et fermer avec un contexte déjà annulé
 // ferait échouer l'écriture de la terminaison qu'on essaie de journaliser.
+// abandonner vide le dernier lot SANS clore, et pour la même raison que `clore`
+// détache son contexte : c'est au moment de l'arrêt qu'il reste le plus à dire.
+func abandonner(ctx context.Context, r *report.Reporter) error {
+	fond, annuler := context.WithTimeout(context.WithoutCancel(ctx), delaiDeCloture)
+	defer annuler()
+
+	return r.Abandonner(fond)
+}
+
 func clore(ctx context.Context, r *report.Reporter, statut ingestwire.Status, cause ingestwire.Cause) error {
 	fond, annuler := context.WithTimeout(context.WithoutCancel(ctx), delaiDeCloture)
 	defer annuler()

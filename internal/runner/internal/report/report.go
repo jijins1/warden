@@ -199,6 +199,34 @@ func (r *Reporter) Close(ctx context.Context, f wire.Final) error {
 	return err
 }
 
+// Abandonner vide ce qui reste SANS prononcer d'issue.
+//
+// C'est le chemin du runner qui meurt sous son propre run : le pod est évincé,
+// tué par l'OOM, ou arrêté sur `activeDeadlineSeconds`. Ce que le runner sait
+// alors, ce sont ses events — et le §6.3 dit que c'est ce qui compte le plus,
+// puisque la question d'audit est « qu'est-ce qui avait déjà été modifié ». Ce
+// qu'il ne sait PAS, c'est pourquoi il meurt : `ansible-runner` interrompu
+// rapporte « failed », ce qui se lirait comme un playbook en échec alors que le
+// playbook n'a rien dit.
+//
+// La clôture revient donc au réconciliateur, seul à voir `DeadlineExceeded`,
+// « Evicted » ou « OOMKilled » (§6.4, marche 3). Laisser le run ouvert n'est
+// sûr que PARCE QUE ce composant existe : avant lui, cela l'aurait laissé en vol
+// pour toujours.
+//
+// Exclusive de Close, par le même `unefois` : le chemin d'arrêt passe par
+// plusieurs `defer`, et abandonner puis clore enverrait une trame terminale
+// après coup.
+func (r *Reporter) Abandonner(ctx context.Context) error {
+	var err error
+	r.unefois.Do(func() {
+		close(r.arret)
+		<-r.fini
+		err = r.vider(ctx, nil)
+	})
+	return err
+}
+
 // boucle vide le tampon au rythme du contrat de fil.
 func (r *Reporter) boucle() {
 	defer close(r.fini)

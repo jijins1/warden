@@ -320,7 +320,7 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 			},
 
 			Containers: []corev1.Container{{
-				Name:  "runner",
+				Name:  NomConteneur,
 				Image: spec.Image,
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: faux(),

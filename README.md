@@ -87,6 +87,16 @@ buffer would lose exactly that.
 Two requests would leave a window where the run is closed but its final events
 are not recorded.
 
+**A dying runner does not pronounce a verdict.** When the pod is killed under it
+— evicted, OOM-killed, or stopped on the run deadline — `ansible-runner` reports
+`failed` simply because the play was interrupted. Recording that would say *your
+playbook failed* about a playbook that said nothing. The runner flushes its
+events and stops there; the `controller` closes the run, because it is the only
+component that can see `DeadlineExceeded` or `Evicted` ([ADR-0031]).
+
+Measured on the reference deployment: a run killed mid-flight is closed 6 seconds
+later, keeping the change it had already made.
+
 ---
 
 ## Machine enrolment
@@ -170,7 +180,7 @@ expressed per role:
 | — | 8082 | smart HTTP **write**, for the CLI |
 | — | 8083 | smart HTTP **read**, for runner pods |
 | `ingest` | 8085 | the ingest endpoint alone — implemented, not deployed |
-| `controller` | — | **not implemented** — see below |
+| `controller` | — | reconciles runs against what the cluster shows; serves nothing |
 
 Ports rather than paths, because that is what a `NetworkPolicy` can express.
 
@@ -259,9 +269,10 @@ its environment's key. This is the single most important gap.
 audit says "alice" because a client claimed to be alice. OIDC and mTLS remain to
 be written.
 
-**No `controller` role.** Consequences: infrastructure termination causes (OOM,
-eviction, node loss) are never recorded, and nothing reaps dead pods. A run that
-hangs stays hanging until `activeDeadlineSeconds`.
+**No leader election.** The `controller` role runs at one replica and relies on
+its actions being idempotent rather than on a Lease ([ADR-0031]). Two
+controllers would duplicate work, not corrupt it — but the Lease the ADR-0006
+describes is still unwritten.
 
 **One key per environment.** Every machine in `prod` shares one key. The host's
 logs will say `ansible`, not `alice` — non-repudiation stops at the product
@@ -281,7 +292,7 @@ prefetching (§8.4).
 
 ## Design decisions
 
-31 ADRs in [`docs/adr/`](docs/adr/), in French, each with the options rejected
+32 ADRs in [`docs/adr/`](docs/adr/), in French, each with the options rejected
 and why. They exist so that a settled question is not re-decided backwards six
 months later. The ones that explain the most:
 
@@ -291,6 +302,7 @@ months later. The ones that explain the most:
 - [ADR-0011] — one binary per trust domain, boundaries enforced by the compiler
 - [ADR-0020] — access credentials, and what v1 knowingly does not do
 - [ADR-0030] — machine enrolment, and the egress we opened
+- [ADR-0031] — reconciling killed runs, and who may pronounce an outcome
 
 The product specification lives in [`specs/initial.md`](specs/initial.md).
 
@@ -303,3 +315,4 @@ The product specification lives in [`specs/initial.md`](specs/initial.md).
 [ADR-0019]: docs/adr/0019-decoupage-hexagonal-du-control-plane.md
 [ADR-0020]: docs/adr/0020-key-inventory-credentials-dacces.md
 [ADR-0030]: docs/adr/0030-enrolement-des-machines.md
+[ADR-0031]: docs/adr/0031-reconciliation-des-runs-tues.md
