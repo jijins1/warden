@@ -165,3 +165,63 @@ UPDATE environment_grant g
 	}
 	return nil
 }
+
+// AppliquerLePlan exécute un plan de droits, TOUT OU RIEN.
+//
+// Une seule transaction, et ce n'est pas du confort : un plan à moitié appliqué
+// laisserait un état que ni le fichier ni la base ne décrivent — des révocations
+// faites, des attributions non — c'est-à-dire précisément l'incohérence que le
+// versionnement existe pour supprimer. Le prochain passage la réparerait, mais
+// entre-temps quelqu'un a perdu un accès qu'il devait garder.
+//
+// Les RÉVOCATIONS d'abord. L'ordre compte quand un même compte apparaît des deux
+// côtés — ce qui n'arrive pas dans un plan bien formé, mais l'ordre inverse
+// rendrait ce cas destructeur au lieu d'être neutre.
+//
+// Un compte inconnu fait ÉCHOUER le plan entier plutôt que d'être ignoré : une
+// faute de frappe dans un fichier de droits doit se voir en revue, pas produire
+// silencieusement un accès manquant.
+func (s *Store) AppliquerLePlan(ctx context.Context, plan core.GrantPlan, parQui int64) error {
+	if plan.Vide() {
+		return nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("application du plan de droits: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, c := range plan.Revoquer {
+		const q = `
+UPDATE environment_grant g
+   SET revoked_at = now()
+  FROM users u
+ WHERE u.id = g.user_id AND u.subject = $1 AND u.type = 'local'
+   AND g.environment = $2 AND g.revoked_at IS NULL`
+
+		if _, err := tx.Exec(ctx, q, c.Subject, c.Environment); err != nil {
+			return fmt.Errorf("révocation de %s sur %q: %w", c.Subject, c.Environment, err)
+		}
+	}
+
+	for _, c := range plan.Accorder {
+		const q = `
+INSERT INTO environment_grant (user_id, environment, granted_by)
+SELECT u.id, $2, NULLIF($3, 0)::bigint
+  FROM users u
+ WHERE u.subject = $1 AND u.type = 'local'`
+
+		tag, err := tx.Exec(ctx, q, c.Subject, c.Environment, parQui)
+		if err != nil {
+			return fmt.Errorf("droit de %s sur %q: %w", c.Subject, c.Environment, err)
+		}
+		if tag.RowsAffected() == 0 {
+			// Le SELECT n'a rien rendu : le compte n'existe pas. Le plan entier
+			// échoue — voir l'en-tête.
+			return fmt.Errorf("compte %q: %w", c.Subject, ErrNotFound)
+		}
+	}
+
+	return tx.Commit(ctx)
+}

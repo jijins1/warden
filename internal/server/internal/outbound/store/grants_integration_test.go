@@ -13,6 +13,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
@@ -232,5 +233,121 @@ func TestListerSansSujetRendTousLesDroits(t *testing.T) {
 	}
 	if len(dAlice) != 1 || dAlice[0].Subject != "alice" {
 		t.Errorf("droits d'alice = %+v", dAlice)
+	}
+}
+
+// --- la réconciliation déclarative (GitOps) ---
+
+// TOUT OU RIEN. Un compte inconnu — une faute de frappe dans le fichier — fait
+// échouer le plan ENTIER : les révocations déjà calculées ne doivent pas prendre
+// effet, sans quoi une coquille retirerait des accès sans en donner aucun.
+func TestUnPlanAvecUnCompteInconnuNAppliqueRien(t *testing.T) {
+	s := ouvrirStore(t)
+	ctx := context.Background()
+
+	u := compte(t, s, "alice", false)
+	if _, err := s.Grant(ctx, "alice", "prod", 0); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	// Le plan retire alice et donne à un compte qui n'existe pas.
+	plan := core.GrantPlan{
+		Revoquer: []core.GrantChange{{Subject: "alice", Environment: "prod"}},
+		Accorder: []core.GrantChange{{Subject: "fantome", Environment: "prod"}},
+	}
+
+	if err := s.AppliquerLePlan(ctx, plan, 0); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err = %v, attendu ErrNotFound", err)
+	}
+
+	// LA vérification : alice a gardé son accès.
+	if ok, _ := s.PeutAtteindre(ctx, u.ID, "prod"); !ok {
+		t.Error("la révocation a été appliquée malgré l'échec du plan")
+	}
+}
+
+// Le cas nominal : un passage qui accorde et révoque à la fois.
+func TestUnPlanMixteSAppliqueEnUnPassage(t *testing.T) {
+	s := ouvrirStore(t)
+	ctx := context.Background()
+
+	alice := compte(t, s, "alice", false)
+	bob := compte(t, s, "bob", false)
+	admin := compte(t, s, "admin", true)
+
+	if _, err := s.Grant(ctx, "alice", "prod", 0); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	plan := core.GrantPlan{
+		Revoquer: []core.GrantChange{{Subject: "alice", Environment: "prod"}},
+		Accorder: []core.GrantChange{{Subject: "bob", Environment: "prod"}},
+	}
+	if err := s.AppliquerLePlan(ctx, plan, admin.ID); err != nil {
+		t.Fatalf("AppliquerLePlan: %v", err)
+	}
+
+	if ok, _ := s.PeutAtteindre(ctx, alice.ID, "prod"); ok {
+		t.Error("alice a gardé un accès qui devait être révoqué")
+	}
+	if ok, _ := s.PeutAtteindre(ctx, bob.ID, "prod"); !ok {
+		t.Error("bob n'a pas obtenu son accès")
+	}
+
+	// L'attributeur est enregistré : un droit posé par un pipeline reste
+	// imputable à l'identité sous laquelle il a tourné.
+	droits, _ := s.ListGrants(ctx, "bob")
+	if len(droits) != 1 || droits[0].GrantedBySubject != "admin" {
+		t.Errorf("droits de bob = %+v", droits)
+	}
+}
+
+// Un plan VIDE ne doit rien faire, et surtout pas échouer : c'est le cas normal
+// d'un pipeline qui rejoue un fichier inchangé.
+func TestUnPlanVideNeFaitRien(t *testing.T) {
+	s := ouvrirStore(t)
+
+	if err := s.AppliquerLePlan(context.Background(), core.GrantPlan{}, 0); err != nil {
+		t.Errorf("un plan vide a échoué : %v", err)
+	}
+}
+
+// Le bout en bout du chemin GitOps : planifier depuis l'état réel, appliquer,
+// puis replanifier — le second plan doit être vide. C'est la propriété qui rend
+// un pipeline rejouable.
+func TestReconcilierPuisReplanifierDonneUnPlanVide(t *testing.T) {
+	s := ouvrirStore(t)
+	ctx := context.Background()
+
+	compte(t, s, "alice", false)
+	compte(t, s, "bob", false)
+	if _, err := s.Grant(ctx, "bob", "prod", 0); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	document := core.GrantDocument{Environments: map[string][]string{"prod": {"alice"}}}
+
+	actuels, err := s.ListGrants(ctx, "")
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	plan, err := core.PlanifierLesDroits(document, actuels)
+	if err != nil {
+		t.Fatalf("PlanifierLesDroits: %v", err)
+	}
+	if err := s.AppliquerLePlan(ctx, plan, 0); err != nil {
+		t.Fatalf("AppliquerLePlan: %v", err)
+	}
+
+	actuels, _ = s.ListGrants(ctx, "")
+	second, err := core.PlanifierLesDroits(document, actuels)
+	if err != nil {
+		t.Fatalf("seconde planification: %v", err)
+	}
+	if !second.Vide() {
+		t.Errorf("le second passage change encore quelque chose : %+v", second)
+	}
+	if second.Inchanges != 1 {
+		t.Errorf("inchangés = %d, attendu 1", second.Inchanges)
 	}
 }

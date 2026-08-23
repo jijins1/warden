@@ -61,6 +61,14 @@ type EnvironmentGrants interface {
 
 	// Revoke éteint un droit. Idempotent pour la même raison.
 	Revoke(ctx context.Context, subject, environment string) error
+
+	// AppliquerLePlan exécute une réconciliation déclarative, TOUT OU RIEN.
+	//
+	// Une seule transaction : un plan à moitié appliqué laisserait un état que ni
+	// le fichier ni la base ne décrivent — des révocations faites, des
+	// attributions non — c'est-à-dire l'incohérence que le versionnement existe
+	// pour supprimer.
+	AppliquerLePlan(ctx context.Context, plan GrantPlan, parQui int64) error
 }
 
 // VerifierLAcces refuse un environnement auquel l'utilisateur n'a pas droit.

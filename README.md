@@ -138,14 +138,35 @@ weak because it has to be dictated.
 
 ## Who may run where
 
-Access to an environment is granted, never assumed:
+Access to an environment is granted, never assumed. The normal path is a
+versioned file, applied by CI:
+
+```yaml
+# grants.yaml
+environments:
+  prod:
+    - alice
+    - bob
+  staging: []        # explicitly nobody
+```
 
 ```sh
-warden grant add    --subject alice --env prod
-warden grant list                     # revoked grants are shown too — it is an
-                                      # audit view, not a list of what is allowed
-warden grant revoke --subject alice --env prod
+warden grant apply -f grants.yaml --dry-run   # the plan, for the pull request
+warden grant apply -f grants.yaml
+warden grant list                             # revoked grants are shown too —
+                                              # it is an audit view
 ```
+
+**Removing someone from the file revokes their access.** That is the point: for
+every environment the file names, the list is authoritative. An environment the
+file does *not* name is left alone, so grants can be split across files and a
+truncated file cannot revoke everything. An empty document is refused outright —
+"wanting nothing" and "having read nothing" look too much alike.
+
+Applying is all-or-nothing. A typo in an account name fails the whole plan rather
+than revoking people without granting anyone.
+
+`warden grant add` / `grant revoke` remain, for when you need them now.
 
 What this buys, stated exactly, because a control whose reach is overestimated is
 worse than no control:

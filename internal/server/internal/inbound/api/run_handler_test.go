@@ -384,6 +384,8 @@ func (d droitsFactices) Grant(context.Context, string, string, int64) (core.Envi
 
 func (d droitsFactices) Revoke(context.Context, string, string) error { return nil }
 
+func (d droitsFactices) AppliquerLePlan(context.Context, core.GrantPlan, int64) error { return nil }
+
 // --- l'autorisation par environnement (§10.2) ---
 
 // LE test du contrôle. Sans droit, le run est refusé AVANT tout effet : rien

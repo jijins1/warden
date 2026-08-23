@@ -155,3 +155,113 @@ func (a *Server) HandleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// grantDocumentPayload est le document qu'un dépôt GitOps versionne.
+type grantDocumentPayload struct {
+	Environments map[string][]string `json:"environments"`
+}
+
+// grantPlanPayload est le plan rendu, appliqué ou non.
+type grantPlanPayload struct {
+	// Applied dit si le plan a été EXÉCUTÉ. Sans ce champ, une réponse de
+	// dry-run et une réponse d'application se ressemblent, et un pipeline mal
+	// écrit croirait avoir appliqué.
+	Applied bool `json:"applied"`
+
+	Granted   []grantChangePayload `json:"granted"`
+	Revoked   []grantChangePayload `json:"revoked"`
+	Unchanged int                  `json:"unchanged"`
+}
+
+type grantChangePayload struct {
+	Subject     string `json:"subject"`
+	Environment string `json:"environment"`
+}
+
+// tailleMaxDroits borne le document accepté. Un couple fait quelques dizaines
+// d'octets ; ce plafond en laisse passer des dizaines de milliers.
+const tailleMaxDroits = 1 << 20
+
+// HandleApplyGrants réconcilie les droits sur un document déclaratif.
+//
+// PUT /admin/grants?dry_run=true
+//
+// DÉCLARATIF, donc destructeur par construction : pour chaque environnement que
+// le document nomme, la liste fait autorité, et un compte retiré de la liste est
+// RÉVOQUÉ. C'est ce qui distingue cette route de `PUT /admin/grants/{s}/{e}` —
+// et c'est ce qui donne sa valeur au versionnement, puisque retirer quelqu'un
+// d'un fichier doit lui retirer l'accès.
+//
+// La PORTÉE est l'environnement et non le document : un environnement absent
+// n'est pas touché. Deux conséquences voulues — les droits se découpent en
+// plusieurs fichiers, et un fichier tronqué laisse intacts les environnements
+// qu'il a perdus au lieu de tout révoquer.
+//
+// `dry_run` rend le plan SANS l'appliquer. C'est lui qui rend la revue possible :
+// un changement de droits sur la production doit être lisible dans une pull
+// request avant d'être appliqué, sans quoi le versionnement n'achète qu'un
+// historique.
+func (a *Server) HandleApplyGrants(w http.ResponseWriter, r *http.Request) {
+	if !a.adminOuRien(w, r) {
+		return
+	}
+	if a.deps.Access == nil {
+		http.Error(w, "environment grants are not available", http.StatusNotImplemented)
+		return
+	}
+
+	var doc grantDocumentPayload
+	if !decoderJSON(w, r, tailleMaxDroits, &doc) {
+		return
+	}
+
+	actuels, err := a.deps.Access.ListGrants(r.Context(), "")
+	if err != nil {
+		slog.Error("lecture des droits en échec", slog.String("error", err.Error()))
+		http.Error(w, "could not read the current grants", http.StatusInternalServerError)
+		return
+	}
+
+	plan, err := core.PlanifierLesDroits(core.GrantDocument{Environments: doc.Environments}, actuels)
+	if err != nil {
+		// Document vide ou environnement mal formé : ce sont des erreurs de
+		// RÉDACTION, et le message est rédigé pour être lu par un humain devant
+		// sa pull request.
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sec := r.URL.Query().Get("dry_run") == "true"
+	if !sec {
+		if err := a.deps.Access.AppliquerLePlan(r.Context(), plan, utilisateurID(r)); err != nil {
+			if errors.Is(err, core.ErrNotFound) {
+				// Un compte inconnu fait échouer le plan ENTIER. Une faute de
+				// frappe dans un fichier de droits doit se voir, pas produire
+				// silencieusement un accès manquant.
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			slog.Error("application du plan de droits en échec", slog.String("error", err.Error()))
+			http.Error(w, "could not apply the grants", http.StatusInternalServerError)
+			return
+		}
+		slog.Warn("droits réconciliés",
+			slog.Int("accordés", len(plan.Accorder)), slog.Int("révoqués", len(plan.Revoquer)),
+			slog.Int64("par", utilisateurID(r)))
+	}
+
+	ecrireJSON(w, grantPlanPayload{
+		Applied:   !sec,
+		Granted:   versChanges(plan.Accorder),
+		Revoked:   versChanges(plan.Revoquer),
+		Unchanged: plan.Inchanges,
+	})
+}
+
+func versChanges(cs []core.GrantChange) []grantChangePayload {
+	out := make([]grantChangePayload, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, grantChangePayload{Subject: c.Subject, Environment: c.Environment})
+	}
+	return out
+}

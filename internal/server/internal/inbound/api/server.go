@@ -253,6 +253,9 @@ func (a *Server) Handler() http.Handler {
 	// produit, et il ne couvre qu'une moitié : sans droit, pas de clé d'accès ;
 	// avec droit, l'egress reste ouvert (ADR-0033).
 	router.HandleFunc("GET /admin/grants", a.HandleListGrants)
+	// Le chemin DÉCLARATIF, pour un dépôt GitOps. Distinct de l'impératif
+	// ci-dessous, et destructeur là où l'autre est additif : voir le handler.
+	router.HandleFunc("PUT /admin/grants", a.HandleApplyGrants)
 	router.HandleFunc("PUT /admin/grants/{subject}/{environment}", a.HandlePutGrant)
 	router.HandleFunc("DELETE /admin/grants/{subject}/{environment}", a.HandleRevokeGrant)
 

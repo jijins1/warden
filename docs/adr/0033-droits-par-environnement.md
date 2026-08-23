@@ -117,6 +117,57 @@ affiche « (historique) » pour que la distinction reste lisible.
 Vérifié sur le cluster : 22 runs, un seul couple, un seul droit créé, daté du
 2026-08-16.
 
+### 9. Les droits se DÉCLARENT, dans un fichier versionné
+
+`warden grant apply -f droits.yaml` réconcilie sur un document :
+
+```yaml
+environments:
+  prod:
+    - alice
+    - bob
+  staging: []        # explicitement personne
+```
+
+C'est le chemin normal ; `grant add` / `grant revoke` restent pour l'urgence.
+
+**DESTRUCTIF par construction, et c'est le point.** Pour chaque environnement que
+le document nomme, la liste fait autorité : un compte retiré du fichier est
+RÉVOQUÉ. Sans cela, le versionnement ne servirait qu'à consigner ce qu'on a
+ajouté — or l'essentiel de la valeur d'un fichier de droits est que retirer une
+ligne retire un accès, visiblement, dans une pull request.
+
+Trois garde-fous, parce qu'un mécanisme qui peut retirer l'accès à la production
+doit rater du bon côté :
+
+1. **La portée est l'ENVIRONNEMENT, pas le document.** Un environnement absent
+   n'est pas touché. Cela permet de découper les droits en plusieurs fichiers —
+   une équipe possède les siens — et cela borne le dégât d'un fichier tronqué :
+   la troncature retire des environnements du document, ce qui les laisse
+   intacts, au lieu de tout révoquer. La contrepartie est réelle : supprimer un
+   bloc entier ne révoque rien. C'est le problème classique du « prune », et
+   `warden grant list` reste la seule vue complète.
+2. **Un document vide est REFUSÉ.** « Ne rien vouloir » et « n'avoir rien pu
+   lire » se ressemblent trop — fichier tronqué, mauvaise clé YAML — pour qu'on
+   applique le premier sans le dire. Une liste vide pour un environnement nommé,
+   elle, est un « personne » explicite et révoque.
+3. **`--dry-run` rend le plan sans l'appliquer**, et la réponse porte un champ
+   `applied` : sans lui, une sortie de dry-run et une sortie d'application se
+   ressemblent, et un pipeline mal écrit croirait avoir appliqué. C'est ce
+   dry-run qui rend la revue possible, et sans revue le versionnement n'achète
+   qu'un historique.
+
+L'application est **TOUT OU RIEN**, en une transaction, révocations d'abord. Un
+compte inconnu — une faute de frappe — fait échouer le plan entier : sans cela,
+une coquille retirerait des accès sans en donner aucun. Vérifié sur le cluster,
+c'est le cas qui compte le plus.
+
+**Le modèle est PUSH**, pas pull : un pipeline lance `warden grant apply`, le
+serveur ne va rien chercher dans un dépôt. Un modèle pull demanderait au control
+plane des credentials de forge, un intervalle, et une surface de signalement
+d'erreur — pour un gain que `kubectl apply` en CI n'a jamais eu besoin
+d'apporter. Il reste possible plus tard sans rien casser de ce contrat.
+
 ## Conséquences
 
 **Vérifié sur le cluster réel**, dans l'ordre :
@@ -126,6 +177,16 @@ Vérifié sur le cluster : 22 runs, un seul couple, un seul droit créé, daté 
 3. `warden grant revoke`, puis run sur `prod` : **403** ;
 4. `warden grant add`, puis run sur `prod` : `succeeded` ;
 5. la liste montre les deux lignes, dont la révoquée.
+
+Puis, pour le chemin déclaratif :
+
+6. `--dry-run` annonce l'ajout et ne touche RIEN ;
+7. l'application accorde, et le rejeu du même fichier ne change rien ;
+8. retirer un compte du fichier le **révoque** ;
+9. un fichier ne nommant que `staging` laisse `prod` intact ;
+10. un document vide : **400** ;
+11. une faute de frappe sur un compte : **400**, et `ruokki` garde `prod` — le
+    plan aurait dû le révoquer, le tout-ou-rien l'en a empêché.
 
 **Ce que ça ne fait pas** :
 

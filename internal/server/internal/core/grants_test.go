@@ -58,6 +58,8 @@ func (d *droitsFactices) Grant(context.Context, string, string, int64) (core.Env
 
 func (d *droitsFactices) Revoke(context.Context, string, string) error { return nil }
 
+func (d *droitsFactices) AppliquerLePlan(context.Context, core.GrantPlan, int64) error { return nil }
+
 // --- ce que le contrôle laisse passer ---
 
 func TestUnDroitAccordeOuvreLEnvironnement(t *testing.T) {

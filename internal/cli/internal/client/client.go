@@ -569,3 +569,39 @@ func (c *Client) RevoquerDroit(ctx context.Context, subject, environment string)
 	return c.appeler(ctx, http.MethodDelete,
 		"/admin/grants/"+url.PathEscape(subject)+"/"+url.PathEscape(environment), nil, nil)
 }
+
+// DocumentDroits est ce qu'un dépôt GitOps versionne.
+type DocumentDroits struct {
+	Environments map[string][]string `json:"environments" yaml:"environments"`
+}
+
+// ChangementDroit est une ligne du plan.
+type ChangementDroit struct {
+	Subject     string `json:"subject"`
+	Environment string `json:"environment"`
+}
+
+// PlanDroits est la différence entre le document et l'état.
+type PlanDroits struct {
+	// Applied dit si le plan a été EXÉCUTÉ. Sans ce champ, une réponse de
+	// dry-run et une réponse d'application se ressemblent.
+	Applied bool `json:"applied"`
+
+	Granted   []ChangementDroit `json:"granted"`
+	Revoked   []ChangementDroit `json:"revoked"`
+	Unchanged int               `json:"unchanged"`
+}
+
+// AppliquerDroits réconcilie les droits sur un document déclaratif.
+//
+// `sec` rend le plan sans l'appliquer — c'est ce qui rend la revue possible.
+func (c *Client) AppliquerDroits(ctx context.Context, doc DocumentDroits, sec bool) (PlanDroits, error) {
+	chemin := "/admin/grants"
+	if sec {
+		chemin += "?dry_run=true"
+	}
+
+	var out PlanDroits
+	err := c.appeler(ctx, http.MethodPut, chemin, doc, &out)
+	return out, err
+}
