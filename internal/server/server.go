@@ -32,6 +32,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
+	"github.com/jijins1/warden/internal/server/internal/outbound/grantfile"
 	"github.com/jijins1/warden/internal/server/internal/outbound/keyinventory"
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
@@ -189,11 +190,27 @@ func runController(ctx context.Context) error {
 		return err
 	}
 
+	// Les DROITS sont réconciliés par le contrôleur, et pas par le rôle `api`.
+	//
+	// C'est le rôle dont le métier est justement de faire correspondre la base à
+	// ce que le monde extérieur dit — ici un fichier plutôt qu'un cluster. Et il
+	// tourne à UN réplica : le mettre dans `api`, qui peut en avoir N, ferait
+	// tourner N réconciliateurs sur le même document.
+	droits := grantfile.New(os.Getenv(EnvGrantsFile))
+	if droits != nil {
+		slog.Info("droits lus depuis un fichier",
+			slog.String("chemin", droits.Chemin()),
+			slog.String("note", "c'est la seule source ; aucune commande ne les modifie"))
+	}
+
 	slog.Info("contrôleur démarré",
 		slog.String("namespace", ns),
 		slog.Duration("intervalle", core.IntervalleReconciliation))
 
-	err = rec.Boucler(ctx, core.IntervalleReconciliation, journaliserBilan)
+	err = rec.Boucler(ctx, core.IntervalleReconciliation, func(b core.Bilan, err error) {
+		journaliserBilan(b, err)
+		reconcilierLesDroits(ctx, droits, st)
+	})
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -260,6 +277,79 @@ func dureeDeSession() time.Duration {
 		return 0
 	}
 	return time.Duration(h) * time.Hour
+}
+
+// reconcilierLesDroits applique le document de droits s'il a changé.
+//
+// Adossée au passage du réconciliateur de pods plutôt qu'à sa propre boucle : le
+// rythme est le même, et un second minuteur n'achèterait qu'un second endroit où
+// se tromper d'intervalle.
+//
+// Aucune erreur n'est REMONTÉE : elles sont journalisées et le passage suivant
+// réessaie. Faire échouer la boucle sur un YAML cassé arrêterait aussi la
+// réconciliation des pods, qui n'a rien à voir — et laisserait des runs en vol.
+func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *store.Store) {
+	if source == nil {
+		return
+	}
+
+	doc, change, err := source.Lire()
+	switch {
+	case errors.Is(err, grantfile.ErrAbsent):
+		// NE RIEN FAIRE. Un contrôleur démarré avant que le ConfigMap soit posé
+		// ne doit pas conclure « personne n'a de droit » et tout révoquer.
+		return
+	case err != nil:
+		slog.Error("document de droits illisible",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	case !change:
+		return
+	}
+
+	actuels, err := st.ListGrants(ctx, "")
+	if err != nil {
+		source.Oublier()
+		slog.Error("lecture des droits en échec", slog.String("error", err.Error()))
+		return
+	}
+
+	plan, err := core.PlanifierLesDroits(doc, actuels)
+	if err != nil {
+		// Le document est syntaxiquement lisible mais refusé : document vide,
+		// environnement mal formé, compte vide. C'est une erreur de RÉDACTION, et
+		// elle doit se voir dans les journaux du contrôleur — c'est le seul
+		// endroit où elle apparaîtra, puisque personne ne lance de commande.
+		slog.Error("document de droits refusé",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	}
+	if plan.Vide() {
+		slog.Info("droits inchangés", slog.Int("conformes", plan.Inchanges))
+		return
+	}
+
+	// `parQui` est ZÉRO : personne n'a accordé ces droits à la main. La trace dit
+	// « le document », ce qui est vrai — l'auteur du changement est dans
+	// l'historique git, pas ici.
+	if err := st.AppliquerLePlan(ctx, plan, 0); err != nil {
+		source.Oublier()
+		slog.Error("application des droits en échec",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	}
+
+	for _, c := range plan.Revoquer {
+		slog.Warn("droit révoqué par le document",
+			slog.String("sujet", c.Subject), slog.String("environnement", c.Environment))
+	}
+	for _, c := range plan.Accorder {
+		slog.Warn("droit accordé par le document",
+			slog.String("sujet", c.Subject), slog.String("environnement", c.Environment))
+	}
+	slog.Info("droits réconciliés",
+		slog.Int("accordés", len(plan.Accorder)), slog.Int("révoqués", len(plan.Revoquer)),
+		slog.Int("inchangés", plan.Inchanges))
 }
 
 func valeurOuDefaut(nom, defaut string) string {
@@ -592,6 +682,13 @@ const (
 	// Absente, le défaut du cœur s'applique — trente jours. Voir
 	// `core.DureeSession` pour l'arbitrage qu'il représente.
 	EnvSessionTTL = "WARDEN_SESSION_TTL_HOURS"
+
+	// EnvGrantsFile est le document des droits par environnement (ADR-0033),
+	// monté depuis un ConfigMap versionné dans le dépôt de déploiement. C'est la
+	// SEULE source : aucune commande ne modifie les droits.
+	//
+	// Absente, le contrôleur ne réconcilie aucun droit — et n'en révoque aucun.
+	EnvGrantsFile = "WARDEN_GRANTS_FILE"
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il

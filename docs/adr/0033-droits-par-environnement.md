@@ -117,9 +117,10 @@ affiche « (historique) » pour que la distinction reste lisible.
 Vérifié sur le cluster : 22 runs, un seul couple, un seul droit créé, daté du
 2026-08-16.
 
-### 9. Les droits se DÉCLARENT, dans un fichier versionné
+### 9. La source des droits est un fichier de CONFIGURATION, pas une commande
 
-`warden grant apply -f droits.yaml` réconcilie sur un document :
+Un ConfigMap versionné dans le dépôt de déploiement, monté dans le pod, et
+réconcilié par le rôle `controller` :
 
 ```yaml
 environments:
@@ -129,44 +130,63 @@ environments:
   staging: []        # explicitement personne
 ```
 
-C'est le chemin normal ; `grant add` / `grant revoke` restent pour l'urgence.
+**Aucune commande ne modifie les droits.** `warden grant list` les affiche ;
+il n'existe ni `grant add`, ni `grant revoke`, ni `grant apply`, et aucune route
+d'écriture côté API. La seule façon d'en changer est de committer.
 
-**DESTRUCTIF par construction, et c'est le point.** Pour chaque environnement que
-le document nomme, la liste fait autorité : un compte retiré du fichier est
-RÉVOQUÉ. Sans cela, le versionnement ne servirait qu'à consigner ce qu'on a
-ajouté — or l'essentiel de la valeur d'un fichier de droits est que retirer une
-ligne retire un accès, visiblement, dans une pull request.
+Une première version passait par `warden grant apply -f`, poussé par un
+pipeline. C'était un pas de trop : le cluster est déjà piloté par un outil
+GitOps, et lui ajouter une étape de CI dupliquait ce qu'il fait déjà. Surtout,
+garder une API d'écriture à côté du fichier ferait DEUX sources de vérité, dont
+l'une serait silencieusement écrasée au passage suivant — un droit qu'on croit
+avoir accordé et qui disparaît une minute plus tard est pire qu'une commande
+absente.
 
-Trois garde-fous, parce qu'un mécanisme qui peut retirer l'accès à la production
+**Le CONTRÔLEUR réconcilie, pas l'API.** C'est le rôle dont le métier est
+justement de faire correspondre la base à ce que le monde extérieur dit — ici un
+fichier plutôt qu'un cluster — et il tourne à un seul réplica. Dans `api`, qui
+peut en avoir N, ce seraient N réconciliateurs sur le même document. Le rôle
+`api` lit les droits en base, où le contrôleur les a projetés.
+
+La réconciliation est adossée au passage existant (30 s) plutôt qu'à son propre
+minuteur : le rythme est le même, et un second minuteur n'achèterait qu'un second
+endroit où se tromper d'intervalle.
+
+**DESTRUCTIF par construction.** Pour chaque environnement que le document nomme,
+la liste fait autorité : un compte retiré du fichier est RÉVOQUÉ. Sans cela, le
+versionnement ne servirait qu'à consigner ce qu'on a ajouté — or l'essentiel de
+sa valeur est que retirer une ligne retire un accès, visiblement, dans une revue.
+
+Quatre garde-fous, parce qu'un mécanisme qui peut retirer l'accès à la production
 doit rater du bon côté :
 
-1. **La portée est l'ENVIRONNEMENT, pas le document.** Un environnement absent
-   n'est pas touché. Cela permet de découper les droits en plusieurs fichiers —
-   une équipe possède les siens — et cela borne le dégât d'un fichier tronqué :
-   la troncature retire des environnements du document, ce qui les laisse
-   intacts, au lieu de tout révoquer. La contrepartie est réelle : supprimer un
-   bloc entier ne révoque rien. C'est le problème classique du « prune », et
-   `warden grant list` reste la seule vue complète.
-2. **Un document vide est REFUSÉ.** « Ne rien vouloir » et « n'avoir rien pu
-   lire » se ressemblent trop — fichier tronqué, mauvaise clé YAML — pour qu'on
-   applique le premier sans le dire. Une liste vide pour un environnement nommé,
-   elle, est un « personne » explicite et révoque.
-3. **`--dry-run` rend le plan sans l'appliquer**, et la réponse porte un champ
-   `applied` : sans lui, une sortie de dry-run et une sortie d'application se
-   ressemblent, et un pipeline mal écrit croirait avoir appliqué. C'est ce
-   dry-run qui rend la revue possible, et sans revue le versionnement n'achète
-   qu'un historique.
+1. **Fichier ABSENT = ne rien faire.** Le montage est `optional: true`, et un
+   contrôleur démarré avant que le ConfigMap existe ne doit pas conclure
+   « personne n'a de droit » et tout révoquer. C'est la distinction la plus
+   importante du lecteur : absent n'est pas vide.
+2. **Document VIDE = refusé**, et journalisé en erreur. « Ne rien vouloir » et
+   « n'avoir rien pu lire » se ressemblent trop. Une liste vide sur un
+   environnement nommé, elle, est un « personne » explicite et révoque.
+3. **La portée est l'ENVIRONNEMENT, pas le document.** Un environnement absent
+   n'est pas touché : les droits se découpent en plusieurs ConfigMaps, et un
+   fichier tronqué laisse intacts ceux qu'il a perdus. La contrepartie est
+   réelle — supprimer un bloc entier ne révoque rien, c'est le problème classique
+   du « prune » — et `warden grant list` reste la seule vue complète.
+4. **TOUT OU RIEN**, en une transaction, révocations d'abord. Un compte inconnu
+   fait échouer le document entier : sans cela, une coquille retirerait des accès
+   sans en donner aucun.
 
-L'application est **TOUT OU RIEN**, en une transaction, révocations d'abord. Un
-compte inconnu — une faute de frappe — fait échouer le plan entier : sans cela,
-une coquille retirerait des accès sans en donner aucun. Vérifié sur le cluster,
-c'est le cas qui compte le plus.
+Le changement est détecté sur le CONTENU et non sur l'horodatage : un ConfigMap
+monté est republié par le kubelet à chaque resynchronisation, et se fier à la
+date ferait rejouer une réconciliation par minute pour rien.
 
-**Le modèle est PUSH**, pas pull : un pipeline lance `warden grant apply`, le
-serveur ne va rien chercher dans un dépôt. Un modèle pull demanderait au control
-plane des credentials de forge, un intervalle, et une surface de signalement
-d'erreur — pour un gain que `kubectl apply` en CI n'a jamais eu besoin
-d'apporter. Il reste possible plus tard sans rien casser de ce contrat.
+Ni une erreur de lecture ni un échec d'application ne remontent dans la boucle :
+elles sont journalisées et le passage suivant réessaie. Faire échouer la boucle
+sur un YAML cassé arrêterait aussi la réconciliation des pods, qui n'a rien à
+voir — et laisserait des runs en vol.
+
+`granted_by` est NULL pour ces droits : personne ne les a accordés à la main.
+L'auteur du changement est dans l'historique git, pas en base.
 
 ## Conséquences
 
@@ -178,15 +198,15 @@ d'apporter. Il reste possible plus tard sans rien casser de ce contrat.
 4. `warden grant add`, puis run sur `prod` : `succeeded` ;
 5. la liste montre les deux lignes, dont la révoquée.
 
-Puis, pour le chemin déclaratif :
+Puis, pour le chemin déclaratif, en modifiant le ConfigMap comme le ferait un
+commit synchronisé :
 
-6. `--dry-run` annonce l'ajout et ne touche RIEN ;
-7. l'application accorde, et le rejeu du même fichier ne change rien ;
-8. retirer un compte du fichier le **révoque** ;
-9. un fichier ne nommant que `staging` laisse `prod` intact ;
-10. un document vide : **400** ;
-11. une faute de frappe sur un compte : **400**, et `ruokki` garde `prod` — le
-    plan aurait dû le révoquer, le tout-ou-rien l'en a empêché.
+6. ajouter `bob` au document : accordé **38 secondes** après le `apply` ;
+7. le retirer du document : **révoqué**, 48 secondes après ;
+8. `staging`, que le document ne nomme pas, reste intact tout du long ;
+9. un document vide : refusé et journalisé, `ruokki` **garde** `prod` ;
+10. la commande d'écriture n'existe plus : `warden grant add` répond
+    « flag provided but not defined ».
 
 **Ce que ça ne fait pas** :
 

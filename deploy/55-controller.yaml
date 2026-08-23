@@ -80,6 +80,21 @@ spec:
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: warden-controller
+      volumes:
+        # Le document des droits (ADR-0033), versionné dans `56-droits.yaml`.
+        #
+        # Monté ICI et pas dans `api` : le contrôleur est le rôle dont le métier
+        # est de faire correspondre la base à ce que le monde extérieur dit, et
+        # il tourne à UN réplica. Dans `api`, qui peut en avoir N, ce serait N
+        # réconciliateurs sur le même document.
+        - name: grants
+          configMap:
+            name: warden-grants
+            # Facultatif : un contrôleur démarré avant que le ConfigMap existe
+            # doit tourner, pas rester bloqué au montage. Le code traite
+            # l'absence du fichier comme « ne rien faire » — surtout pas comme un
+            # document vide, qui révoquerait tous les droits du produit.
+            optional: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -101,6 +116,12 @@ spec:
                 secretKeyRef: { name: warden-db-app, key: uri }
             - name: WARDEN_POD_NAMESPACE
               value: warden-dev
+            - name: WARDEN_GRANTS_FILE
+              value: /etc/warden/grants.yaml
+          volumeMounts:
+            - name: grants
+              mountPath: /etc/warden
+              readOnly: true
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits: { memory: 128Mi }

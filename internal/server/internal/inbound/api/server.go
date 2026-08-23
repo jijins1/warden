@@ -249,15 +249,14 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("POST /admin/users/{subject}/disable", a.HandleDisableUser)
 	router.HandleFunc("POST /admin/users/{subject}/enable", a.HandleEnableUser)
 
-	// Les droits par environnement (§10.2). Le seul contrôle d'autorisation du
-	// produit, et il ne couvre qu'une moitié : sans droit, pas de clé d'accès ;
-	// avec droit, l'egress reste ouvert (ADR-0033).
+	// Les droits par environnement (§10.2), en LECTURE SEULE.
+	//
+	// Aucune route ne les modifie, et c'est la décision : la source est un
+	// document versionné que le rôle `controller` réconcilie (ADR-0033). Une API
+	// d'écriture à côté ferait deux sources de vérité, dont l'une serait
+	// silencieusement écrasée par l'autre au passage suivant — c'est-à-dire un
+	// droit qu'on croit avoir accordé et qui disparaît.
 	router.HandleFunc("GET /admin/grants", a.HandleListGrants)
-	// Le chemin DÉCLARATIF, pour un dépôt GitOps. Distinct de l'impératif
-	// ci-dessous, et destructeur là où l'autre est additif : voir le handler.
-	router.HandleFunc("PUT /admin/grants", a.HandleApplyGrants)
-	router.HandleFunc("PUT /admin/grants/{subject}/{environment}", a.HandlePutGrant)
-	router.HandleFunc("DELETE /admin/grants/{subject}/{environment}", a.HandleRevokeGrant)
 
 	// LA seule surface qu'un appelant anonyme atteint, donc la seule montée
 	// HORS du middleware : on ne peut pas exiger une session pour en ouvrir une.

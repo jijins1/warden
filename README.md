@@ -138,11 +138,12 @@ weak because it has to be dictated.
 
 ## Who may run where
 
-Access to an environment is granted, never assumed. The normal path is a
-versioned file, applied by CI:
+Access to an environment is granted, never assumed — and **there is no command
+that grants it**. The source is a ConfigMap in the deployment repo, reconciled by
+the `controller`:
 
 ```yaml
-# grants.yaml
+# deploy/56-droits.yaml
 environments:
   prod:
     - alice
@@ -150,23 +151,27 @@ environments:
   staging: []        # explicitly nobody
 ```
 
-```sh
-warden grant apply -f grants.yaml --dry-run   # the plan, for the pull request
-warden grant apply -f grants.yaml
-warden grant list                             # revoked grants are shown too —
-                                              # it is an audit view
-```
+Changing access means committing. `warden grant list` shows the result, including
+revoked grants — it is an audit view. There is no write path at all: an API that
+could grant would be a second source of truth, silently overwritten on the next
+pass, and a grant that vanishes a minute after you made it is worse than a
+missing command.
 
-**Removing someone from the file revokes their access.** That is the point: for
-every environment the file names, the list is authoritative. An environment the
-file does *not* name is left alone, so grants can be split across files and a
-truncated file cannot revoke everything. An empty document is refused outright —
-"wanting nothing" and "having read nothing" look too much alike.
+**Removing someone from the file revokes their access.** For every environment
+the file names, the list is authoritative. Measured on the reference deployment:
+38 seconds from `kubectl apply` to granted, 48 to revoked.
 
-Applying is all-or-nothing. A typo in an account name fails the whole plan rather
-than revoking people without granting anyone.
+Four things it refuses to do, because a mechanism that can cut production access
+should fail on the safe side:
 
-`warden grant add` / `grant revoke` remain, for when you need them now.
+- a **missing** file changes nothing — a controller started before the ConfigMap
+  exists must not conclude "nobody has access";
+- an **empty** document is refused and logged. An empty list for a *named*
+  environment, though, is an explicit "nobody" and does revoke;
+- an environment the file does **not name** is left alone, so grants split across
+  files and a truncated one cannot revoke everything;
+- applying is **all-or-nothing** — a typo in an account name fails the whole
+  document rather than revoking people without granting anyone.
 
 What this buys, stated exactly, because a control whose reach is overestimated is
 worse than no control:

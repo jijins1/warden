@@ -92,26 +92,22 @@ Administrer les comptes (administrateurs) :
   warden user disable --subject <compte>
   warden user enable  --subject <compte>
 
-Droits par environnement (administrateurs) :
-  warden grant apply  -f <droits.yaml> [--dry-run]
-                                               DÉCLARATIF : pour chaque
-                                               environnement nommé, la liste fait
-                                               autorité. Un compte retiré du
-                                               fichier est RÉVOQUÉ.
-  warden grant add    --subject <compte> --env <nom>
+Droits par environnement (lecture seule) :
   warden grant list   [--subject <compte>]     les révoqués sont affichés :
                                                c'est une vue d'audit
-  warden grant revoke --subject <compte> --env <nom>
 
-Format d'un document de droits (versionnable, pour GitOps) :
-  environments:
-    prod:
-      - alice
-      - bob
-    staging: []            # explicitement personne
+  AUCUNE commande ne modifie les droits. Ils viennent d'un document versionné
+  dans le dépôt de déploiement, que le rôle « controller » réconcilie :
 
-  Un environnement ABSENT du document n'est pas touché : les droits se découpent
-  en plusieurs fichiers, et un fichier tronqué ne révoque pas tout.
+    environments:
+      prod:
+        - alice
+        - bob
+      staging: []          # explicitement personne
+
+  Pour chaque environnement NOMMÉ, la liste fait autorité : un compte retiré du
+  document est révoqué. Un environnement ABSENT n'est pas touché, donc les droits
+  se découpent en plusieurs fichiers et un fichier tronqué ne révoque pas tout.
 
   Sans droit, pas de clé d'accès à l'environnement. AVEC le droit, rien ne borne
   ce que le playbook peut joindre — l'egress du runner est ouvert.
@@ -522,18 +518,12 @@ func commandeUtilisateur(ctx context.Context, args []string, sortie io.Writer) e
 
 func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage : warden grant <apply|add|list|revoke>\n\n%s", texteUsage)
+		return fmt.Errorf("usage : warden grant list [--subject <compte>]\n\n%s", texteUsage)
 	}
 
 	fs := flag.NewFlagSet("grant", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	subject := fs.String("subject", "", "identifiant du compte")
-	env := fs.String("env", "", "environnement")
-	fichier := fs.String("f", "", "document de droits, pour `apply`")
-	// `--dry-run` est ce qui rend la revue possible : un changement de droits sur
-	// la production doit être lisible dans une pull request AVANT d'être
-	// appliqué, sans quoi le versionnement n'achète qu'un historique.
-	sec := fs.Bool("dry-run", false, "afficher le plan sans l'appliquer")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)
@@ -547,12 +537,6 @@ func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
 	switch args[0] {
 	case "list":
 		return auth.ListerDroits(ctx, api, *subject, sortie)
-	case "add":
-		return auth.AccorderDroit(ctx, api, *subject, *env, sortie)
-	case "revoke":
-		return auth.RevoquerDroit(ctx, api, *subject, *env, sortie)
-	case "apply":
-		return auth.AppliquerDroits(ctx, api, *fichier, *sec, sortie)
 	default:
 		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
 	}
