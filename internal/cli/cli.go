@@ -53,6 +53,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandePasswd(ctx, args[1:], os.Stdout)
 	case "user":
 		return commandeUtilisateur(ctx, args[1:], os.Stdout)
+	case "grant":
+		return commandeDroit(ctx, args[1:], os.Stdout)
 	case "submit":
 		return commandeSubmit(ctx, args[1:], os.Stdout)
 	case "key":
@@ -89,6 +91,15 @@ Administrer les comptes (administrateurs) :
   warden user passwd --subject <compte>        en réinitialise un
   warden user disable --subject <compte>
   warden user enable  --subject <compte>
+
+Droits par environnement (administrateurs) :
+  warden grant add    --subject <compte> --env <nom>
+  warden grant list   [--subject <compte>]     les révoqués sont affichés :
+                                               c'est une vue d'audit
+  warden grant revoke --subject <compte> --env <nom>
+
+  Sans droit, pas de clé d'accès à l'environnement. AVEC le droit, rien ne borne
+  ce que le playbook peut joindre — l'egress du runner est ouvert.
 
 Lancer un run :
   warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
@@ -489,6 +500,37 @@ func commandeUtilisateur(ctx context.Context, args []string, sortie io.Writer) e
 		return auth.BasculerCompte(ctx, api, *subject, true, sortie)
 	case "enable":
 		return auth.BasculerCompte(ctx, api, *subject, false, sortie)
+	default:
+		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+	}
+}
+
+func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage : warden grant <add|list|revoke>\n\n%s", texteUsage)
+	}
+
+	fs := flag.NewFlagSet("grant", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	subject := fs.String("subject", "", "identifiant du compte")
+	env := fs.String("env", "", "environnement")
+
+	if err := fs.Parse(args[1:]); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	api, err := apiSeule()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "list":
+		return auth.ListerDroits(ctx, api, *subject, sortie)
+	case "add":
+		return auth.AccorderDroit(ctx, api, *subject, *env, sortie)
+	case "revoke":
+		return auth.RevoquerDroit(ctx, api, *subject, *env, sortie)
 	default:
 		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
 	}

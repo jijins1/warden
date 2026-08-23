@@ -458,6 +458,10 @@ func runAPI(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("composeur d'ordres: %w", err)
 			}
+			// L'autorisation est revérifiée à la LIVRAISON de la clé, et c'est ce
+			// qui donne un sens à la révocation (§10.3). Sans ce branchement, le
+			// composeur refuserait toute clé — c'est le défaut voulu.
+			ob = ob.AvecDroits(st)
 			// La consigne sert DEUX chemins : le mot de passe d'un enrôlement et
 			// celui d'élévation d'un playbook. Les deux viennent d'un humain et
 			// ne font que passer, d'où le même magasin.
@@ -498,8 +502,12 @@ func runAPI(ctx context.Context) error {
 		// branchés toujours. Le MAGASIN de clés demande le cluster, donc il
 		// suit la même condition que le démarrage des runs — sans lui, poser
 		// une clé répond 501 et la consulter fonctionne.
-		Keys:     st,
-		Hosts:    st,
+		Keys:  st,
+		Hosts: st,
+		// Les droits par environnement ne demandent que PostgreSQL : branchés
+		// toujours, comme l'authentification. Un déploiement dégradé doit rester
+		// un déploiement où l'autorisation s'applique.
+		Access:   st,
 		KeyStore: keyStore,
 		Stash:    consigne,
 	})

@@ -529,3 +529,43 @@ func (c *Client) BasculerCompte(ctx context.Context, subject string, desactive b
 		"/admin/users/"+url.PathEscape(subject)+"/"+action, nil, &out)
 	return out, err
 }
+
+// --- les droits par environnement (§10.2) ---
+
+// Droit est un droit d'accès à un environnement.
+type Droit struct {
+	Subject     string `json:"subject"`
+	Environment string `json:"environment"`
+	GrantedAt   string `json:"granted_at"`
+	GrantedBy   string `json:"granted_by,omitempty"`
+
+	// RevokedAt vide = droit vivant. Les révoqués sont rendus : c'est une vue
+	// d'audit, pas une liste de ce qui est permis.
+	RevokedAt string `json:"revoked_at,omitempty"`
+}
+
+// ListerDroits rend les droits, tous ou ceux d'un compte.
+func (c *Client) ListerDroits(ctx context.Context, subject string) ([]Droit, error) {
+	chemin := "/admin/grants"
+	if subject != "" {
+		chemin += "?subject=" + url.QueryEscape(subject)
+	}
+
+	var out []Droit
+	err := c.appeler(ctx, http.MethodGet, chemin, nil, &out)
+	return out, err
+}
+
+// AccorderDroit accorde l'accès à un environnement.
+func (c *Client) AccorderDroit(ctx context.Context, subject, environment string) (Droit, error) {
+	var out Droit
+	err := c.appeler(ctx, http.MethodPut,
+		"/admin/grants/"+url.PathEscape(subject)+"/"+url.PathEscape(environment), nil, &out)
+	return out, err
+}
+
+// RevoquerDroit éteint l'accès à un environnement.
+func (c *Client) RevoquerDroit(ctx context.Context, subject, environment string) error {
+	return c.appeler(ctx, http.MethodDelete,
+		"/admin/grants/"+url.PathEscape(subject)+"/"+url.PathEscape(environment), nil, nil)
+}

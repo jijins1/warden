@@ -122,6 +122,18 @@ type Deps struct {
 	// vérifier un mot de passe est le chemin de tout le monde, créer un compte
 	// est celui d'un administrateur.
 	Accounts core.LocalAccounts
+
+	// Access porte les droits par environnement (§10.2).
+	//
+	// Nommé `Access` et non `Grants` parce que ce dernier désigne déjà le
+	// frappeur de jetons de push (ADR-0028). Deux notions de « grant » dans le
+	// même produit, et les confondre donnerait à un jeton de push le rôle d'un
+	// droit d'accès.
+	//
+	// Son absence INTERDIT tout : `core.VerifierLAcces` refuse quand le magasin
+	// manque. Un contrôle d'autorisation qui s'efface quand sa dépendance n'est
+	// pas montée n'est pas un contrôle.
+	Access core.EnvironmentGrants
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -236,6 +248,13 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("POST /admin/users/{subject}/password", a.HandleResetPassword)
 	router.HandleFunc("POST /admin/users/{subject}/disable", a.HandleDisableUser)
 	router.HandleFunc("POST /admin/users/{subject}/enable", a.HandleEnableUser)
+
+	// Les droits par environnement (§10.2). Le seul contrôle d'autorisation du
+	// produit, et il ne couvre qu'une moitié : sans droit, pas de clé d'accès ;
+	// avec droit, l'egress reste ouvert (ADR-0033).
+	router.HandleFunc("GET /admin/grants", a.HandleListGrants)
+	router.HandleFunc("PUT /admin/grants/{subject}/{environment}", a.HandlePutGrant)
+	router.HandleFunc("DELETE /admin/grants/{subject}/{environment}", a.HandleRevokeGrant)
 
 	// LA seule surface qu'un appelant anonyme atteint, donc la seule montée
 	// HORS du middleware : on ne peut pas exiger une session pour en ouvrir une.

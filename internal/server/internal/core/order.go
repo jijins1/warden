@@ -31,9 +31,14 @@ type RunByIDReader interface {
 // commencer la vie du jeton quand le pod le reçoit, et non quand le contrôleur
 // décide qu'il le recevra.
 type OrderBuilder struct {
-	runs    RunByIDReader
-	grants  FetchGrantIssuer
-	keys    KeyIssuer
+	runs   RunByIDReader
+	grants FetchGrantIssuer
+	keys   KeyIssuer
+
+	// droits porte l'autorisation par environnement (§10.2). Nil interdit TOUT :
+	// `VerifierLAcces` refuse quand le magasin manque, parce qu'un contrôle qui
+	// s'efface avec sa dépendance n'est pas un contrôle.
+	droits  EnvironmentGrants
 	gitBase string
 	fetchTL time.Duration
 
@@ -54,6 +59,16 @@ type OrderBuilder struct {
 // `cles` est le CATALOGUE et non l'émetteur : ce qu'un enrôlement pose est la
 // partie PUBLIQUE, et demander sa partie privée pour n'en lire que la moitié
 // ferait passer une opération d'administration par le magasin de secrets.
+// AvecDroits branche l'autorisation par environnement (§10.2).
+//
+// Une option et non un paramètre du constructeur, comme `AvecEnrolement` : les
+// appelants existants continuent de compiler. Sans elle, `cleDAcces` refuse de
+// délivrer la moindre clé — c'est le défaut voulu.
+func (b *OrderBuilder) AvecDroits(droits EnvironmentGrants) *OrderBuilder {
+	b.droits = droits
+	return b
+}
+
 func (b *OrderBuilder) AvecEnrolement(hosts HostCatalog, cles KeyCatalog, consigne SecretStash) *OrderBuilder {
 	b.hosts, b.cles, b.consigne = hosts, cles, consigne
 	return b
@@ -194,6 +209,15 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 func (b *OrderBuilder) cleDAcces(ctx context.Context, run Run) (wire.Secret, error) {
 	if b.keys == nil {
 		return nil, nil
+	}
+
+	// LE DROIT est revérifié ICI, à la livraison, alors que `POST /runs` l'a déjà
+	// contrôlé à la création. Ce n'est pas une redondance : c'est ce qui donne un
+	// sens à la RÉVOCATION. Sans ce second appel, retirer un droit ne ferait rien
+	// aux runs déjà enregistrés, et le §10.3 exige que le changement prenne
+	// effet. C'est aussi le dernier point avant que la clé sorte.
+	if err := VerifierLAcces(ctx, b.droits, run.UserID, run.Environment); err != nil {
+		return nil, fmt.Errorf("clé d'accès du run %s : %w", run.RunRef, err)
 	}
 
 	// `hostScope` est nil : le périmètre par utilisateur du §10.2 n'existe pas.

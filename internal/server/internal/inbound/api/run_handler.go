@@ -103,6 +103,35 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// L'AUTORISATION, avant tout le reste (§10.2).
+	//
+	// Ici et pas plus bas : le refus doit précéder le rafraîchissement du miroir
+	// et la consigne du mot de passe d'élévation, qui sont des effets. Un run
+	// refusé ne doit rien avoir remué.
+	//
+	// Ce que ce contrôle achète exactement : la clé d'accès est délivrée PAR
+	// ENVIRONNEMENT (ADR-0020), donc sans droit il n'y a pas de credential. Ce
+	// qu'il n'achète pas : qu'un run légitime reste dans son périmètre — l'egress
+	// est ouvert, et le §10.2 pose que le périmètre est appliqué par le réseau ou
+	// ne l'est pas.
+	if err := core.VerifierLAcces(r.Context(), a.deps.Access, user.ID, payload.Environment); err != nil {
+		if errors.Is(err, core.ErrEnvironnementInterdit) {
+			slog.Warn("run refusé : environnement interdit",
+				slog.String("sujet", user.Subject),
+				slog.String("environnement", payload.Environment))
+			// 403 et non 404 : contrairement à `/admin`, l'existence d'un
+			// environnement n'est pas un secret — l'utilisateur en a lu le nom
+			// dans son propre inventaire. Le taire l'enverrait chercher une faute
+			// de frappe au lieu de demander un accès.
+			http.Error(w, "you have no access to environment "+payload.Environment,
+				http.StatusForbidden)
+			return
+		}
+		slog.Error("vérification des droits en échec", slog.String("error", err.Error()))
+		http.Error(w, "could not verify your access", http.StatusInternalServerError)
+		return
+	}
+
 	repo, err := a.deps.Repos.GetRepo(r.Context(), payload.Repo)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
