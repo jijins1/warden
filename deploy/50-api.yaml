@@ -53,15 +53,28 @@ spec:
             # développement, pas du code : le jour où CNPG publie un second
             # secret, cette variable le pointe et rien d'autre ne bouge.
 
-            # L'authentification RÉELLE n'existe pas (OIDC/mTLS restent à faire).
-            # Sans cet opt-in, le middleware refuse TOUTE requête — et c'est la
-            # bonne posture : un produit d'audit qui accepterait « je suis alice »
-            # en silence serait pire qu'un produit qui refuse de répondre.
+            # PAS de WARDEN_INSECURE_DEV_AUTH, et c'est le changement qui
+            # compte : `warden login` existe, donc l'en-tête « je suis alice »
+            # n'a plus de raison d'être accepté. Le poser vaudrait ACCEPTER que
+            # n'importe quel appelant se déclare n'importe qui — y compris
+            # administrateur.
             #
-            # Le poser vaut ACCEPTER que n'importe quel appelant se déclare
-            # n'importe qui. Acceptable pour un déploiement `dev`, jamais ailleurs.
-            - name: WARDEN_INSECURE_DEV_AUTH
-              value: "1"
+            # Il reste dans le code pour les tests de bout en bout, qui n'ont
+            # pas de terminal pour saisir un mot de passe.
+            #
+            # Amorçage du premier compte, une fois, depuis le cluster :
+            #   kubectl exec deploy/warden-api -- \
+            #     wardend user add --subject alice --admin
+            # Son autorisation est l'accès à la base, pas un mot de passe : c'est
+            # la seule qui existe avant qu'un compte existe.
+
+            # Validité d'une session `warden login`, en HEURES. Absente, le
+            # défaut du cœur s'applique — trente jours. Le curseur est mis du
+            # côté de l'usage parce que la révocation existe : `warden logout`,
+            # la désactivation d'un compte et le changement de mot de passe
+            # coupent toutes les sessions immédiatement.
+            - name: WARDEN_SESSION_TTL_HOURS
+              value: "720"
 
             - name: WARDEN_GIT_INTERNAL_URL
               value: http://warden-git-internal:8081

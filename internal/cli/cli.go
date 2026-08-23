@@ -16,8 +16,10 @@ import (
 	"os"
 
 	"github.com/jijins1/warden/internal/cli/internal/admin"
+	"github.com/jijins1/warden/internal/cli/internal/auth"
 	"github.com/jijins1/warden/internal/cli/internal/client"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
+	"github.com/jijins1/warden/internal/cli/internal/session"
 	"github.com/jijins1/warden/internal/cli/internal/stream"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
 )
@@ -41,6 +43,16 @@ func Run(ctx context.Context, args []string) error {
 	}
 
 	switch args[0] {
+	case "login":
+		return commandeLogin(ctx, args[1:], os.Stdout)
+	case "logout":
+		return commandeLogout(ctx, args[1:], os.Stdout)
+	case "whoami":
+		return commandeWhoami(ctx, args[1:], os.Stdout)
+	case "passwd":
+		return commandePasswd(ctx, args[1:], os.Stdout)
+	case "user":
+		return commandeUtilisateur(ctx, args[1:], os.Stdout)
 	case "submit":
 		return commandeSubmit(ctx, args[1:], os.Stdout)
 	case "key":
@@ -57,6 +69,26 @@ func Run(ctx context.Context, args []string) error {
 }
 
 const texteUsage = `warden — exécution auditée de playbooks Ansible
+
+Ouvrir une session :
+  warden login  --subject <compte>             le mot de passe est demandé au
+                                               terminal ; --password-file et
+                                               --password-stdin existent pour
+                                               les usages non interactifs
+  warden logout
+  warden whoami                                demande au SERVEUR qui il croit
+                                               que vous êtes
+  warden passwd                                change votre mot de passe et
+                                               coupe toutes vos sessions
+
+Administrer les comptes (administrateurs) :
+  warden user add    --subject <compte> [--name <nom>] [--admin]
+                                               le mot de passe est TIRÉ par le
+                                               serveur et affiché une seule fois
+  warden user list
+  warden user passwd --subject <compte>        en réinitialise un
+  warden user disable --subject <compte>
+  warden user enable  --subject <compte>
 
 Lancer un run :
   warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
@@ -95,7 +127,11 @@ Format d'un fichier de déclaration :
 Configuration (environnement) :
   WARDEN_SERVER    adresse de l'API du control plane
   WARDEN_GIT_URL   adresse du rôle git (port d'écriture)
-  WARDEN_SUBJECT   identité, tant qu'aucun authentificateur n'est configuré`
+  WARDEN_SUBJECT   identité AFFIRMÉE, acceptée seulement par un serveur en mode
+                   de développement. « warden login » la rend inutile.
+
+Le jeton de session est rangé dans ~/.config/warden/credentials.json, en 0600,
+indexé par adresse de serveur.`
 
 func usage() error { return errors.New(texteUsage) }
 
@@ -124,7 +160,7 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		return fmt.Errorf("%s et %s doivent être définies\n\n%s", EnvServeur, EnvGit, texteUsage)
 	}
 
-	api, err := client.New(client.Config{BaseURL: adresse, Subject: os.Getenv(EnvSujet)})
+	api, err := clientPour(adresse)
 	if err != nil {
 		return err
 	}
@@ -181,11 +217,47 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 // pousse rien. L'exiger quand même ferait échouer `warden key list` sur une
 // variable qui n'a rien à voir avec ce qu'on demande.
 func apiSeule() (*client.Client, error) {
+	adresse, err := adresseServeur()
+	if err != nil {
+		return nil, err
+	}
+	return clientPour(adresse)
+}
+
+func adresseServeur() (string, error) {
 	adresse := os.Getenv(EnvServeur)
 	if adresse == "" {
-		return nil, fmt.Errorf("%s doit être définie\n\n%s", EnvServeur, texteUsage)
+		return "", fmt.Errorf("%s doit être définie\n\n%s", EnvServeur, texteUsage)
 	}
-	return client.New(client.Config{BaseURL: adresse, Subject: os.Getenv(EnvSujet)})
+	return adresse, nil
+}
+
+// clientPour construit un client porteur de la session rangée pour ce serveur.
+//
+// L'ABSENCE de session n'est pas une erreur : il reste `WARDEN_SUBJECT`, que les
+// serveurs en mode de développement acceptent. Le refus vient du serveur, qui
+// est le seul à savoir ce qu'il accepte — le décider ici rendrait la CLI
+// inutilisable contre un déploiement de développement parfaitement valide.
+//
+// Une session EXPIRÉE, en revanche, est signalée tout de suite : l'envoyer
+// produirait un 401 dont le message parlerait du serveur alors que la cause est
+// locale et connue d'avance.
+func clientPour(adresse string) (*client.Client, error) {
+	cfg := client.Config{BaseURL: adresse, Subject: os.Getenv(EnvSujet)}
+
+	s, err := session.Charger(adresse)
+	switch {
+	case errors.Is(err, session.ErrPasDeSession):
+		// Pas de session : on s'en remet à WARDEN_SUBJECT, s'il est posé.
+	case err != nil:
+		return nil, err
+	case s.Expiree():
+		return nil, fmt.Errorf("votre session sur %s a expiré — relancez `warden login`", adresse)
+	default:
+		cfg.Token = s.Token
+	}
+
+	return client.New(cfg)
 }
 
 func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
@@ -254,6 +326,16 @@ func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 	}
 }
 
+// suiveurPour construit le client de flux, porteur de la même session que le
+// client HTTP : les deux traversent le même middleware d'authentification.
+func suiveurPour(adresse string) (*stream.Client, error) {
+	var jeton string
+	if s, err := session.Charger(adresse); err == nil {
+		jeton = s.Token
+	}
+	return stream.New(adresse, jeton, os.Getenv(EnvSujet))
+}
+
 func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error {
 	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -276,7 +358,7 @@ func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error
 	if err != nil {
 		return err
 	}
-	suiveur, err := stream.New(os.Getenv(EnvServeur), os.Getenv(EnvSujet))
+	suiveur, err := suiveurPour(os.Getenv(EnvServeur))
 	if err != nil {
 		return err
 	}
@@ -289,4 +371,125 @@ func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error
 		// réponse ne sera pas un oui franc et la déclaration sera abandonnée.
 		Confirmer: admin.ConfirmerAuTerminal(os.Stdin, sortie),
 	}, sortie)
+}
+
+// --- la session ---
+
+func commandeLogin(ctx context.Context, args []string, sortie io.Writer) error {
+	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	subject := fs.String("subject", "", "identifiant de votre compte")
+	// La MÊME mécanique de saisie que partout ailleurs : jamais argv, jamais
+	// l'environnement, refus net quand deux provenances sont données.
+	mdp := prompt.Declarer(fs, "password", "votre mot de passe")
+
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	adresse, err := adresseServeur()
+	if err != nil {
+		return err
+	}
+
+	// Un client SANS jeton : on est en train d'en obtenir un, et présenter une
+	// session périmée ferait échouer la connexion avec un message sur la session
+	// alors qu'on cherche justement à la renouveler.
+	api, err := client.New(client.Config{BaseURL: adresse})
+	if err != nil {
+		return err
+	}
+	return auth.Login(ctx, api, adresse, *subject, mdp, sortie)
+}
+
+func commandeLogout(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) > 0 {
+		return fmt.Errorf("warden logout ne prend pas d'argument\n\n%s", texteUsage)
+	}
+	adresse, err := adresseServeur()
+	if err != nil {
+		return err
+	}
+
+	// Le client peut manquer — session déjà absente, serveur injoignable. Ce
+	// n'est pas une raison de refuser d'oublier le jeton local, qui est
+	// précisément ce que l'utilisateur demande.
+	api, _ := clientPour(adresse)
+	return auth.Logout(ctx, api, adresse, sortie)
+}
+
+func commandeWhoami(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) > 0 {
+		return fmt.Errorf("warden whoami ne prend pas d'argument\n\n%s", texteUsage)
+	}
+	adresse, err := adresseServeur()
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+	return auth.Whoami(ctx, api, adresse, sortie)
+}
+
+func commandePasswd(ctx context.Context, args []string, sortie io.Writer) error {
+	fs := flag.NewFlagSet("passwd", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	ancien := prompt.Declarer(fs, "current-password", "votre mot de passe actuel")
+	nouveau := prompt.Declarer(fs, "new-password", "votre nouveau mot de passe")
+
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	adresse, err := adresseServeur()
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+	return auth.Passwd(ctx, api, adresse, ancien, nouveau, sortie)
+}
+
+// --- l'administration des comptes ---
+
+func commandeUtilisateur(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage : warden user <add|list|passwd|disable|enable>\n\n%s", texteUsage)
+	}
+
+	fs := flag.NewFlagSet("user", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	subject := fs.String("subject", "", "identifiant du compte")
+	nom := fs.String("name", "", "nom affiché dans l'audit")
+	admin := fs.Bool("admin", false, "accorder l'administration")
+
+	if err := fs.Parse(args[1:]); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	api, err := apiSeule()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "list":
+		return auth.ListerComptes(ctx, api, sortie)
+	case "add":
+		return auth.AjouterCompte(ctx, api, *subject, *nom, *admin, sortie)
+	case "passwd":
+		return auth.ReinitialiserMotDePasse(ctx, api, *subject, sortie)
+	case "disable":
+		return auth.BasculerCompte(ctx, api, *subject, true, sortie)
+	case "enable":
+		return auth.BasculerCompte(ctx, api, *subject, false, sortie)
+	default:
+		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+	}
 }

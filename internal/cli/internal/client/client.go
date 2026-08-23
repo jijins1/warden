@@ -47,12 +47,20 @@ type Config struct {
 	// est le serveur.
 	BaseURL string
 
+	// Token est le jeton de session ouvert par `warden login`.
+	//
+	// C'est le chemin d'authentification RÉEL : son porteur a prouvé qu'il
+	// connaissait un mot de passe. Quand il est posé, `Subject` n'est pas envoyé —
+	// le serveur essaie le porteur d'abord, et l'affirmation ne servirait à rien
+	// sinon à traîner une identité non vérifiée dans les en-têtes.
+	Token string
+
 	// Subject porte l'identité en mode de développement.
 	//
-	// Le serveur ne l'accepte que derrière un opt-in explicite, et refuse toute
-	// requête sinon (voir AuthnMiddleware). C'est délibéré de sa part : un produit
-	// d'audit qui accepterait « je suis alice » en silence serait pire qu'un
-	// produit qui refuse de répondre. Ce champ disparaîtra avec l'arrivée d'OIDC.
+	// Le serveur ne l'accepte que derrière un opt-in explicite (voir
+	// AuthnMiddleware). C'est délibéré de sa part : un produit d'audit qui
+	// accepterait « je suis alice » en silence serait pire qu'un produit qui
+	// refuse de répondre. Ce champ disparaîtra avec l'arrivée d'OIDC.
 	Subject string
 
 	Timeout time.Duration
@@ -61,6 +69,7 @@ type Config struct {
 // Client appelle l'API du control plane.
 type Client struct {
 	base    *url.URL
+	token   string
 	subject string
 	httpc   *http.Client
 }
@@ -83,6 +92,7 @@ func New(cfg Config) (*Client, error) {
 
 	return &Client{
 		base:    base,
+		token:   cfg.Token,
 		subject: cfg.Subject,
 		httpc:   &http.Client{Timeout: cfg.Timeout},
 	}, nil
@@ -184,7 +194,14 @@ func (c *Client) appeler(ctx context.Context, methode, chemin string, corps, sor
 	if corps != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.subject != "" {
+	// Le jeton l'emporte, et l'affirmation n'est PAS envoyée avec lui : un
+	// serveur en mode de développement retomberait sinon sur l'en-tête si le
+	// jeton venait à expirer, et l'appelant continuerait de travailler sans
+	// savoir que sa session est morte.
+	switch {
+	case c.token != "":
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	case c.subject != "":
 		req.Header.Set("X-User-Subject", c.subject)
 	}
 
@@ -381,5 +398,134 @@ type EnrollmentCreated struct {
 func (c *Client) CreateEnrollment(ctx context.Context, n NewEnrollment) (EnrollmentCreated, error) {
 	var out EnrollmentCreated
 	err := c.appeler(ctx, http.MethodPost, "/admin/enrollments", n, &out)
+	return out, err
+}
+
+// --- l'authentification ---
+
+// Ouverture est ce qu'une connexion réussie rend.
+type Ouverture struct {
+	Token     string `json:"token"`
+	Subject   string `json:"subject"`
+	Name      string `json:"name,omitempty"`
+	Admin     bool   `json:"admin,omitempty"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// Login ouvre une session.
+//
+// Le mot de passe voyage dans un CORPS et jamais dans l'URL : les chemins
+// finissent dans les logs d'accès des reverse-proxys, ce que les corps ne font
+// pas.
+//
+// Le type du paramètre est `[]byte` et non `string` : il vient de `prompt.Secret`
+// et le garder en octets évite une copie immuable de plus dans le tas, que
+// `Wipe` ne pourrait pas effacer.
+func (c *Client) Login(ctx context.Context, subject string, motDePasse []byte) (Ouverture, error) {
+	var out Ouverture
+	corps := struct {
+		Subject  string `json:"subject"`
+		Password string `json:"password"`
+	}{subject, string(motDePasse)}
+
+	err := c.appeler(ctx, http.MethodPost, "/auth/login", corps, &out)
+	return out, err
+}
+
+// Logout révoque la session côté serveur.
+func (c *Client) Logout(ctx context.Context) error {
+	return c.appeler(ctx, http.MethodPost, "/auth/logout", nil, nil)
+}
+
+// Identite est ce que le serveur croit de l'appelant.
+type Identite struct {
+	Subject   string `json:"subject"`
+	Name      string `json:"name,omitempty"`
+	Admin     bool   `json:"admin,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// Whoami demande au SERVEUR qui il croit que nous sommes.
+//
+// Au serveur et non au fichier local : le fichier dit ce qu'on a rangé, le
+// serveur dit ce qui est encore valable. C'est toute la différence quand une
+// session a été révoquée ailleurs.
+func (c *Client) Whoami(ctx context.Context) (Identite, error) {
+	var out Identite
+	err := c.appeler(ctx, http.MethodGet, "/auth/whoami", nil, &out)
+	return out, err
+}
+
+// ChangerMotDePasse remplace le mot de passe de l'appelant.
+func (c *Client) ChangerMotDePasse(ctx context.Context, ancien, nouveau []byte) error {
+	corps := struct {
+		Current string `json:"current_password"`
+		New     string `json:"new_password"`
+	}{string(ancien), string(nouveau)}
+
+	return c.appeler(ctx, http.MethodPost, "/auth/password", corps, nil)
+}
+
+// --- l'administration des comptes ---
+
+// Compte est un compte local tel que l'administration le voit.
+type Compte struct {
+	Subject     string `json:"subject"`
+	Name        string `json:"name,omitempty"`
+	Admin       bool   `json:"admin,omitempty"`
+	Disabled    bool   `json:"disabled,omitempty"`
+	HasPassword bool   `json:"has_password"`
+	LastSeenAt  string `json:"last_seen_at,omitempty"`
+
+	// Password n'est rempli qu'à la CRÉATION et à la réinitialisation. Le serveur
+	// le tire et ne le redonnera jamais.
+	Password string `json:"password,omitempty"`
+}
+
+// ListerComptes rend les comptes locaux.
+func (c *Client) ListerComptes(ctx context.Context) ([]Compte, error) {
+	var out []Compte
+	err := c.appeler(ctx, http.MethodGet, "/admin/users", nil, &out)
+	return out, err
+}
+
+// CreerCompte crée un compte et rend le mot de passe tiré par le serveur.
+func (c *Client) CreerCompte(ctx context.Context, subject, nom string, admin bool) (Compte, error) {
+	q := url.Values{}
+	if nom != "" {
+		q.Set("name", nom)
+	}
+	if admin {
+		q.Set("admin", "true")
+	}
+
+	chemin := "/admin/users/" + url.PathEscape(subject)
+	if len(q) > 0 {
+		chemin += "?" + q.Encode()
+	}
+
+	var out Compte
+	err := c.appeler(ctx, http.MethodPut, chemin, nil, &out)
+	return out, err
+}
+
+// ReinitialiserMotDePasse tire un nouveau mot de passe pour un compte.
+func (c *Client) ReinitialiserMotDePasse(ctx context.Context, subject string) (Compte, error) {
+	var out Compte
+	err := c.appeler(ctx, http.MethodPost,
+		"/admin/users/"+url.PathEscape(subject)+"/password", nil, &out)
+	return out, err
+}
+
+// BasculerCompte désactive ou réactive un compte.
+func (c *Client) BasculerCompte(ctx context.Context, subject string, desactive bool) (Compte, error) {
+	action := "enable"
+	if desactive {
+		action = "disable"
+	}
+
+	var out Compte
+	err := c.appeler(ctx, http.MethodPost,
+		"/admin/users/"+url.PathEscape(subject)+"/"+action, nil, &out)
 	return out, err
 }

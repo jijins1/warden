@@ -33,18 +33,36 @@ func main() {
 	}
 }
 
-// cmdMigrate applique les migrations puis rend la main. Ce n'est pas un rôle :
-// rien n'est déployé sous ce nom, c'est un Job qui s'exécute et se termine
-// (ADR-0012).
-const cmdMigrate = "migrate"
+// Les sous-commandes qui ne sont PAS des rôles : elles s'exécutent et se
+// terminent, rien n'est déployé sous ces noms (ADR-0012).
+const (
+	cmdMigrate = "migrate"
+
+	// cmdUser amorce le premier compte. C'est la sortie du problème de l'œuf et
+	// de la poule : créer un compte demande d'être administrateur, et il n'y a
+	// aucun administrateur sur un déploiement neuf.
+	//
+	// Elle vit ici et non dans la CLI parce que son autorisation n'est pas un
+	// mot de passe mais l'ACCÈS À LA BASE — c'est-à-dire le fait d'être
+	// l'opérateur du déploiement. Le même raisonnement que `migrate`.
+	cmdUser = "user"
+)
 
 func run() error {
-	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: wardend <%s|%s>", joinRoles(), cmdMigrate)
+	if len(os.Args) < 2 {
+		return fmt.Errorf("usage: wardend <%s|%s|%s>", joinRoles(), cmdMigrate, cmdUser)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if os.Args[1] == cmdUser {
+		return server.BootstrapUser(ctx, os.Args[2:], os.Stdout)
+	}
+
+	if len(os.Args) != 2 {
+		return fmt.Errorf("usage: wardend <%s|%s|%s>", joinRoles(), cmdMigrate, cmdUser)
+	}
 
 	if os.Args[1] == cmdMigrate {
 		return server.Migrate(ctx)
@@ -52,7 +70,7 @@ func run() error {
 
 	role, err := server.ParseRole(os.Args[1])
 	if err != nil {
-		return fmt.Errorf("%w (attendu : %s|%s)", err, joinRoles(), cmdMigrate)
+		return fmt.Errorf("%w (attendu : %s|%s|%s)", err, joinRoles(), cmdMigrate, cmdUser)
 	}
 
 	if err := server.Run(ctx, role); err != nil && !errors.Is(err, context.Canceled) {

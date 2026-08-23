@@ -241,6 +241,27 @@ func secondesDeDeadline() (int64, error) {
 	return n, nil
 }
 
+// dureeDeSession lit la validité d'une session.
+//
+// Une valeur illisible est IGNORÉE plutôt que fatale, contrairement au plafond
+// de durée d'un run : celui-ci protège d'un run qui pend, alors qu'ici le défaut
+// est sûr. Refuser de démarrer le control plane entier pour une variable mal
+// écrite coûterait plus que ça ne protège — mais l'avertissement doit se voir.
+func dureeDeSession() time.Duration {
+	brut := os.Getenv(EnvSessionTTL)
+	if brut == "" {
+		return 0 // le cœur applique son défaut
+	}
+	h, err := strconv.Atoi(brut)
+	if err != nil || h <= 0 {
+		slog.Warn("durée de session illisible, le défaut s'applique",
+			slog.String("variable", EnvSessionTTL), slog.String("valeur", brut),
+			slog.Duration("défaut", core.DureeSession))
+		return 0
+	}
+	return time.Duration(h) * time.Hour
+}
+
 func valeurOuDefaut(nom, defaut string) string {
 	if v := os.Getenv(nom); v != "" {
 		return v
@@ -448,9 +469,20 @@ func runAPI(ctx context.Context) error {
 		}
 	}
 
+	// L'authentification par mot de passe ne demande QUE PostgreSQL : elle est
+	// branchée toujours, sans condition sur le rôle `git` ni sur le cluster.
+	// C'est délibéré — un déploiement dégradé doit rester un déploiement où l'on
+	// s'authentifie, sans quoi la dégradation ouvrirait la porte.
+	auth, err := core.NewAuthenticator(st, st, dureeDeSession())
+	if err != nil {
+		return err
+	}
+
 	server, err := api.New(cfg, api.Deps{
 		Runs:      st,
 		Users:     st,
+		Auth:      auth,
+		Accounts:  st,
 		Diffs:     dr,
 		Events:    f,
 		Repo:      repo,
@@ -547,6 +579,11 @@ const (
 	// dépend d'aucun de nos processus. Absente, le défaut de l'orchestrateur
 	// s'applique — deux heures.
 	EnvRunDeadlineSeconds = "WARDEN_RUN_DEADLINE_SECONDS"
+
+	// EnvSessionTTL est la validité d'une session `warden login`, en HEURES.
+	// Absente, le défaut du cœur s'applique — trente jours. Voir
+	// `core.DureeSession` pour l'arbitrage qu'il représente.
+	EnvSessionTTL = "WARDEN_SESSION_TTL_HOURS"
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il

@@ -108,6 +108,20 @@ type Deps struct {
 	// Facultatif : sans lui, le mode assisté répond 501 et le mode déclaratif
 	// continue de fonctionner.
 	Stash core.SecretStash
+
+	// Auth vérifie les mots de passe et résout les sessions.
+	//
+	// Facultatif au sens du montage — un `api` construit sans lui compile et
+	// démarre — mais son absence a une conséquence bien plus lourde que celle des
+	// autres ports : il n'y a plus AUCUN moyen de s'authentifier, sauf à poser
+	// l'opt-in de développement. `/auth/*` répond alors 501 et tout le reste 401,
+	// ce qui est la bonne posture pour un produit d'audit.
+	Auth *core.Authenticator
+
+	// Accounts administre les comptes locaux. Facultatif, et distinct d'Auth :
+	// vérifier un mot de passe est le chemin de tout le monde, créer un compte
+	// est celui d'un administrateur.
+	Accounts core.LocalAccounts
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -154,7 +168,24 @@ func New(cfg *Config, deps Deps) (*Server, error) {
 
 // Run starts the server and blocks until ctx is cancelled or an error occurs.
 func (a *Server) Run(ctx context.Context) error {
-	// Mount routes
+	a.srv.Handler = a.Handler()
+
+	// Start listening
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", a.cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", a.cfg.Addr, err)
+	}
+
+	return a.servir(ctx, listener)
+}
+
+// Handler compose le routeur complet, middleware inclus.
+//
+// Séparée de `Run` pour être testable : monter les routes DANS `Run` obligeait à
+// ouvrir un port pour vérifier quoi que ce soit du routage, donc rendait
+// intestable la seule chose qui compte ici — ce que le middleware laisse passer.
+func (a *Server) Handler() http.Handler {
 	router := http.NewServeMux()
 	router.HandleFunc("GET /runs", a.HandleListRuns)
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
@@ -191,15 +222,37 @@ func (a *Server) Run(ctx context.Context) error {
 	// un run que n'importe qui déclare.
 	router.HandleFunc("POST /admin/enrollments", a.HandleCreateEnrollment)
 
-	// Apply authentication middleware to all routes
-	a.srv.Handler = a.AuthnMiddleware(router)
+	// La session de l'appelant. Toutes DERRIÈRE le middleware : révoquer, dire
+	// qui on est et changer son mot de passe supposent une identité établie.
+	router.HandleFunc("POST /auth/logout", a.HandleLogout)
+	router.HandleFunc("GET /auth/whoami", a.HandleWhoami)
+	router.HandleFunc("POST /auth/password", a.HandleChangePassword)
 
-	// Start listening
-	var lc net.ListenConfig
-	listener, err := lc.Listen(ctx, "tcp", a.cfg.Addr)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", a.cfg.Addr, err)
-	}
+	// Les comptes locaux, en attendant OIDC. Sous `/admin` comme le reste :
+	// la liste des comptes est une carte de l'organisation, et `adminOuRien` y
+	// répond 404 plutôt que 403.
+	router.HandleFunc("GET /admin/users", a.HandleListUsers)
+	router.HandleFunc("PUT /admin/users/{subject}", a.HandlePutUser)
+	router.HandleFunc("POST /admin/users/{subject}/password", a.HandleResetPassword)
+	router.HandleFunc("POST /admin/users/{subject}/disable", a.HandleDisableUser)
+	router.HandleFunc("POST /admin/users/{subject}/enable", a.HandleEnableUser)
+
+	// LA seule surface qu'un appelant anonyme atteint, donc la seule montée
+	// HORS du middleware : on ne peut pas exiger une session pour en ouvrir une.
+	//
+	// Un routeur au-dessus plutôt qu'une exception DANS le middleware. La
+	// différence n'est pas cosmétique : une exception se compare à un chemin de
+	// requête, et un chemin se déguise (`/auth/login/../runs`, un encodage,
+	// une barre en trop). Ici, `/auth/login` n'est jamais passé au routeur
+	// protégé, donc il n'y a aucune comparaison à tromper.
+	racine := http.NewServeMux()
+	racine.HandleFunc("POST /auth/login", a.HandleLogin)
+	racine.Handle("/", a.AuthnMiddleware(router))
+	return racine
+}
+
+// servir lance le serveur et bloque jusqu'à l'annulation du contexte.
+func (a *Server) servir(ctx context.Context, listener net.Listener) error {
 
 	// #nosec G118 -- l'arrêt gracieux part d'un contexte neuf par nécessité :
 	// celui de Run vient d'être annulé, et c'est ce qui déclenche l'arrêt.
