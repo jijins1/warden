@@ -159,7 +159,14 @@ missing command.
 
 **Removing someone from the file revokes their access.** For every environment
 the file names, the list is authoritative. Measured on the reference deployment:
-38 seconds from `kubectl apply` to granted, 48 to revoked.
+about a minute from `kubectl apply` to effect — dominated by the kubelet
+republishing the mounted ConfigMap, not by warden.
+
+Grants and pods are reconciled on **separate clocks**, and that split matters: a
+pod pass costs a LIST against the Kubernetes API and only bounds *audit* lag,
+while a grant pass costs a file read and bounds how long a *revocation* takes to
+bite. On one clock you could not speed up the second without paying for the
+first. Defaults: 30 s for pods, 10 s for grants.
 
 Four things it refuses to do, because a mechanism that can cut production access
 should fail on the safe side:

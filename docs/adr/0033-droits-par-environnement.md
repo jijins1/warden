@@ -148,9 +148,24 @@ fichier plutôt qu'un cluster — et il tourne à un seul réplica. Dans `api`, 
 peut en avoir N, ce seraient N réconciliateurs sur le même document. Le rôle
 `api` lit les droits en base, où le contrôleur les a projetés.
 
-La réconciliation est adossée au passage existant (30 s) plutôt qu'à son propre
-minuteur : le rythme est le même, et un second minuteur n'achèterait qu'un second
-endroit où se tromper d'intervalle.
+**DEUX boucles, deux rythmes.** Les avoir liées paraissait économe — un seul
+minuteur, un seul endroit où se tromper — mais ça mettait deux besoins opposés
+sur la même horloge :
+
+- les **pods** coûtent un LIST à l'API Kubernetes à chaque passage, et ce qu'ils
+  bornent est un retard d'**audit** : un run tué met une minute à être clos, ce
+  qui ne gêne personne. On veut pouvoir ralentir (défaut 30 s) ;
+- les **droits** coûtent une lecture de fichier et une comparaison de chaîne —
+  rien tant que rien ne change — et ce qu'ils bornent est le délai de prise
+  d'effet d'une **révocation**. On veut pouvoir accélérer (défaut 10 s).
+
+Sur une horloge commune, accélérer la révocation aurait payé un LIST Kubernetes
+toutes les dix secondes pour rien. Les deux sont réglables séparément
+(`WARDEN_RECONCILE_SECONDS`, `WARDEN_GRANTS_SECONDS`).
+
+Descendre le second sous dix secondes n'achète rien de mesurable : le kubelet met
+quelques dizaines de secondes à republier un ConfigMap modifié, et c'est lui qui
+domine le délai total.
 
 **DESTRUCTIF par construction.** Pour chaque environnement que le document nomme,
 la liste fait autorité : un compte retiré du fichier est RÉVOQUÉ. Sans cela, le

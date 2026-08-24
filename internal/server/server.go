@@ -197,24 +197,90 @@ func runController(ctx context.Context) error {
 	// tourne à UN réplica : le mettre dans `api`, qui peut en avoir N, ferait
 	// tourner N réconciliateurs sur le même document.
 	droits := grantfile.New(os.Getenv(EnvGrantsFile))
-	if droits != nil {
-		slog.Info("droits lus depuis un fichier",
-			slog.String("chemin", droits.Chemin()),
-			slog.String("note", "c'est la seule source ; aucune commande ne les modifie"))
-	}
+
+	// DEUX boucles, DEUX rythmes, et c'est une correction d'un couplage initial.
+	//
+	// Les avoir liés paraissait économe — un seul minuteur, un seul endroit où se
+	// tromper — mais ça mettait deux besoins opposés sur la même horloge :
+	//
+	//   - les PODS coûtent un LIST à l'API Kubernetes à chaque passage, et le
+	//     retard qu'ils bornent est un retard d'AUDIT : un run tué met une minute
+	//     à être clos, ce qui ne gêne personne. On veut pouvoir ralentir.
+	//   - les DROITS coûtent une lecture de fichier et une comparaison de
+	//     chaîne — quasiment rien tant que rien ne change — et le retard qu'ils
+	//     bornent est un retard de SÉCURITÉ : révoquer un accès doit prendre effet
+	//     vite. On veut pouvoir accélérer.
+	//
+	// Sur une horloge commune, accélérer la révocation aurait payé un LIST
+	// Kubernetes toutes les dix secondes pour rien.
+	intervallePods := secondesOuDefaut(EnvReconcileSeconds, core.IntervalleReconciliation)
+	intervalleDroits := secondesOuDefaut(EnvGrantsSeconds, IntervalleDesDroits)
 
 	slog.Info("contrôleur démarré",
 		slog.String("namespace", ns),
-		slog.Duration("intervalle", core.IntervalleReconciliation))
+		slog.Duration("intervalle_pods", intervallePods))
+	if droits != nil {
+		slog.Info("droits lus depuis un fichier",
+			slog.String("chemin", droits.Chemin()),
+			slog.Duration("intervalle", intervalleDroits),
+			slog.String("note", "c'est la seule source ; aucune commande ne les modifie"))
+	}
 
-	err = rec.Boucler(ctx, core.IntervalleReconciliation, func(b core.Bilan, err error) {
-		journaliserBilan(b, err)
-		reconcilierLesDroits(ctx, droits, st)
-	})
+	err = servirTous(ctx,
+		func(ctx context.Context) error {
+			return rec.Boucler(ctx, intervallePods, journaliserBilan)
+		},
+		func(ctx context.Context) error {
+			return boucleDesDroits(ctx, droits, st, intervalleDroits)
+		},
+	)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
 	return err
+}
+
+// IntervalleDesDroits est le rythme de relecture du document de droits.
+//
+// Dix secondes, contre trente pour les pods, et l'écart est délibéré. Un passage
+// à vide ne coûte qu'une lecture de fichier et une comparaison de chaîne — pas
+// de requête, ni à la base ni à Kubernetes — alors que ce qu'il borne est le
+// délai de prise d'effet d'une RÉVOCATION.
+//
+// Le kubelet domine de toute façon : il met quelques dizaines de secondes à
+// republier un ConfigMap modifié. Descendre sous dix secondes n'achèterait donc
+// rien de mesurable.
+const IntervalleDesDroits = 10 * time.Second
+
+// boucleDesDroits relit le document et réconcilie, jusqu'à l'annulation.
+//
+// Sans source configurée, elle attend simplement l'annulation : rendre une
+// erreur ferait tomber le contrôleur entier, alors qu'un déploiement sans
+// document de droits est un déploiement valide — il n'accorde rien.
+func boucleDesDroits(ctx context.Context, source *grantfile.Source, st *store.Store, intervalle time.Duration) error {
+	if source == nil {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if intervalle <= 0 {
+		intervalle = IntervalleDesDroits
+	}
+
+	t := time.NewTicker(intervalle)
+	defer t.Stop()
+
+	for {
+		// Un passage IMMÉDIAT au démarrage : le cas qui compte le plus est le
+		// redémarrage du contrôleur après un changement de droits, où le document
+		// attend déjà d'être appliqué.
+		reconcilierLesDroits(ctx, source, st)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
 }
 
 // journaliserBilan rend un passage lisible sans le noyer.
@@ -256,6 +322,28 @@ func secondesDeDeadline() (int64, error) {
 			EnvRunDeadlineSeconds, brut)
 	}
 	return n, nil
+}
+
+// secondesOuDefaut lit une durée exprimée en SECONDES.
+//
+// Une valeur illisible est ignorée avec un avertissement plutôt que fatale : ces
+// deux réglages sont des rythmes, et leur défaut est sûr. Refuser de démarrer le
+// contrôleur pour un intervalle mal écrit coûterait plus que ça ne protège — au
+// contraire du plafond de durée d'un run, où un défaut silencieux de deux heures
+// ne se verrait qu'au moment d'en avoir besoin.
+func secondesOuDefaut(nom string, defaut time.Duration) time.Duration {
+	brut := os.Getenv(nom)
+	if brut == "" {
+		return defaut
+	}
+	n, err := strconv.Atoi(brut)
+	if err != nil || n <= 0 {
+		slog.Warn("intervalle illisible, le défaut s'applique",
+			slog.String("variable", nom), slog.String("valeur", brut),
+			slog.Duration("défaut", defaut))
+		return defaut
+	}
+	return time.Duration(n) * time.Second
 }
 
 // dureeDeSession lit la validité d'une session.
@@ -682,6 +770,16 @@ const (
 	// Absente, le défaut du cœur s'applique — trente jours. Voir
 	// `core.DureeSession` pour l'arbitrage qu'il représente.
 	EnvSessionTTL = "WARDEN_SESSION_TTL_HOURS"
+
+	// EnvReconcileSeconds est le rythme du réconciliateur de PODS, en secondes.
+	// Chaque passage coûte un LIST à l'API Kubernetes ; ce qu'il borne est un
+	// retard d'audit, pas de sécurité.
+	EnvReconcileSeconds = "WARDEN_RECONCILE_SECONDS"
+
+	// EnvGrantsSeconds est le rythme de relecture des DROITS, en secondes.
+	// Distinct du précédent : un passage à vide ne coûte qu'une lecture de
+	// fichier, et ce qu'il borne est le délai de prise d'effet d'une révocation.
+	EnvGrantsSeconds = "WARDEN_GRANTS_SECONDS"
 
 	// EnvGrantsFile est le document des droits par environnement (ADR-0033),
 	// monté depuis un ConfigMap versionné dans le dépôt de déploiement. C'est la
