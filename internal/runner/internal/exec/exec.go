@@ -54,9 +54,19 @@ type Config struct {
 	Playbook  string
 	Inventory string
 
-	// Flags sont les flags EFFECTIFS, déjà filtrés par la politique serveur
-	// (§5.5). Ce paquet ne fait aucun passthrough : il transmet ce qu'on lui
-	// donne, après citation.
+	// Flags sont les flags passés à `ansible-playbook`, après citation.
+	//
+	// Ils ne sont PAS filtrés. La politique serveur du §5.5 n'existe pas : ce
+	// sont les flags que le client a DEMANDÉS, recopiés tels quels depuis le
+	// corps de la requête (`api/run_handler.go`). C'est l'écart que l'ADR-0021
+	// assume, et que `core.NewRun.Flags` énonce déjà correctement — demandé et
+	// effectif coïncident parce qu'il n'y a rien entre les deux.
+	//
+	// Le filtre ne pourra JAMAIS vivre ici. Ce paquet tourne dans le pod runner,
+	// qui est le domaine hostile de l'ADR-0011 : une allowlist appliquée par le
+	// runner est une allowlist appliquée par le code qu'elle est censée
+	// contraindre. Elle doit vivre côté serveur et par environnement (§5.5) ; ce
+	// champ ne peut qu'en recevoir le résultat.
 	Flags []string
 
 	// SSHKey est la clé d'accès de l'environnement (ADR-0020), vide quand il

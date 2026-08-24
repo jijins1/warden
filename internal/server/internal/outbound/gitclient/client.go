@@ -276,10 +276,11 @@ func (c *Client) ResolveRef(ctx context.Context, repo, ref string) (string, erro
 // par le SERVEUR au claim, et l'`upload-pack` servi au runner est lancé avec le
 // `GIT_NAMESPACE` correspondant, si bien qu'il ne voit qu'une seule ref.
 //
-// Elle n'a pas encore d'appelant : le claim vit dans le contrôleur, qui reste à
-// écrire. La poser ici plutôt que plus tard évite qu'on la redécouvre en la
-// réimplémentant, et surtout qu'on recompose le chemin naïvement — l'imbrication
-// des espaces de noms échoue en silence (ADR-0026).
+// Son appelant est `core.RunStarter` (`core/start.go`), dans le rôle `api`, qui
+// la joint avant de lancer le pod.
+//
+// Ne PAS recomposer ce chemin à la main ailleurs : l'imbrication des espaces de
+// noms échoue en silence (ADR-0026), et c'est la raison d'être de cette méthode.
 func (c *Client) CreateRunNamespace(ctx context.Context, repo, namespace, sha string) error {
 	if repo == "" || namespace == "" || sha == "" {
 		return fmt.Errorf("création d'espace de noms : dépôt, espace et SHA sont obligatoires")

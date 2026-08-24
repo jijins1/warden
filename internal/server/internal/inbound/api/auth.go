@@ -188,7 +188,15 @@ func (p *Policy) CanAdministerRepos(_ context.Context, user *core.User) bool {
 // CanViewRun reports whether the user may read a run and everything hanging off
 // it (events, diffs, git diffs).
 //
-// TODO: users who own the hosts a run touched.
+// The rule is ownership of the run and nothing else. An administrator does not
+// qualify — see CanAdministerRepos for why that separation is deliberate — and
+// neither does someone who operates the machines the run touched.
+//
+// That second case is §6.5's "everything that touched db-prod-02 this month",
+// and its absence is load-bearing rather than cosmetic: it is precisely why
+// HandleListByHost filters its result down to the caller instead of serving the
+// host's whole history. Widening it needs a notion of who owns a host, which
+// does not exist yet; the type comment above says where it would enter.
 func (p *Policy) CanViewRun(ctx context.Context, user *core.User, run *core.Run) bool {
 	if user == nil || run == nil {
 		return false

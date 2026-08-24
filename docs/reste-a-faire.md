@@ -23,28 +23,42 @@ de ce qu'on veut ; les ADR restent la référence de ce qu'on a tranché.
 
 ---
 
-## 1. Contrats faux — le code affirme ce qui n'est pas
+## 1. Contrats faux — ✅ FAIT (2026-08-24)
 
-Le plus petit lot du fichier, et celui à traiter en premier : un commentaire qui
+Le plus petit lot du fichier, et celui traité en premier : un commentaire qui
 ment coûte plus qu'un manque déclaré, parce qu'on ne le relit pas.
 
-- [ ] **`exec.Config.Flags` prétend être filtré et ne l'est pas.**
-  `internal/runner/internal/exec/exec.go:57` énonce « les flags EFFECTIFS, déjà
-  filtrés par la politique serveur (§5.5) ». Suivi du chemin : `api/run_handler.go:27`
-  accepte un `json.RawMessage`, `api/run_handler.go:206` le recopie tel quel, et
-  il ressort sur l'`argv` d'`ansible-playbook`. **Aucun filtrage nulle part.**
-  Voir §2 ci-dessous pour le fond ; corriger le commentaire n'attend pas, lui.
+- [x] **`exec.Config.Flags` prétendait être filtré et ne l'était pas.**
+  `exec.go` énonçait « les flags EFFECTIFS, déjà filtrés par la politique
+  serveur (§5.5) ». Suivi du chemin : `api/run_handler.go:27` accepte un
+  `json.RawMessage`, `:206` le recopie tel quel, et il ressort sur l'`argv`.
+  Aucun filtrage nulle part. Le commentaire dit maintenant que ce sont les flags
+  **demandés**, renvoie à l'écart assumé par l'ADR-0021, et ajoute ce qui
+  manquait : le filtre **ne pourra jamais vivre là**, puisque ce paquet tourne
+  dans le domaine hostile de l'ADR-0011 — une allowlist appliquée par le runner
+  est une allowlist appliquée par le code qu'elle est censée contraindre. Le
+  fond reste ouvert au §2.
 
-- [ ] **`gitd/doc.go:59-61` dit que le claim « reste à écrire ».** Faux depuis
-  que la phase 2 a été livrée : `CreateRunNamespace` a son appelant en
-  `core/start.go:155` et `IssueFetchGrant` en `core/order.go:151`. Même
-  affirmation périmée dans `outbound/gitclient/client.go:279`. Ce sont les deux
-  commentaires qui portent l'avertissement de l'ADR-0026 sur l'imbrication des
-  espaces de noms — les laisser faux, c'est risquer qu'on cesse de les croire.
+- [x] **`gitd/doc.go` et `gitclient/client.go` disaient le claim « à écrire ».**
+  Faux depuis la phase 2. La relecture a trouvé une **seconde** erreur dans la
+  même phrase, qu'on ne cherchait pas : le claim ne vit pas dans le contrôleur
+  comme le §8.4 le laissait attendre, mais dans le rôle **`api`** — c'est
+  `POST /runs` qui démarre un run. `CreateRunNamespace` est appelée par
+  `core.RunStarter` (`core/start.go:155`), `IssueFetchGrant` par
+  `core.OrderBuilder` (`core/order.go:151`), donc à la livraison de l'ordre et
+  jamais avant, ce qui est la propriété que l'ADR-0018 achète. Ces deux
+  commentaires portent l'avertissement de l'ADR-0026 sur l'imbrication des
+  espaces de noms : les laisser faux, c'était risquer qu'on cesse de les croire.
 
-- [ ] **`api/auth.go:191` — `TODO: users who own the hosts a run touched.`**
-  `CanViewRun` ne connaît pas la propriété par hôte. À trancher avec le §6.5,
-  qui veut une vue par hôte : c'est le même sujet vu des deux bouts.
+- [x] **`api/auth.go` — `TODO: users who own the hosts a run touched.`** Un TODO
+  nu ne dit pas si c'est un manque ou une décision. Remplacé par la règle réelle
+  — propriété du run, et rien d'autre, pas même l'administrateur — et par ce que
+  son absence tient : c'est **précisément pourquoi** `HandleListByHost` filtre
+  son résultat sur l'appelant au lieu de servir l'historique complet de l'hôte.
+  L'élargir suppose une notion de propriétaire d'hôte, qui n'existe pas.
+  Vérifié au passage, puisque c'était l'inquiétude naturelle : `CanViewHost`
+  rend `user != nil`, mais le filtrage a bien lieu ensuite
+  (`runs_handler.go:112-118`) — **pas de fuite**.
 
 ---
 
