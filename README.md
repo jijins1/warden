@@ -396,6 +396,11 @@ but that first contact is not protected. Prefer `warden host declare` with
 **Not measured:** event volume per run, behaviour at scale, warm-pool
 prefetching (§8.4).
 
+The section above is the short, honest version for someone deciding whether to
+use warden. The exhaustive working checklist — every open item with the file and
+line it lives at — is [`docs/reste-a-faire.md`](docs/reste-a-faire.md), in
+French like the ADRs.
+
 ---
 
 ## Design decisions
