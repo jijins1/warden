@@ -41,10 +41,13 @@ n'est pas rendu — et le contrôleur traite son absence comme « ne rien faire 
 Tant qu'il n'y en a pas, aucun run ne peut obtenir la clé d'un environnement.
 {{- end }}
 
-{{- if .Values.testTarget.enabled }}
+{{- if and .Values.testTargets.enabled .Values.testTargets.targets }}
 
-  ⚠  LA CIBLE DE TEST EST ACTIVE. Elle sert un sshd qui accepte le MOT DE PASSE
-     et n'a rien à faire en production.
+  ⚠  {{ len .Values.testTargets.targets }} CIBLE(S) DE TEST ACTIVE(S). Chacune sert un sshd qui accepte
+     le MOT DE PASSE et n'a rien à faire en production :
+{{- range $cle, $_ := .Values.testTargets.targets }}
+       - {{ include "warden.fullname" $ }}-cible-{{ $cle }}
+{{- end }}
 {{- end }}
 
 Ce que ce déploiement N'APPLIQUE PAS : l'egress des pods runner est OUVERT. Un

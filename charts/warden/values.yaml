@@ -223,8 +223,24 @@ ingress:
 # Le mot de passe n'est pas dans la chart, même raison que le secret interne :
 #   kubectl create secret generic warden-cible-enrolement -n <ns> \
 #     --from-literal=password="$(openssl rand -base64 24)"
-testTarget:
+testTargets:
   enabled: false
+
+  # Image par défaut de toutes les cibles. Celle-ci porte Python, sans quoi
+  # Ansible ne peut exécuter aucun module dessus.
   image: warden-cible-playbook
-  existingSecret: warden-cible-enrolement
   passwordKey: password
+
+  # Une entrée par cible. La CLÉ du map devient le suffixe du nom :
+  # `enrolement` donne `warden-cible-enrolement`.
+  #
+  # NE PAS RENOMMER une clé existante. Le nom est celui du Deployment, donc le
+  # renommer détruit le pod et en crée un autre — avec une clé d'hôte neuve, et
+  # un enrôlement épinglé sur l'ancienne qui échouera sur `ErrEmpreinteChangee`.
+  #
+  # Chaque cible accepte `existingSecret` (défaut : son propre nom) et `image`.
+  targets: {}
+  # targets:
+  #   enrolement: {}
+  #   test:
+  #     existingSecret: warden-cible-test

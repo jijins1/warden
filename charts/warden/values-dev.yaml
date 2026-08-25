@@ -32,9 +32,21 @@ grants:
     test:
       - warden-test
 
-# La cible d'enrôlement est déjà déployée ici et sert aux essais de bout en bout.
-testTarget:
+# Deux cibles, une par environnement d'essai.
+#
+# `enrolement` existe depuis cinq jours et est enrôlée dans `prod` sous le nom
+# `cible-test`, avec sa clé d'hôte épinglée : sa clé de map ne doit PAS changer,
+# faute de quoi le pod serait recréé et l'empreinte avec lui.
+#
+# `test` est la seconde, pour l'environnement du même nom. Une cible par
+# environnement plutôt qu'une partagée : ajouter la clé de `test` aux
+# `authorized_keys` de la machine de `prod` mélangerait exactement ce que les
+# environnements servent à séparer.
+testTargets:
   enabled: true
+  targets:
+    enrolement: {}
+    test: {}
 
 ingress:
   api:
