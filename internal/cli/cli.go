@@ -114,8 +114,9 @@ Droits par environnement (lecture seule) :
 
 Lancer un run :
   warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
-                [--ask-become-pass]            demande le mot de passe
-                                               d'élévation au terminal
+                [-K | --ask-become-pass]       demande le mot de passe
+                                               d'élévation au terminal ; « -K »
+                                               est celui d'ansible-playbook
 
 Administrer les clés d'accès :
   warden key generate --env <nom>              frappe la paire ; la partie privée
@@ -172,6 +173,8 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	// La MÊME mécanique de saisie que pour une clé ou un enrôlement : trois
 	// drapeaux nommés pareil, jamais argv, jamais l'environnement.
 	become := prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
+	// `-K` est le nom qu'`ansible-playbook` lui donne. Voir Abreger.
+	become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)

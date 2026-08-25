@@ -2,6 +2,7 @@ package prompt_test
 
 import (
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,5 +182,59 @@ func TestFournieDistingueLeFacultatif(t *testing.T) {
 		if !s.Fournie() {
 			t.Errorf("%s : ne se déclare pas fournie", nom)
 		}
+	}
+}
+
+// L'abréviation existe pour que le réflexe `ansible-playbook` ne se heurte pas à
+// un « flag provided but not defined ». Le §5.1 fait de cette familiarité
+// l'objectif d'expérience du produit.
+func TestUneAbreviationVautLaFormeLongue(t *testing.T) {
+	t.Parallel()
+
+	cas := []struct {
+		nom  string
+		args []string
+	}{
+		{"forme longue", []string{"--ask-become-pass"}},
+		{"abréviation", []string{"-K"}},
+		// Les DEUX ensemble ne sont pas une erreur : elles écrivent le même
+		// booléen. Quelqu'un qui les combine par habitude ne doit pas être puni.
+		{"les deux", []string{"-K", "--ask-become-pass"}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			t.Parallel()
+
+			fs := flag.NewFlagSet("submit", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			s := prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
+			s.Abreger(fs, "K", "abréviation d'--ask-become-pass")
+
+			if err := fs.Parse(c.args); err != nil {
+				t.Fatalf("Parse(%v) : %v", c.args, err)
+			}
+			if !s.Fournie() {
+				t.Errorf("%v ne désigne aucune provenance", c.args)
+			}
+		})
+	}
+}
+
+// Sans aucun des deux, rien n'est demandé : le mot de passe d'élévation est
+// FACULTATIF, et le réclamer d'office ferait bloquer chaque run sur une invite.
+func TestSansAbreviationNiFormeLongueRienNestDemande(t *testing.T) {
+	t.Parallel()
+
+	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	s := prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
+	s.Abreger(fs, "K", "abréviation d'--ask-become-pass")
+
+	if err := fs.Parse([]string{"--repo=x"}); err == nil {
+		t.Fatal("un drapeau inconnu devrait être refusé")
+	}
+	if s.Fournie() {
+		t.Error("une provenance a été désignée sans qu'on la demande")
 	}
 }

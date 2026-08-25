@@ -203,7 +203,7 @@ warden submit --repo mon-depot --playbook play.yml --env prod --inventory hosts
 ```
 
 ```sh
-warden submit --repo mon-depot --playbook play.yml --ask-become-pass
+warden submit --repo mon-depot --playbook play.yml -K   # ou --ask-become-pass
 ```
 
 **Le travail non commité part avec.** `submit` construit un commit d'audit depuis
