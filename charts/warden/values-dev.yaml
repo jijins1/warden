@@ -1,0 +1,39 @@
+# Valeurs du déploiement `warden-dev` de référence.
+#
+# Ce fichier n'a rien à faire dans le dépôt du produit à terme : il décrit UN
+# déploiement, pas le produit. Il y reste tant qu'il n'existe pas de dépôt de
+# déploiement, et c'est la même dette que celle du document de droits.
+
+# Le namespace existe déjà et n'est PAS repris dans la release.
+#
+# L'adopter voudrait dire qu'un `helm uninstall` le supprime — donc emporte tout
+# ce qu'il contient, y compris le volume des dépôts et la base, dont les
+# `resource-policy: keep` ne protègent RIEN contre la suppression de leur
+# namespace.
+namespace:
+  create: false
+
+image:
+  registry: gitea.ruokki.ovh/ruokki
+  tag: dev
+  # `Always` et non le défaut : le tag `dev` est MUTABLE. Avec `IfNotPresent`,
+  # republier la même étiquette ne redéploierait pas le binaire, et le pod
+  # continuerait de tourner sur l'image en cache sans que rien ne le dise.
+  pullPolicy: Always
+
+grants:
+  environments:
+    prod:
+      - ruokki
+
+# La cible d'enrôlement est déjà déployée ici et sert aux essais de bout en bout.
+testTarget:
+  enabled: true
+
+ingress:
+  api:
+    host: warden-dev.ruokki.ovh
+    tlsSecret: warden-api-cert-tls
+  git:
+    host: warden-git-dev.ruokki.ovh
+    tlsSecret: warden-git-cert-tls
