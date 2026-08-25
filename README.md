@@ -143,12 +143,13 @@ that grants it**. The source is a ConfigMap in the deployment repo, reconciled b
 the `controller`:
 
 ```yaml
-# deploy/56-droits.yaml
-environments:
-  prod:
-    - alice
-    - bob
-  staging: []        # explicitly nobody
+# charts/warden/values.yaml, or your own values file
+grants:
+  environments:
+    prod:
+      - alice
+      - bob
+    staging: []      # explicitly nobody
 ```
 
 Changing access means committing. `warden grant list` shows the result, including
@@ -336,22 +337,27 @@ Requires Go 1.26, git ≥ 2.45, Docker, and a Kubernetes cluster.
 make doctor            # checks your environment and says what is missing
 ```
 
-Deployment order matters — migrations carry schema changes the new binary
-depends on:
+The shared secret comes first — the chart creates no Secret, because a secret in
+a git repository is a published secret:
 
 ```sh
-kubectl apply -f deploy/00-namespace.yaml
+kubectl create namespace warden-dev
 kubectl create secret generic warden-internal -n warden-dev \
   --from-literal=internal-token="$(openssl rand -base64 32)" \
   --from-literal=forge-token="<forge read token>"
 
 make images-push
-# run the migrate Job, then:
-kubectl apply -f deploy/
+helm install warden charts/warden -n warden-dev \
+  --set ingress.api.host=warden.example.com \
+  --set ingress.git.host=warden-git.example.com
 ```
 
-See [`deploy/README.md`](deploy/README.md) for the details, including what this
-deployment deliberately is *not*.
+Migrations run as a `pre-install,pre-upgrade` hook, so the schema is up to date
+*before* the new binary starts on it — ArgoCD reads the same annotations as
+PreSync. Ordering is no longer something you have to remember.
+
+See [`charts/warden/README.md`](charts/warden/README.md) for the details,
+including what the chart deliberately does **not** make configurable, and why.
 
 ---
 
@@ -361,7 +367,7 @@ Stated plainly, because a product that overstates its guarantees is worse than
 one that has none.
 
 **No network perimeter.** Runner egress is wide open
-(`deploy/60-networkpolicy.yaml`). Environment grants ([ADR-0033]) stop you from
+(`charts/warden/templates/networkpolicy.yaml`). Environment grants ([ADR-0033]) stop you from
 *obtaining* an environment's key, which is real — no key, no reachable machine.
 They do not stop a legitimate `staging` run from touching a `prod` box. §10.2 is
 explicit that a perimeter is enforced by the network or it is not enforced, and

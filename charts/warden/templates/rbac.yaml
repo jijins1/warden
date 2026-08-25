@@ -1,0 +1,120 @@
+# Les droits sur le cluster, et rien de plus.
+#
+# Des Roles NAMESPACÉS, jamais un ClusterRole. Ce n'est pas une préférence de
+# style : l'ADR-0023 a écarté la validation de jetons par TokenReview pour cette
+# raison exacte — elle aurait exigé une permission hors du namespace du produit,
+# que la contrainte d'exploitation interdit. Ce fichier tient cette décision.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "warden.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "warden.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+rules:
+  # Les pods runner : les créer, les observer, les supprimer.
+  #
+  # Pas de `watch`, alors même que le contrôleur existe désormais (ADR-0031) : il
+  # LISTE périodiquement plutôt qu'il n'observe, et un droit accordé « pour plus
+  # tard » est un droit que personne ne retire. Il s'ajoutera avec l'informer.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "create", "delete"]
+
+  # Le Secret qui porte le jeton d'amorçage d'un pod (ADR-0023). Créé avant le
+  # pod, supprimé avec lui.
+  #
+  # `get` est nécessaire au rattachement par ownerReference, qui relit le Secret
+  # créé pour lui poser son propriétaire.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "warden.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "warden.fullname" . }}-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "warden.fullname" . }}-api
+    namespace: {{ .Release.Namespace }}
+---
+# Le rôle `git` n'a AUCUN droit sur l'API Kubernetes.
+#
+# Il détient le volume et sert le protocole ; il ne crée rien. Lui donner un
+# ServiceAccount sans droits, plutôt que celui par défaut, rend cette absence
+# explicite et la protège d'un `default` que quelqu'un finirait par élargir.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "warden.fullname" . }}-git
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "git" "root" .) | nindent 4 }}
+---
+# Le contrôleur a son PROPRE ServiceAccount, et pas celui du rôle `api` : il n'a
+# besoin ni de CRÉER un pod ni de lire un Secret. Réutiliser celui de l'API lui
+# donnerait le droit de lancer des runs, ce dont il n'a aucun usage.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "warden.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "controller" "root" .) | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "warden.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "controller" "root" .) | nindent 4 }}
+rules:
+  # Observer les pods runner, et supprimer ceux dont plus aucun run n'a besoin.
+  #
+  # Pas de `create` : ce n'est pas lui qui lance. Pas de `watch` non plus — il
+  # liste périodiquement.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "delete"]
+
+  # `delete` SEUL sur les Secrets, et c'est la permission la plus étroite qui
+  # fait le travail : supprimer un pod supprime aussi le Secret qui porte son
+  # jeton d'amorçage, parce qu'un rattachement raté au lancement l'aurait laissé
+  # orphelin (ADR-0023). Sans `get` ni `list`, le contrôleur ne peut LIRE aucun
+  # jeton — il ne peut que faire disparaître ceux dont le pod est mort.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "warden.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "controller" "root" .) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "warden.fullname" . }}-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "warden.fullname" . }}-controller
+    namespace: {{ .Release.Namespace }}

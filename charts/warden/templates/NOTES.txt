@@ -1,0 +1,48 @@
+warden {{ .Chart.AppVersion }} déployé dans le namespace {{ .Release.Namespace }}.
+
+{{- if not (lookup "v1" "Secret" .Release.Namespace .Values.internalSecret.name) }}
+
+  ⚠  LE SECRET PARTAGÉ « {{ .Values.internalSecret.name }} » EST ABSENT.
+
+     Les rôles `api` et `git` ne démarreront pas sans lui :
+
+       kubectl create secret generic {{ .Values.internalSecret.name }} -n {{ .Release.Namespace }} \
+         --from-literal={{ .Values.internalSecret.internalTokenKey }}="$(openssl rand -base64 32)" \
+         --from-literal={{ .Values.internalSecret.forgeTokenKey }}="<jeton de lecture de la forge>"
+{{- end }}
+
+Premier administrateur — personne ne naît administrateur, et aucun endpoint
+n'accorde ce droit :
+
+    kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "warden.fullname" . }}-api -- \
+      wardend user add --subject <sujet> --admin
+
+{{ if .Values.ingress.enabled -}}
+La CLI parle à DEUX hôtes, qui n'ont ni le même protocole ni la même politique :
+
+    warden login --server https://{{ .Values.ingress.api.host }}
+
+    API   https://{{ .Values.ingress.api.host }}
+    git   https://{{ .Values.ingress.git.host }}   (écriture du commit d'audit)
+{{- else -}}
+L'Ingress est désactivé : la CLI n'a aucun moyen d'entrer. Comment les
+développeurs joignent l'API et le port d'écriture de `git` est une décision de
+site.
+{{- end }}
+
+{{- if not .Values.grants.environments }}
+
+Aucun droit n'est déclaré : `grants.environments` est vide, donc le ConfigMap
+n'est pas rendu — et le contrôleur traite son absence comme « ne rien faire ».
+Tant qu'il n'y en a pas, aucun run ne peut obtenir la clé d'un environnement.
+{{- end }}
+
+{{- if .Values.testTarget.enabled }}
+
+  ⚠  LA CIBLE DE TEST EST ACTIVE. Elle sert un sshd qui accepte le MOT DE PASSE
+     et n'a rien à faire en production.
+{{- end }}
+
+Ce que ce déploiement N'APPLIQUE PAS : l'egress des pods runner est OUVERT. Un
+playbook joint n'importe quelle adresse avec la clé de son environnement
+(ADR-0020, ADR-0030). Voir charts/warden/README.md, « Trous connus ».

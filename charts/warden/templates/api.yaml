@@ -1,0 +1,161 @@
+{{- $fullname := include "warden.fullname" . -}}
+# Le rôle `api` : l'API d'audit, et le canal de dispatch vers les pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "warden.selectorLabels" (dict "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "warden.selectorLabels" (dict "component" "api") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $fullname }}-api
+      securityContext:
+        {{- include "warden.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "warden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["api"]
+          securityContext:
+            {{- include "warden.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: WARDEN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "warden.databaseSecret" . }}
+                  key: {{ .Values.database.key }}
+            - name: WARDEN_API_ADDR
+              value: ":{{ include "warden.port.api" . }}"
+            - name: WARDEN_DISPATCH_ADDR
+              value: ":{{ include "warden.port.dispatch" . }}"
+            - name: WARDEN_INGEST_ADDR
+              value: ":{{ include "warden.port.ingest" . }}"
+
+            # PAS de WARDEN_INGEST_DATABASE_URL : le rôle PostgreSQL restreint de
+            # l'ADR-0008 n'a pas d'utilisateur de connexion dans ce déploiement,
+            # et l'ingestion retombe donc sur le DSN applicatif en le disant au
+            # démarrage. Écart ASSUMÉ du déploiement, pas du code : le jour où
+            # CNPG publie un second secret, cette variable le pointe et rien
+            # d'autre ne bouge.
+
+            # PAS de WARDEN_INSECURE_DEV_AUTH : `warden login` existe (ADR-0032),
+            # donc l'en-tête « je suis alice » n'a plus de raison d'être accepté.
+            # Le poser vaudrait ACCEPTER que n'importe quel appelant se déclare
+            # n'importe qui — y compris administrateur. Il ne reste dans le code
+            # que pour les tests de bout en bout, qui n'ont pas de terminal pour
+            # saisir un mot de passe.
+            #
+            # Amorçage du premier compte, une fois, depuis le cluster :
+            #   kubectl exec deploy/{{ $fullname }}-api -- \
+            #     wardend user add --subject alice --admin
+            # Son autorisation est l'accès à la base, pas un mot de passe : c'est
+            # la seule qui existe avant qu'un compte existe.
+            - name: WARDEN_SESSION_TTL_HOURS
+              value: {{ .Values.api.sessionTtlHours | quote }}
+
+            - name: WARDEN_GIT_INTERNAL_URL
+              value: http://{{ $fullname }}-git-internal:{{ include "warden.port.gitInternal" . }}
+            - name: WARDEN_GIT_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.internalSecret.name }}
+                  key: {{ .Values.internalSecret.internalTokenKey }}
+
+            # TROIS adresses que le produit ne joint pas lui-même : ce sont
+            # celles qu'il REMET au pod. Le pod n'est pas dans le même espace
+            # réseau que le processus qui sert, et confondre les deux fait
+            # démarrer des pods qui ne savent pas qui appeler.
+            #
+            # La BASE, sans nom de dépôt : un dépôt bare par dépôt (ADR-0006),
+            # donc l'origine dépend du run et se compose côté serveur.
+            - name: WARDEN_GIT_RUNNER_URL
+              value: http://{{ $fullname }}-git-read:{{ include "warden.port.gitRead" . }}
+            - name: WARDEN_DISPATCH_RUNNER_URL
+              value: http://{{ $fullname }}-dispatch:{{ include "warden.port.dispatch" . }}
+            - name: WARDEN_INGEST_RUNNER_URL
+              value: http://{{ $fullname }}-ingest:{{ include "warden.port.ingest" . }}
+
+            - name: WARDEN_POD_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: WARDEN_RUNNER_IMAGE
+              value: {{ include "warden.runnerImage" . }}
+
+            # Le plafond de durée d'un run, en SECONDES (décision actée n°13).
+            # Il devient `activeDeadlineSeconds` sur le pod, donc il arrête un run
+            # qui pend même si le contrôleur est mort — la seule protection qui ne
+            # dépende d'aucun de nos processus.
+            #
+            # Ce n'est PAS lui qui écrit la cause : le pod passe à
+            # `reason: DeadlineExceeded`, le runner s'abstient de conclure, et le
+            # rôle `controller` inscrit `interrupted / server_task_timeout`.
+            - name: WARDEN_RUN_DEADLINE_SECONDS
+              value: {{ .Values.api.runDeadlineSeconds | quote }}
+          ports:
+            - { name: api,      containerPort: {{ include "warden.port.api" . }} }
+            - { name: dispatch, containerPort: {{ include "warden.port.dispatch" . }} }
+            - { name: ingest,   containerPort: {{ include "warden.port.ingest" . }} }
+          readinessProbe:
+            tcpSocket: { port: api }
+            initialDelaySeconds: 2
+          livenessProbe:
+            tcpSocket: { port: api }
+            initialDelaySeconds: 10
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "warden.selectorLabels" (dict "component" "api") | nindent 4 }}
+  ports: [{ name: api, port: {{ include "warden.port.api" . }}, targetPort: api }]
+---
+# Le canal de dispatch a son PROPRE service, pour la même raison que le rôle
+# `git` a trois : c'est la seule surface qui distribue des credentials, et la
+# séparer par le port la rend restreignable sans changement de code (ADR-0018).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-dispatch
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "warden.selectorLabels" (dict "component" "api") | nindent 4 }}
+  ports: [{ name: dispatch, port: {{ include "warden.port.dispatch" . }}, targetPort: dispatch }]
+---
+# L'ingestion a son propre service pour la même raison, et une de plus : quand
+# l'ADR-0007 dit que le runner ne joint jamais l'API, cela se lit « jamais le
+# PORT de l'API ». C'est ici que la phrase devient exprimable en NetworkPolicy.
+#
+# Le rôle `ingest` existe déjà dans le binaire et n'est pas déployé : `api` sert
+# le même endpoint sur ce même port. Le promouvoir en Deployment séparé ne
+# demandera que de pointer ce Service ailleurs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-ingest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "api" "root" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "warden.selectorLabels" (dict "component" "api") | nindent 4 }}
+  ports: [{ name: ingest, port: {{ include "warden.port.ingest" . }}, targetPort: ingest }]

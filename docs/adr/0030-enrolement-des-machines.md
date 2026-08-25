@@ -199,7 +199,7 @@ nature — il vient d'un humain —, même durée de vie, même règle.
 
 ### 8. L'egress des runners est OUVERT — et c'est un recul
 
-À lire sans atténuation. `deploy/60-networkpolicy.yaml` n'applique plus aucune
+À lire sans atténuation. `charts/warden/templates/networkpolicy.yaml` n'applique plus aucune
 règle de sortie aux pods runner.
 
 **Ce que ça emporte :**

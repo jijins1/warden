@@ -1,0 +1,50 @@
+# Les migrations : un Job, pas un initContainer.
+#
+# L'ADR-0012 le pose — ce n'est pas un rôle, c'est quelque chose qui s'exécute et
+# se termine. En initContainer, il tournerait à CHAQUE démarrage de pod et
+# sérialiserait les redémarrages derrière une migration.
+#
+# CE QUE LA CHART CHANGE, et c'est une correction et non une conversion : en
+# manifeste simple, le Job était appliqué EN MÊME TEMPS que le Deployment. Rien
+# ne garantissait que le schéma soit à jour avant que le nouveau binaire démarre
+# dessus — une course qui ne se voit que le jour où une migration est lente.
+# En hook `pre-install,pre-upgrade`, il s'exécute et RÉUSSIT avant que quoi que
+# ce soit d'autre bouge. ArgoCD lit ces annotations et les traduit en PreSync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "warden.fullname" . }}-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "migrate" "root" .) | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    # `before-hook-creation` et non `hook-succeeded` : un Job qui a ÉCHOUÉ doit
+    # rester pour qu'on lise ses journaux. Il sera remplacé au prochain essai,
+    # pas effacé au moment où on en a besoin.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "warden.selectorLabels" (dict "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "warden.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "warden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          securityContext:
+            {{- include "warden.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: WARDEN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "warden.databaseSecret" . }}
+                  key: {{ .Values.database.key }}

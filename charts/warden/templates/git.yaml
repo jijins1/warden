@@ -1,0 +1,137 @@
+{{- $fullname := include "warden.fullname" . -}}
+# Le rôle `git` : détenteur unique du volume des dépôts bare (ADR-0006).
+{{- if not .Values.git.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-repos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "git" "root" .) | nindent 4 }}
+  annotations:
+    # Le volume des dépôts SURVIT à la désinstallation. C'est le magasin d'audit
+    # (ADR-0013) : un `helm uninstall` qui l'emporterait détruirait la seule
+    # copie des artefacts exécutés. Le supprimer reste possible, mais à la main
+    # et donc en le voulant.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # RWO et non RWX, et c'est la conséquence directe de l'instance unique :
+  # l'ADR-0006 assume un point de défaillance unique plutôt qu'un volume partagé
+  # dont la cohérence dépendrait du système de fichiers.
+  storageClassName: {{ .Values.git.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.git.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-git
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "git" "root" .) | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    # Recreate et non RollingUpdate : deux instances monteraient le même PVC RWO,
+    # et la seconde resterait bloquée au montage pendant que la première tient
+    # encore le volume. L'ADR-0006 pose ce redéploiement comme la contrepartie
+    # assumée de l'instance unique — pendant l'indisponibilité, aucun run ne
+    # démarre.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "warden.selectorLabels" (dict "component" "git") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "warden.selectorLabels" (dict "component" "git") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $fullname }}-git
+      # Ce rôle ne parle jamais à l'API Kubernetes.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "warden.podSecurityContext" . | nindent 8 }}
+        # fsGroup fait appartenir le volume à l'utilisateur du conteneur. SANS
+        # LUI, git refuse d'ouvrir les dépôts — « detected dubious ownership »,
+        # protection active depuis 2.35.2 — et le symptôme est un HTTP 500 sur
+        # chaque push, dont la cause n'apparaît que dans les journaux du pod.
+        fsGroup: 65532
+      containers:
+        - name: git
+          image: {{ include "warden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["git"]
+          securityContext:
+            {{- include "warden.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: WARDEN_GIT_ROOT
+              value: /var/lib/warden/repos
+            # TROIS ports, et la séparation est un contrôle et non du rangement :
+            # elle rend chaque surface restreignable par NetworkPolicy sans
+            # changement de code (ADR-0024, ADR-0027).
+            - name: WARDEN_GIT_INTERNAL_ADDR   # joignable du seul rôle `api`
+              value: ":{{ include "warden.port.gitInternal" . }}"
+            - name: WARDEN_GIT_ADDR            # lecture, joignable des pods runner
+              value: ":{{ include "warden.port.gitRead" . }}"
+            - name: WARDEN_GIT_PUSH_ADDR       # écriture, joignable de la CLI
+              value: ":{{ include "warden.port.gitPush" . }}"
+            - name: WARDEN_GIT_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.internalSecret.name }}
+                  key: {{ .Values.internalSecret.internalTokenKey }}
+            - name: WARDEN_FORGE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.internalSecret.name }}
+                  key: {{ .Values.internalSecret.forgeTokenKey }}
+          ports:
+            - { name: internal, containerPort: {{ include "warden.port.gitInternal" . }} }
+            - { name: push,     containerPort: {{ include "warden.port.gitPush" . }} }
+            - { name: read,     containerPort: {{ include "warden.port.gitRead" . }} }
+          volumeMounts:
+            - { name: repos, mountPath: /var/lib/warden/repos }
+            # La racine est en lecture seule ; git écrit des temporaires et le
+            # rôle y pose son répertoire de hooks (ADR-0027).
+            - { name: tmp, mountPath: /tmp }
+          readinessProbe:
+            tcpSocket: { port: internal }
+            initialDelaySeconds: 2
+          livenessProbe:
+            tcpSocket: { port: internal }
+            initialDelaySeconds: 10
+          {{- with .Values.git.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: repos
+          persistentVolumeClaim:
+            claimName: {{ .Values.git.persistence.existingClaim | default (printf "%s-repos" $fullname) }}
+        - name: tmp
+          emptyDir: {}
+{{- range $surface := (list
+      (dict "suffix" "internal" "port" (include "warden.port.gitInternal" $) "name" "internal")
+      (dict "suffix" "read"     "port" (include "warden.port.gitRead" $)     "name" "read")
+      (dict "suffix" "push"     "port" (include "warden.port.gitPush" $)     "name" "push")) }}
+---
+# Un Service PAR SURFACE, et non un service à trois ports.
+#
+# C'est ce qui permet à une NetworkPolicy de nommer « le port de lecture » sans
+# nommer les deux autres. Les fusionner rendrait la politique inexprimable, ce
+# qui est exactement ce que la séparation par port existe pour éviter.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-git-{{ $surface.suffix }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "git" "root" $) | nindent 4 }}
+spec:
+  selector:
+    {{- include "warden.selectorLabels" (dict "component" "git") | nindent 4 }}
+  ports: [{ name: {{ $surface.name }}, port: {{ $surface.port }}, targetPort: {{ $surface.name }} }]
+{{- end }}

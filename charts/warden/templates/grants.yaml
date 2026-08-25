@@ -1,0 +1,35 @@
+{{- if and .Values.grants.enabled .Values.grants.environments }}
+# Les droits par environnement (§10.2, ADR-0033).
+#
+# Le contenu vient de `.Values.grants.environments` — voir `values.yaml` pour ce
+# que ce contrôle achète et ce qu'il n'achète pas.
+#
+# LE ConfigMap N'EST PAS RENDU QUAND LA CARTE EST VIDE, et c'est délibéré. Un
+# document `environments: {}` serait un document VIDE, que le planificateur
+# REFUSE — à raison : « ne rien vouloir » et « n'avoir rien pu lire » se
+# ressemblent trop pour qu'on laisse le second révoquer tous les droits. Il
+# journaliserait donc une erreur à chaque passage, toutes les dix secondes, pour
+# une installation qui n'a simplement pas encore de droits.
+#
+# L'ABSENCE du fichier, elle, est traitée par le code comme « ne rien faire ».
+# C'est le bon état par défaut, et c'est celui qu'on obtient en ne rendant rien.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "warden.fullname" . }}-grants
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "grants" "root" .) | nindent 4 }}
+data:
+  grants.yaml: |
+    environments:
+      {{- range $env, $subjects := .Values.grants.environments }}
+      {{ $env }}:
+        {{- range $subjects }}
+        - {{ . }}
+        {{- end }}
+        {{- if not $subjects }}
+        # Liste vide : un « personne » EXPLICITE, qui ferme l'environnement.
+        {{- end }}
+      {{- end }}
+{{- end }}

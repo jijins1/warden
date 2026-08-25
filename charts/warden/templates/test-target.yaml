@@ -1,3 +1,5 @@
+{{- if .Values.testTarget.enabled }}
+{{- $fullname := include "warden.fullname" . -}}
 # ┌──────────────────────────────────────────────────────────────────────────┐
 # │ CIBLE DE TEST. N'A RIEN À FAIRE EN PRODUCTION.                           │
 # │                                                                          │
@@ -5,29 +7,32 @@
 # │ gérée ne devrait faire au-delà de son enrôlement. Il existe pour qu'un   │
 # │ `warden enroll` ait quelque chose à enrôler dans un cluster de           │
 # │ développement, et pour rien d'autre.                                     │
+# │                                                                          │
+# │ D'où `testTarget.enabled: false` par défaut — en manifeste simple, il    │
+# │ suffisait d'un `kubectl apply -f deploy/` distrait pour le poser.        │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 # Pourquoi un POD et pas une VM : reproductible, jetable, et joignable depuis le
 # runner sans rien ouvrir. La cible est délibérément NUE — ni Python, ni sudo —
-# parce que c'est le cas qu'un enrôlement doit couvrir : une machine
-# fraîchement installée.
+# parce que c'est le cas qu'un enrôlement doit couvrir : une machine fraîchement
+# installée.
 #
 # Sa clé d'hôte est frappée à chaque démarrage. Conséquence à connaître : la
 # RECRÉER change son empreinte, et un réenrôlement échouera alors sur
-# `ErrEmpreinteChangee` — ce qui est le comportement voulu, et une bonne façon
-# de vérifier que l'épinglage fonctionne pour de vrai.
-
-# Le Secret n'est PAS dans ce fichier, et c'est délibéré : un mot de passe
-# d'exemple dans un manifeste qu'on applique finit toujours par tourner quelque
-# part. Même raison que `20-secrets.example.yaml`. À créer avant d'appliquer :
+# `ErrEmpreinteChangee` — ce qui est le comportement voulu, et une bonne façon de
+# vérifier que l'épinglage fonctionne pour de vrai.
 #
-#   kubectl create secret generic warden-cible-enrolement -n warden-dev \
-#     --from-literal=password="$(openssl rand -base64 24)"
+# Le Secret n'est PAS rendu par la chart, même raison que le secret interne : un
+# mot de passe d'exemple dans un dépôt git finit toujours par tourner quelque
+# part. À créer avant d'activer :
+#
+#   kubectl create secret generic {{ .Values.testTarget.existingSecret }} -n {{ .Release.Namespace }} \
+#     --from-literal={{ .Values.testTarget.passwordKey }}="$(openssl rand -base64 24)"
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: warden-cible-enrolement
-  namespace: warden-dev
+  name: {{ $fullname }}-cible-enrolement
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: warden-cible-enrolement
     app.kubernetes.io/component: test-target
@@ -49,13 +54,15 @@ spec:
         - name: sshd
           # L'image AVEC Python : Ansible exécute ses modules en Python sur la
           # machine distante. Celle des tests d'enrôlement en est dépourvue, et
-          # doit le rester — voir `deploy/cible/Dockerfile`.
-          image: gitea.ruokki.ovh/ruokki/warden-cible-playbook:dev
+          # doit le rester — voir `build/cible.Dockerfile`.
+          image: {{ .Values.image.registry }}/{{ .Values.testTarget.image }}:{{ .Values.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: Always
           env:
             - name: CIBLE_PASSWORD
               valueFrom:
-                secretKeyRef: { name: warden-cible-enrolement, key: password }
+                secretKeyRef:
+                  name: {{ .Values.testTarget.existingSecret }}
+                  key: {{ .Values.testTarget.passwordKey }}
           ports:
             - { name: ssh, containerPort: 22 }
           readinessProbe:
@@ -68,9 +75,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: warden-cible-enrolement
-  namespace: warden-dev
+  name: {{ $fullname }}-cible-enrolement
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: warden-cible-enrolement
+    app.kubernetes.io/component: test-target
 spec:
   selector:
     app.kubernetes.io/name: warden-cible-enrolement
   ports: [{ name: ssh, port: 22, targetPort: ssh }]
+{{- end }}

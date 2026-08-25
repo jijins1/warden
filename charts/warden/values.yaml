@@ -1,0 +1,230 @@
+# Valeurs par défaut de warden.
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ CE QUI N'EST PAS ICI EST DÉLIBÉRÉMENT ABSENT.                            │
+# │                                                                          │
+# │ Une valeur de chart est une chose qu'un déploiement peut se tromper à    │
+# │ régler. En ajouter une sur un contrôle de sécurité, c'est ajouter une    │
+# │ façon de le désactiver en silence — et personne ne relit un `values.yaml`│
+# │ pour vérifier qu'un contrôle est toujours actif.                         │
+# │                                                                          │
+# │ Ne sont donc PAS configurables, et la liste est fermée :                 │
+# │                                                                          │
+# │   - les règles RBAC. Le rôle `api` crée des pods, le `controller` ne     │
+# │     peut que les lister et les détruire, et son `delete` seul sur les    │
+# │     Secrets l'empêche d'en LIRE un (ADR-0023) ;                          │
+# │   - les `securityContext` : non-root, racine en lecture seule,           │
+# │     capacités retirées, seccomp ;                                        │
+# │   - `automountServiceAccountToken: false` là où il est posé ;            │
+# │   - la SÉPARATION PAR PORT du rôle `git` — 8081 interne, 8082 écriture,  │
+# │     8083 lecture. C'est elle qui rend chaque surface restreignable par   │
+# │     NetworkPolicy (ADR-0024, ADR-0027) ; les rendre réglables permettrait│
+# │     d'en faire collisionner deux ;                                       │
+# │   - `ingress: []` sur les pods runner ;                                  │
+# │   - la stratégie `Recreate` de `git` et de `controller`, et leur unique  │
+# │     réplica. Voir plus bas pourquoi ce ne sont pas des réglages.         │
+# └──────────────────────────────────────────────────────────────────────────┘
+
+# -- Remplace le nom de la release dans les noms de ressources.
+nameOverride: ""
+fullnameOverride: ""
+
+# Le Namespace.
+#
+# ArgoCD sait le créer lui-même avec `CreateNamespace=true` ; dans ce cas, poser
+# `create: false`. Le défaut reproduit le comportement des manifestes d'origine,
+# qui portaient leur propre Namespace.
+namespace:
+  create: true
+
+image:
+  registry: gitea.ruokki.ovh/ruokki
+  # Le control plane : un seul binaire pour les trois rôles (ADR-0006).
+  wardend: wardend
+  # L'image du pod runner, REMISE au pod et jamais utilisée par le serveur.
+  runner: warden-runner
+  # Vide, `.Chart.AppVersion` s'applique.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+api:
+  # UN réplica par défaut, et ce n'est pas un plafond mais un aveu : N > 1 n'a
+  # jamais été vérifié. Le canal de dispatch (ADR-0018) est tenu par UN pod, et
+  # rien ne garantit aujourd'hui qu'un runner atteigne celui qui a construit son
+  # ordre. Monter ce chiffre avant d'avoir mesuré, c'est parier.
+  replicas: 1
+
+  # Validité d'une session `warden login`, en HEURES.
+  #
+  # Le curseur est mis du côté de l'usage parce que la révocation existe :
+  # `warden logout`, la désactivation d'un compte et le changement de mot de
+  # passe coupent toutes les sessions immédiatement.
+  sessionTtlHours: 720
+
+  # Plafond de durée d'un run, en SECONDES (décision actée n°13).
+  #
+  # Il devient `activeDeadlineSeconds` sur le pod runner : il arrête donc un run
+  # qui pend même si le contrôleur est mort, ce qui en fait la seule protection
+  # qui ne dépende d'aucun processus du produit.
+  runDeadlineSeconds: 7200
+
+  resources: {}
+
+git:
+  # PAS de `replicas` : il vaut 1, et ce n'est pas un réglage.
+  #
+  # Le volume est RWO — deux instances monteraient le même PVC et la seconde
+  # resterait bloquée au montage. L'ADR-0006 assume ce point de défaillance
+  # unique plutôt qu'un volume partagé dont la cohérence dépendrait du système de
+  # fichiers.
+  persistence:
+    size: 20Gi
+    storageClass: local-path
+    # Réutiliser un PVC existant plutôt que d'en faire créer un.
+    existingClaim: ""
+  resources: {}
+
+controller:
+  # PAS de `replicas` non plus : 1, faute de leader election par Lease
+  # (ADR-0006). Toutes ses actions sont idempotentes, donc deux contrôleurs
+  # feraient du travail en double et non du travail faux — mais l'inoffensif
+  # repose ici sur une garde SQL, et rien ne gagne à l'éprouver.
+
+  # DEUX rythmes, et ils sont séparés exprès.
+  #
+  # Les PODS coûtent un LIST à l'API Kubernetes à chaque passage, et ce qu'ils
+  # bornent est un retard d'AUDIT : un run tué met une minute à être clos, ce qui
+  # ne gêne personne. C'est le réglage qu'on ralentit si le cluster est chargé.
+  reconcileSeconds: 30
+
+  # Les DROITS ne coûtent qu'une lecture de fichier et une comparaison de chaîne,
+  # et ce qu'ils bornent est le délai de prise d'effet d'une RÉVOCATION. C'est le
+  # réglage qu'on accélère.
+  #
+  # Inutile de descendre plus bas : le kubelet met quelques dizaines de secondes
+  # à republier un ConfigMap modifié, et c'est lui qui domine le délai total.
+  grantsSeconds: 10
+
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+# Les droits par environnement (§10.2, ADR-0033).
+#
+# CETTE VALEUR EST LA SOURCE DE VÉRITÉ. Aucune commande du produit ne modifie
+# les droits : `warden grant list` les affiche, rien ne les écrit. La seule façon
+# d'en changer est de committer ici et de laisser l'outil GitOps synchroniser.
+#
+# Pour chaque environnement NOMMÉ, la liste fait autorité : un compte retiré est
+# RÉVOQUÉ au passage suivant. Un environnement ABSENT n'est PAS touché — ce qui
+# permet de découper les droits en plusieurs sources, et évite qu'un document
+# tronqué révoque tout.
+#
+# Un document VIDE est REFUSÉ et journalisé en erreur : « ne rien vouloir » et
+# « n'avoir rien pu lire » se ressemblent trop. Pour fermer un environnement,
+# écrire une liste vide — c'est un « personne » explicite.
+#
+# CE QUE CE CONTRÔLE ACHÈTE : obtenir la clé SSH d'un environnement auquel on n'a
+# pas droit. CE QU'IL N'ACHÈTE PAS : qu'un run légitime de `staging` joigne une
+# machine de `prod`. L'egress du runner est ouvert, et le §10.2 pose que « le
+# périmètre est appliqué par le réseau ou il ne l'est pas ».
+grants:
+  enabled: true
+  environments: {}
+  # environments:
+  #   prod:
+  #     - ruokki
+
+# PostgreSQL par l'opérateur CNPG.
+#
+# L'ADR-0008 fait de PostgreSQL le journal ET le transport des events : ce n'est
+# pas une base de côté, c'est le composant dont la disponibilité conditionne le
+# streaming.
+postgres:
+  # `false` pour brancher une base existante — renseigner alors
+  # `database.existingSecret`.
+  enabled: true
+  instances: 1
+  storage:
+    size: 10Gi
+    # Explicite alors que le cluster a une classe par défaut : il en a même DEUX
+    # marquées `(default)`, ce qui rend le choix implicite indéterminé.
+    storageClass: local-path
+
+database:
+  # Le Secret qui porte la chaîne de connexion. CNPG le publie sous ce nom.
+  existingSecret: ""
+  key: uri
+
+# Le secret partagé des rôles `api` et `git`.
+#
+# JAMAIS créé par la chart : un secret dans un dépôt git est un secret publié.
+# À poser avant l'installation —
+#
+#   kubectl create secret generic warden-internal -n <ns> \
+#     --from-literal=internal-token="$(openssl rand -base64 32)" \
+#     --from-literal=forge-token="<jeton de lecture de la forge>"
+internalSecret:
+  name: warden-internal
+  # Authentifie l'API interne ET signe les jetons de push et de lecture
+  # (ADR-0024, ADR-0028) : qui le détient peut frapper une portée arbitraire.
+  internalTokenKey: internal-token
+  # Lecture sur la forge, pour le rafraîchissement du miroir de la branche
+  # protégée (ADR-0028).
+  forgeTokenKey: forge-token
+
+networkPolicy:
+  # Le fichier qui compte le plus. Sur un cluster où les NetworkPolicy sont
+  # acceptées mais IGNORÉES par le CNI, tout fonctionnera à l'identique et rien
+  # ne sera confiné — à vérifier plutôt qu'à supposer.
+  enabled: true
+
+ingress:
+  enabled: true
+  className: ""
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: traefik-middleware-redirect-https@kubernetescrd
+
+  # DEUX hôtes et non un, parce que la CLI parle à deux surfaces qui n'ont ni le
+  # même protocole ni la même politique. Les mettre derrière un même hôte à des
+  # chemins différents rendrait leur restriction indissociable.
+  #
+  # Le canal de dispatch et le port de LECTURE de `git` ne sont PAS exposés : ils
+  # sont joints par les pods runner, depuis l'intérieur du cluster. Les publier
+  # ouvrirait à Internet les deux surfaces que l'ADR-0007 réserve au domaine
+  # hostile — et la seule qui distribue des credentials.
+  api:
+    host: warden-dev.ruokki.ovh
+    tlsSecret: warden-api-cert-tls
+  git:
+    host: warden-git-dev.ruokki.ovh
+    tlsSecret: warden-git-cert-tls
+    annotations:
+      # Un push d'audit transporte l'historique local manquant, et l'ADR-0003
+      # note que ce coût n'est pas borné — le modèle simplifié en a même fait le
+      # cas NORMAL. Un plafond de corps par défaut couperait les pushes
+      # ordinaires.
+      traefik.ingress.kubernetes.io/router.middlewares.buffering: ""
+
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ CIBLE DE TEST. N'A RIEN À FAIRE EN PRODUCTION — d'où le défaut `false`.  │
+# │                                                                          │
+# │ Un pod qui sert un sshd acceptant le MOT DE PASSE, ce qu'aucune machine  │
+# │ gérée ne devrait faire au-delà de son enrôlement. Il existe pour qu'un   │
+# │ `warden enroll` ait quelque chose à enrôler dans un cluster de           │
+# │ développement, et pour rien d'autre.                                     │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Sa clé d'hôte est frappée à chaque démarrage : la RECRÉER change son empreinte,
+# et un réenrôlement échouera alors sur `ErrEmpreinteChangee` — comportement
+# voulu, et bonne façon de vérifier que l'épinglage fonctionne pour de vrai.
+#
+# Le mot de passe n'est pas dans la chart, même raison que le secret interne :
+#   kubectl create secret generic warden-cible-enrolement -n <ns> \
+#     --from-literal=password="$(openssl rand -base64 24)"
+testTarget:
+  enabled: false
+  image: warden-cible-playbook
+  existingSecret: warden-cible-enrolement
+  passwordKey: password

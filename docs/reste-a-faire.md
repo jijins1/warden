@@ -147,7 +147,7 @@ Le socle est posé et il n'attend qu'un appelant :
 **Le vrai trou.** Le §10.2 fait du périmètre réseau le *seul* contrôle
 d'autorisation réel de la v1, et l'ADR-0030 le nomme comme le risque principal
 de son lot. L'egress du runner est ouvert en grand : `0.0.0.0/0`, tous ports,
-dans `deploy/60-networkpolicy.yaml`.
+dans `charts/warden/templates/networkpolicy.yaml`.
 
 Ce que ça emporte, déjà écrit dans le manifeste : le port d'écriture du rôle
 `git` (8082) redevient joignable, l'API (8080) et l'API interne de `git` (8081)
@@ -178,10 +178,12 @@ aussi, et l'API Kubernetes n'est plus arrêtée que par
   `replicas: 1` avec `strategy: Recreate`, et toutes ses actions sont
   idempotentes — deux contrôleurs feraient du travail en double, pas du travail
   faux. À ajouter quand le coût du doublon comptera, pas avant.
-- [ ] **`deploy/56-droits.yaml` est au mauvais endroit.** Le document de droits
-  est la configuration d'un *déploiement*, pas du produit : il doit vivre dans le
-  dépôt de déploiement de l'utilisateur. Le produit ne devrait en livrer que
-  l'exemple.
+- [x] ~~**Le document de droits est au mauvais endroit.**~~ Résolu par la chart
+  (2026-08-25) : les droits sont devenus `grants.environments` dans
+  `values.yaml`. Le produit livre le mécanisme, le dépôt de déploiement porte le
+  contenu — ce qui était exactement la séparation manquante. La carte vide ne
+  rend AUCUN ConfigMap, parce qu'un document vide serait refusé par le
+  planificateur et journalisé en erreur toutes les dix secondes.
 - [ ] **Pas de rotation de clé outillée.** Dette déjà nommée par l'ADR-0020, que
   l'ADR-0030 a rendue plus chère en posant des `authorized_keys` sur une flotte.
   Minimum : que `warden key show` donne de quoi la faire à la main.

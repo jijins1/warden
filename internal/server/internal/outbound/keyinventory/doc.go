@@ -26,7 +26,7 @@
 //
 // L'ADR-0020 rabattait l'autorisation sur le contrôle n°2 — la NetworkPolicy
 // egress. CE REPLI N'EXISTE PLUS : l'egress des runners est ouvert
-// (`deploy/60-networkpolicy.yaml`). Il faut donc lire ce paquet pour ce qu'il
+// (`charts/warden/templates/networkpolicy.yaml`). Il faut donc lire ce paquet pour ce qu'il
 // est devenu — un magasin d'ACCÈS, pas d'autorisation. La clé qu'il émet ouvre
 // tout ce qui l'accepte, et rien dans le produit ne borne aujourd'hui ce que le
 // playbook en fait.
