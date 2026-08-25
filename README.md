@@ -368,6 +368,9 @@ export WARDEN_GIT_URL=https://warden-git.example.com   # `submit` only
 See [`charts/warden/README.md`](charts/warden/README.md) for the details,
 including what the chart deliberately does **not** make configurable, and why.
 
+For the command-by-command path — new environment, key, machine, first run —
+see [`docs/prise-en-main.md`](docs/prise-en-main.md) (in French, like the ADRs).
+
 ---
 
 ## What is not there yet
