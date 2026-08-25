@@ -356,6 +356,15 @@ Migrations run as a `pre-install,pre-upgrade` hook, so the schema is up to date
 *before* the new binary starts on it — ArgoCD reads the same annotations as
 PreSync. Ordering is no longer something you have to remember.
 
+The CLI reads both addresses from its environment — there is no `--server` flag,
+and they are two hosts rather than one because the API and git's write port have
+neither the same protocol nor the same policy:
+
+```sh
+export WARDEN_SERVER=https://warden.example.com
+export WARDEN_GIT_URL=https://warden-git.example.com   # `submit` only
+```
+
 See [`charts/warden/README.md`](charts/warden/README.md) for the details,
 including what the chart deliberately does **not** make configurable, and why.
 

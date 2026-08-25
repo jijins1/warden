@@ -18,12 +18,16 @@ n'accorde ce droit :
       wardend user add --subject <sujet> --admin
 
 {{ if .Values.ingress.enabled -}}
-La CLI parle à DEUX hôtes, qui n'ont ni le même protocole ni la même politique :
+La CLI parle à DEUX hôtes, qui n'ont ni le même protocole ni la même politique.
+Elle les lit dans son environnement — il n'y a pas de drapeau `--server` :
 
-    warden login --server https://{{ .Values.ingress.api.host }}
+    export WARDEN_SERVER=https://{{ .Values.ingress.api.host }}
+    export WARDEN_GIT_URL=https://{{ .Values.ingress.git.host }}
 
-    API   https://{{ .Values.ingress.api.host }}
-    git   https://{{ .Values.ingress.git.host }}   (écriture du commit d'audit)
+    warden login --subject <sujet>
+
+`WARDEN_GIT_URL` n'est exigée que pour `warden submit` : administrer des clés et
+des machines ne pousse aucun commit.
 {{- else -}}
 L'Ingress est désactivé : la CLI n'a aucun moyen d'entrer. Comment les
 développeurs joignent l'API et le port d'écriture de `git` est une décision de
