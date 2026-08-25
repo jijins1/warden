@@ -62,16 +62,39 @@ ment coûte plus qu'un manque déclaré, parce qu'on ne le relit pas.
 
 ---
 
-## 2. Politique serveur — §5.4, §5.4.1, §5.5
+## 2. Flags, variables et fichier projet — §5.4, §5.4.1, §5.5
 
-Un seul mécanisme, trois manques. C'est la leçon d'Atlantis du §5.4.2 : **le
-fichier client est une requête, pas une déclaration.**
+Un seul mécanisme, quatre manques. La leçon d'Atlantis du §5.4.2 — **le fichier
+client est une requête, pas une déclaration** — en était la justification
+d'origine ; elle ne tient plus telle quelle depuis que la politique serveur a
+été écartée (2026-08-25). Ce qui reste est plus modeste et toujours nécessaire :
+sans ces morceaux, `warden submit` ne sait pas faire un `--check`.
 
 - [ ] **`internal/config/` ne contient qu'un `doc.go`.** Le schéma strict de
   `.ansibleproxy.yml` (§5.4) n'existe pas : ni lecture, ni validation.
-- [ ] **Allowlist de flags par environnement (§5.5).** Minimum utile énoncé par
-  la spec : `--limit`, `--tags`, `--skip-tags`, `--check`, `--diff`,
-  `-e/--extra-vars`, `-v`.
+- [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est d'abord un manque de
+  FONCTIONNALITÉ.** `warden submit` n'accepte que `--repo`, `--playbook`,
+  `--env`, `--inventory`, `--run-ref` et la saisie de `become` — dont `-K`,
+  seule orthographe d'Ansible reprise. Aucun des sept du §5.5 —
+  `--limit`, `--tags`, `--skip-tags`, `--check`, `--diff`, `-e/--extra-vars`,
+  `-v` — n'est atteignable. `--check` en particulier : un dry-run est le premier
+  réflexe avant de toucher à la prod, et le produit ne sait pas le faire.
+
+  **Le fil est branché partout sauf au premier maillon**, ce qui rend le travail
+  restant plus petit qu'il n'en a l'air : `client.NewRun.Flags` existe et n'est
+  jamais rempli, `POST /runs` l'accepte, la colonne `run.flags` est là,
+  `dispatch.Order.Flags` la transporte, et `exec.Config.Flags` la pose sur
+  l'`argv`. Il manque les drapeaux et leur sérialisation.
+
+  **Attention au piège de justification.** Le §5.5 donne deux raisons à
+  l'allowlist, et elles ne tombent PAS ensemble. « Gouffre » — la compatibilité
+  exhaustive est un puits de maintenance — reste vrai quoi qu'il arrive.
+  « Surface d'attaque » suppose une politique serveur, écartée depuis : sans
+  elle, une liste écrite par celui qu'elle contraint ne contrôle rien, et
+  l'utilisateur exécute de toute façon du Python arbitraire par son playbook.
+  Une liste **fixe, câblée dans le produit** reste donc le bon design — mais
+  c'est un choix de PÉRIMÈTRE, pas un contrôle de sécurité, et l'ADR devra le
+  dire ainsi plutôt que de laisser croire l'inverse.
 - [ ] **Allowlist de variables d'environnement (§5.4.1), jamais une denylist.**
   La plomberie *aval* est déjà écrite et attend une source :
   `wire/dispatch.ForwardEnv` (`dispatch.go:125`), le rédacteur, `report`.
