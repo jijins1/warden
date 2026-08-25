@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"time"
 )
@@ -77,6 +78,20 @@ func ValidRunRef(ref string) bool { return ulid.MatchString(ref) }
 type RunCreator interface {
 	CreateRun(ctx context.Context, n NewRun) (int64, error)
 }
+
+// ErrRunRefExists signale qu'un run porte DÉJÀ cet identifiant public.
+//
+// Ce n'est pas une erreur interne, et c'est tout le point : la CLI réutilise
+// délibérément le même `run_ref` pour reprendre une soumission ou un enrôlement
+// interrompus. Sans erreur distincte, la violation de contrainte remonte en 500
+// avec un message qui parle de PostgreSQL, là où l'appelant a besoin de savoir
+// ce qu'est devenu le run qu'il croit reprendre.
+//
+// L'appelant DOIT alors décider en regardant l'état du run existant. Un run
+// d'audit ne se réécrit pas : recréer sous le même identifiant effacerait le
+// premier enregistrement, qui est précisément ce que le produit existe pour
+// conserver.
+var ErrRunRefExists = errors.New("un run porte déjà cet identifiant")
 
 // RefResolver rend la position d'une ref dans un dépôt.
 //
