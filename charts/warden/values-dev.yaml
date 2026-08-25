@@ -25,6 +25,12 @@ grants:
   environments:
     prod:
       - ruokki
+    # Environnement d'essai. Il n'a NI clé NI machine — volontairement : un run
+    # qui s'y exécute prouve toute la chaîne (session, commit d'audit, push,
+    # dispatch, fetch, events, clôture) sans pouvoir joindre quoi que ce soit.
+    # C'est ce qu'il faut pour vérifier un déploiement sans toucher à `prod`.
+    test:
+      - warden-test
 
 # La cible d'enrôlement est déjà déployée ici et sert aux essais de bout en bout.
 testTarget:
