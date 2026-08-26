@@ -155,6 +155,12 @@ func (c *Client) erreur(resp *http.Response) error {
 		// Les deux se présentent à l'audit comme « le code n'est plus là ».
 		return fmt.Errorf("%s: %w", e.Message, core.ErrArtifactGone)
 
+	case gitwire.CodeUnknownPath:
+		// PAS ErrArtifactGone : le commit est là, c'est le fichier qui manque.
+		// Les confondre ferait passer un dépôt sans configuration pour un dépôt
+		// dont le code a été purgé, et l'appelant tolère le premier.
+		return fmt.Errorf("%s: %w", e.Message, core.ErrNoProjectConfig)
+
 	case gitwire.CodeBadRequest:
 		// Les deux extrémités sont du même produit : c'est notre défaut.
 		return fmt.Errorf("requête refusée par le rôle git: %s", e.Message)
