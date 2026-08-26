@@ -26,9 +26,6 @@ type createRunPayload struct {
 	BaseSHA     string          `json:"base_sha"`
 	Flags       json.RawMessage `json:"flags,omitempty"`
 
-	RunnerImage       string `json:"runner_image,omitempty"`
-	RunnerImageDigest string `json:"runner_image_digest,omitempty"`
-
 	// BecomePassword ne survit PAS à cette requête : il part en consigne
 	// éphémère, et la livraison de l'ordre au pod le consomme. Ni journalisé,
 	// ni écrit en base (ADR-0018).
@@ -37,6 +34,18 @@ type createRunPayload struct {
 	// credentials que le serveur ÉMET, et celui-ci fait exception au même titre
 	// que le mot de passe d'un enrôlement.
 	BecomePassword string `json:"become_password,omitempty"`
+
+	// ForwardEnv porte les VALEURS des variables du shell de l'appelant, et
+	// elles seules (ADR-0009). Les NOMS ne sont pas lus ici : ils viennent du
+	// commit, et une valeur envoyée pour un nom que le commit ne déclare pas est
+	// jetée par la composition.
+	//
+	// C'est le seul champ de cette structure qui ressemble à de la configuration
+	// sans en être : les valeurs ne PEUVENT venir que du shell, puisque le
+	// serveur n'y a pas accès. Elles suivent le même chemin que le mot de passe
+	// d'élévation — consigne éphémère, consommée à la livraison, jamais en base
+	// et jamais journalisées.
+	ForwardEnv map[string]string `json:"forward_env,omitempty"`
 }
 
 // createRunResponse rend ce que le serveur a décidé, et non ce que le client a
@@ -103,35 +112,31 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// L'AUTORISATION, avant tout le reste (§10.2).
+	// L'AUTORISATION EN DEUX TEMPS, et le découpage n'est pas une commodité.
 	//
-	// Ici et pas plus bas : le refus doit précéder le rafraîchissement du miroir
-	// et la consigne du mot de passe d'élévation, qui sont des effets. Un run
-	// refusé ne doit rien avoir remué.
+	// Premier temps, ICI : quand l'utilisateur NOMME son environnement, on le
+	// contrôle avant d'avoir rien lu. C'est l'invariant que `POST /runs` tient
+	// depuis toujours — un run refusé n'a même pas fait interroger le dépôt — et
+	// il est TESTÉ. Le conserver n'est pas de la prudence : sans lui, un compte
+	// sans aucun droit ferait travailler le rôle `git`, en instance unique
+	// (ADR-0006), à chaque requête.
 	//
-	// Ce que ce contrôle achète exactement : la clé d'accès est délivrée PAR
-	// ENVIRONNEMENT (ADR-0020), donc sans droit il n'y a pas de credential. Ce
-	// qu'il n'achète pas : qu'un run légitime reste dans son périmètre — l'egress
-	// est ouvert, et le §10.2 pose que le périmètre est appliqué par le réseau ou
-	// ne l'est pas.
-	if err := core.VerifierLAcces(r.Context(), a.deps.Access, user.ID, payload.Environment); err != nil {
-		if errors.Is(err, core.ErrEnvironnementInterdit) {
-			slog.Warn("run refusé : environnement interdit",
-				slog.String("sujet", user.Subject),
-				slog.String("environnement", payload.Environment))
-			// 403 et non 404 : contrairement à `/admin`, l'existence d'un
-			// environnement n'est pas un secret — l'utilisateur en a lu le nom
-			// dans son propre inventaire. Le taire l'enverrait chercher une faute
-			// de frappe au lieu de demander un accès.
-			http.Error(w, "you have no access to environment "+payload.Environment,
-				http.StatusForbidden)
-			return
-		}
-		slog.Error("vérification des droits en échec", slog.String("error", err.Error()))
-		http.Error(w, "could not verify your access", http.StatusInternalServerError)
+	// Second temps, après composition : l'environnement EFFECTIF peut venir du
+	// `default_env` du commit (ADR-0009), et il n'est connu qu'une fois la
+	// configuration lue. Autoriser une valeur puis en exécuter une autre serait
+	// exactement le trou que l'ADR-0009 existe pour fermer.
+	//
+	// Les deux temps ne se recouvrent jamais inutilement : un flag explicite
+	// l'emporte sur le fichier (`core.Composer`), donc quand le premier contrôle
+	// a lieu le second porte sur la même valeur et ne fait rien.
+	if payload.Environment != "" && !a.autoriserLEnvironnement(w, r, user, payload.Environment) {
 		return
 	}
 
+	// À partir d'ici et jusqu'au second contrôle, tout est en LECTURE SEULE —
+	// configuration de dépôt, position d'une ref, blob d'un commit. C'est le
+	// critère à vérifier si on retouche cette fonction : les deux effets
+	// (rafraîchissement du miroir, consigne des secrets) restent en aval du refus.
 	repo, err := a.deps.Repos.GetRepo(r.Context(), payload.Repo)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
@@ -144,6 +149,68 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		slog.Error("lecture de la configuration de dépôt en échec",
 			slog.String("repo", payload.Repo), slog.String("error", err.Error()))
 		http.Error(w, "could not read repository configuration", http.StatusInternalServerError)
+		return
+	}
+
+	// LE point de la fonction. La ref vient de l'identité authentifiée et du
+	// ULID validé ; rien de ce que le client a envoyé ne la compose.
+	auditRef := core.AuditRefFor(user.ID, payload.RunRef)
+	auditSHA, err := a.deps.Refs.ResolveRef(r.Context(), repo.Name, auditRef)
+	if err != nil {
+		// Le cas nominal de cette erreur est un client qui déclare un run sans
+		// avoir poussé, ou qui s'est trompé d'identifiant. Le dire précisément
+		// évite une chasse au fantôme.
+		http.Error(w, "no audit commit was pushed for this run", http.StatusBadRequest)
+		return
+	}
+
+	// La configuration est lue DANS L'ARBRE DU COMMIT qu'on vient de résoudre
+	// (ADR-0009). Ce qui s'applique et ce qui est audité deviennent le même
+	// octet, sans rien devoir à la discipline du client.
+	projet, err := core.ProjectConfigFor(r.Context(), a.deps.ProjectConfig, repo.Name, auditSHA,
+		a.deps.ExigenceConfig)
+	if err != nil {
+		// Le message de `config.Parse` nomme déjà la clé ou la construction
+		// refusée : il est rendu à l'utilisateur, qui est le seul à pouvoir
+		// corriger son fichier.
+		slog.Warn("configuration de projet refusée",
+			slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	effectif, err := core.Composer(projet, core.Requete{
+		Environment: payload.Environment,
+		Inventory:   payload.Inventory,
+		ForwardEnv:  payload.ForwardEnv,
+	})
+	if err != nil {
+		slog.Warn("composition de la configuration refusée",
+			slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// La FORME de l'environnement est vérifiée ici, et pas seulement son
+	// autorisation. Elle ne l'était nulle part sur ce chemin : seuls le magasin
+	// de clés, les droits et l'enrôlement l'appelaient. Ce qui fermait la porte
+	// jusqu'ici était INDIRECT — un nom tordu n'a pas de droit associé, donc le
+	// run est refusé — et s'appuyer sur une jointure en base pour garantir la
+	// forme d'une valeur qui compose un CHEMIN D'INVENTAIRE serait fragile.
+	//
+	// Vide reste légitime : un playbook en `connection: local` n'a pas
+	// d'environnement, et `VerifierLAcces` le laisse passer depuis toujours.
+	if effectif.Environment != "" {
+		if err := core.ValidateEnvironment(effectif.Environment); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Second temps de l'autorisation. Il ne mord que lorsque l'environnement
+	// vient du fichier : sinon il porte sur la valeur déjà contrôlée plus haut.
+	if effectif.Environment != payload.Environment &&
+		!a.autoriserLEnvironnement(w, r, user, effectif.Environment) {
 		return
 	}
 
@@ -161,21 +228,9 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// LE point de la fonction. La ref vient de l'identité authentifiée et du
-	// ULID validé ; rien de ce que le client a envoyé ne la compose.
-	auditRef := core.AuditRefFor(user.ID, payload.RunRef)
-	auditSHA, err := a.deps.Refs.ResolveRef(r.Context(), repo.Name, auditRef)
-	if err != nil {
-		// Le cas nominal de cette erreur est un client qui déclare un run sans
-		// avoir poussé, ou qui s'est trompé d'identifiant. Le dire précisément
-		// évite une chasse au fantôme.
-		http.Error(w, "no audit commit was pushed for this run", http.StatusBadRequest)
-		return
-	}
-
-	// La consigne AVANT la création, et pour la même raison que sur un
-	// enrôlement : si le mot de passe n'arrive pas à destination, rien n'a été
-	// créé. L'inverse laisserait un run qui démarre sans pouvoir s'élever, et
+	// Les consignes AVANT la création, et pour la même raison que sur un
+	// enrôlement : si un secret n'arrive pas à destination, rien n'a été créé.
+	// L'inverse laisserait un run qui démarre sans pouvoir s'élever, et
 	// échouerait tâche par tâche sur la production.
 	if payload.BecomePassword != "" {
 		if a.deps.Stash == nil {
@@ -192,20 +247,58 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Les VALEURS des variables suivent le même chemin que le mot de passe :
+	// consigne éphémère, consommée à la livraison de l'ordre, jamais écrites en
+	// base. C'est ce qui tient la promesse du §5.4 — les noms sont auditables,
+	// les valeurs ne le sont pas, et le journal ci-dessous ne porte que les noms.
+	if len(effectif.ForwardEnv) > 0 {
+		if a.deps.Stash == nil {
+			http.Error(w, "forwarded environment variables are not supported on this deployment",
+				http.StatusNotImplemented)
+			return
+		}
+		brut, err := json.Marshal(effectif.ForwardEnv)
+		if err != nil {
+			// Le message ne cite JAMAIS les valeurs.
+			slog.Error("encodage des variables transmises en échec",
+				slog.String("run_ref", payload.RunRef))
+			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
+			return
+		}
+		if err := a.deps.Stash.Stash(r.Context(), core.CleForwardEnv(payload.RunRef), brut); err != nil {
+			slog.Error("consigne des variables transmises en échec",
+				slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
+			return
+		}
+		// LE RÉSULTAT EFFECTIF est journalisé (§5.4.2), et seulement les noms.
+		slog.Info("variables transmises au run",
+			slog.String("run_ref", payload.RunRef),
+			slog.Any("noms", core.NomsTransmis(effectif.ForwardEnv)))
+	}
+
 	id, err := a.deps.Creator.CreateRun(r.Context(), core.NewRun{
-		RunRef:            payload.RunRef,
-		UserID:            user.ID,
-		Repo:              repo.Name,
-		Environment:       payload.Environment,
-		Inventory:         payload.Inventory,
-		Playbook:          payload.Playbook,
-		AuditSHA:          auditSHA,
-		BaseSHA:           payload.BaseSHA,
-		MainlineRef:       repo.MainlineRef,
-		MainlineSHA:       mainlineSHA,
-		Flags:             payload.Flags,
-		RunnerImage:       payload.RunnerImage,
-		RunnerImageDigest: payload.RunnerImageDigest,
+		RunRef: payload.RunRef,
+		UserID: user.ID,
+		Repo:   repo.Name,
+		// Les valeurs EFFECTIVES, et non ce que le client a demandé (§5.4.2).
+		// C'est cette ligne qui rend l'audit fidèle : `run.inventory` porte le
+		// chemin résolu, tandis que le commit garde le template. Les deux
+		// questions — « quelle convention » et « qu'a-t-elle donné ce jour-là » —
+		// se lisent alors séparément.
+		Environment: effectif.Environment,
+		Inventory:   effectif.Inventory,
+		Playbook:    payload.Playbook,
+		AuditSHA:    auditSHA,
+		BaseSHA:     payload.BaseSHA,
+		MainlineRef: repo.MainlineRef,
+		MainlineSHA: mainlineSHA,
+		Flags:       payload.Flags,
+		// L'image vient du COMMIT, et de lui seul (ADR-0014). Elle ne transite
+		// plus par la requête : `runner_image` y était accepté sans qu'aucun
+		// client ne l'envoie, ce qui contredisait l'ADR-0009 en laissant une
+		// porte ouverte que personne n'empruntait.
+		RunnerImage: effectif.RunnerImage,
 	})
 	if err != nil {
 		slog.Error("création du run en échec",
@@ -226,7 +319,7 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 	if a.deps.Starter != nil {
 		pod, err = a.deps.Starter.Start(r.Context(), core.Run{
 			ID: id, RunRef: payload.RunRef, UserID: user.ID, Repo: repo.Name,
-			Environment: payload.Environment, Inventory: payload.Inventory,
+			Environment: effectif.Environment, Inventory: effectif.Inventory,
 			Playbook: payload.Playbook, AuditSHA: auditSHA,
 		})
 		if err != nil {
@@ -269,10 +362,24 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // pushGrantResponse porte de quoi pousser, et rien de plus.
+//
+// « De quoi pousser » inclut l'ADRESSE, et pas seulement le jeton et le préfixe.
+// C'est le même raisonnement que l'ADR-0028 tient pour RefPrefix — la CLI ne le
+// compose pas elle-même, il vient du serveur : dire avec QUEL jeton et sous QUEL
+// préfixe on écrit sans dire OÙ laisserait la moitié de la phrase au client.
+//
+// Concrètement, ça évite qu'une adresse d'infrastructure soit recopiée dans le
+// fichier versionné de chaque projet — où elle devrait être réécrite partout le
+// jour où le rôle `git` déménage.
 type pushGrantResponse struct {
 	Token     string `json:"token"`
 	RefPrefix string `json:"ref_prefix"`
 	ExpiresAt int64  `json:"expires_at"`
+
+	// PushURL est vide quand le déploiement ne l'a pas configurée : la CLI se
+	// rabat alors sur sa variable d'environnement, comme avant. C'est ce qui
+	// rend le déploiement de ce champ progressif.
+	PushURL string `json:"push_url,omitempty"`
 }
 
 // GrantTTL borne la vie d'un jeton de push.
@@ -336,7 +443,40 @@ func (a *Server) HandleIssuePushGrant(w http.ResponseWriter, r *http.Request) {
 		Token:     token,
 		RefPrefix: core.AuditPrefixFor(user.ID),
 		ExpiresAt: expires.Unix(),
+		PushURL:   a.deps.GitPushURL,
 	}); err != nil {
 		slog.Error("réponse non écrite", slog.String("error", err.Error()))
 	}
+}
+
+// autoriserLEnvironnement rend false et A DÉJÀ RÉPONDU quand l'accès est refusé.
+//
+// Extrait parce qu'il est appelé deux fois (voir HandleCreateRun) et que
+// dupliquer la traduction d'un refus d'autorisation est la manière dont les deux
+// copies finissent par diverger — l'une rendant 403 et l'autre 500 sur la même
+// cause.
+//
+// Ce que ce contrôle achète exactement : la clé d'accès est délivrée PAR
+// ENVIRONNEMENT (ADR-0020), donc sans droit il n'y a pas de credential. Ce qu'il
+// n'achète pas : qu'un run légitime reste dans son périmètre — l'egress est
+// ouvert, et le §10.2 pose que le périmètre est appliqué par le réseau ou ne
+// l'est pas.
+func (a *Server) autoriserLEnvironnement(w http.ResponseWriter, r *http.Request, user *core.User, env string) bool {
+	err := core.VerifierLAcces(r.Context(), a.deps.Access, user.ID, env)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, core.ErrEnvironnementInterdit) {
+		slog.Warn("run refusé : environnement interdit",
+			slog.String("sujet", user.Subject), slog.String("environnement", env))
+		// 403 et non 404 : contrairement à `/admin`, l'existence d'un
+		// environnement n'est pas un secret — l'utilisateur en a lu le nom dans
+		// son propre inventaire. Le taire l'enverrait chercher une faute de
+		// frappe au lieu de demander un accès.
+		http.Error(w, "you have no access to environment "+env, http.StatusForbidden)
+		return false
+	}
+	slog.Error("vérification des droits en échec", slog.String("error", err.Error()))
+	http.Error(w, "could not verify your access", http.StatusInternalServerError)
+	return false
 }

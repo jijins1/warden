@@ -512,6 +512,7 @@ func runAPI(ctx context.Context) error {
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
 		refs    core.RefResolver
+		projet  core.ProjectConfigReader
 		makers  core.RepoMaterializer
 		grants  core.PushGrantIssuer
 		creator core.RunCreator
@@ -529,6 +530,11 @@ func runAPI(ctx context.Context) error {
 			return fmt.Errorf("client du rôle git: %w", err)
 		}
 		repo, mirrors, refs, makers = gc, gc, gc, gc
+		// La configuration de projet suit le MÊME client : elle est lue dans
+		// l'arbre du commit par le rôle `git` (ADR-0009). Sans rôle `git`
+		// configuré, elle reste nil et `core.ProjectConfigFor` rend une
+		// configuration vide — les runs partent comme avant.
+		projet = gc
 
 		// Le frappeur de jetons est construit à part du client HTTP : signer ne
 		// fait AUCUN appel réseau, et les mêler donnerait à une opération
@@ -661,21 +667,29 @@ func runAPI(ctx context.Context) error {
 	}
 
 	server, err := api.New(cfg, api.Deps{
-		Runs:      st,
-		Users:     st,
-		Auth:      auth,
-		Accounts:  st,
-		Diffs:     dr,
-		Events:    f,
-		Repo:      repo,
-		Repos:     st,
-		RepoMaker: makers,
-		Creator:   creator,
-		Mirrors:   mirrors,
-		Refs:      refs,
-		Grants:    grants,
-		Starter:   starter,
-		Running:   st,
+		Runs:          st,
+		Users:         st,
+		Auth:          auth,
+		Accounts:      st,
+		Diffs:         dr,
+		Events:        f,
+		Repo:          repo,
+		Repos:         st,
+		RepoMaker:     makers,
+		Creator:       creator,
+		Mirrors:       mirrors,
+		Refs:          refs,
+		ProjectConfig: projet,
+		// Annoncée à la CLI avec son jeton de push (ADR-0028). Vide, la CLI se
+		// rabat sur sa propre variable d'environnement.
+		GitPushURL: os.Getenv(EnvGitClientURL),
+		// Opt-in EXPLICITE, et le défaut tolère : la bascule arrête les runs de
+		// tout dépôt qui n'a pas encore committé son fichier, donc elle doit être
+		// un geste d'exploitant et non un effet de bord de mise à jour.
+		ExigenceConfig: core.ExigenceConfig(os.Getenv(EnvExigerConfig) == "1"),
+		Grants:         grants,
+		Starter:        starter,
+		Running:        st,
 		// Le catalogue et l'inventaire ne demandent que PostgreSQL : ils sont
 		// branchés toujours. Le MAGASIN de clés demande le cluster, donc il
 		// suit la même condition que le démarrage des runs — sans lui, poser
@@ -749,6 +763,8 @@ const (
 	EnvDispatchAddr     = "WARDEN_DISPATCH_ADDR"      // canal de dispatch SSE, servi aux pods runner
 	EnvIngestAddr       = "WARDEN_INGEST_ADDR"        // ingestion des events, servie aux pods runner
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
+	EnvGitClientURL     = "WARDEN_GIT_CLIENT_URL"     // adresse ANNONCÉE à la CLI avec son jeton de push : le port d'ÉCRITURE
+	EnvExigerConfig     = "WARDEN_EXIGER_CONFIG"      // "1" refuse les commits sans .ansibleproxy.yml (ADR-0009)
 	// EnvDispatchRunnerURL est l'adresse du canal telle qu'un POD la joint. Comme
 	// pour git, elle diffère de l'adresse d'écoute : le service écoute dans le
 	// control plane, le pod appelle depuis le cluster.

@@ -134,6 +134,34 @@ type Deps struct {
 	// manque. Un contrôle d'autorisation qui s'efface quand sa dépendance n'est
 	// pas montée n'est pas un contrôle.
 	Access core.EnvironmentGrants
+
+	// ProjectConfig lit `.ansibleproxy.yml` dans l'arbre du commit (ADR-0009).
+	//
+	// Facultatif, et son absence est TOLÉRANTE plutôt qu'interdisante —
+	// contrairement à `Access`, et la différence se justifie : un droit qui
+	// s'efface avec sa dépendance n'est plus un contrôle, tandis qu'une
+	// configuration de projet absente est l'état de tous les dépôts qui n'ont pas
+	// encore adopté le fichier. `core.ProjectConfigFor` rend alors une
+	// configuration nulle et le run part comme avant.
+	//
+	// Cette tolérance est TRANSITOIRE : l'ADR-0009 pose qu'un commit sans
+	// configuration doit finir par être refusé. Le refus s'activera quand les
+	// dépôts en auront un.
+	ProjectConfig core.ProjectConfigReader
+
+	// ExigenceConfig décide si un commit sans `.ansibleproxy.yml` est refusé
+	// (ADR-0009). Le zéro vaut ConfigFacultative, donc un déploiement qui ne se
+	// prononce pas continue de tolérer — c'est le défaut voulu pendant la
+	// migration, et il est destiné à disparaître avec elle.
+	ExigenceConfig core.ExigenceConfig
+
+	// GitPushURL est l'adresse du rôle `git` ANNONCÉE à la CLI avec son jeton de
+	// push. Distincte de l'adresse interne : deux ports, deux surfaces, deux
+	// politiques réseau (ADR-0027).
+	//
+	// Vide, la réponse ne la porte pas et la CLI se rabat sur sa variable
+	// d'environnement — ce qui rend le déploiement progressif.
+	GitPushURL string
 }
 
 // Server serves the HTTP API and WebSocket stream.
