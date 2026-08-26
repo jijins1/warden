@@ -185,6 +185,7 @@ func TestLaClotureVoyageAvecLesDerniersEvents(t *testing.T) {
 	}
 	if final == nil {
 		t.Fatal("aucune trame terminale reçue")
+		return // `t.Fatal` termine déjà ; explicite pour les analyseurs qui ne le prouvent pas
 	}
 	if len(final.Events) != 1 {
 		t.Errorf("le lot terminal porte %d events, attendu 1 — la clôture a "+

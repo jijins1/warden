@@ -179,6 +179,7 @@ func TestLePodADeQuoiEcrire(t *testing.T) {
 	if espace == nil {
 		t.Fatalf("aucun volume monté sur %s : le conteneur ne peut rien écrire",
 			orchestrator.CheminEspace)
+		return // `t.Fatalf` termine déjà ; explicite pour les analyseurs qui ne le prouvent pas
 	}
 	if espace.ReadOnly {
 		t.Error("l'espace de travail est monté en lecture seule")
