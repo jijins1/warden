@@ -38,8 +38,13 @@ export WARDEN_SERVER=https://warden.example.com        # l'API
 export WARDEN_GIT_URL=https://warden-git.example.com   # le port d'écriture de git
 ```
 
-`WARDEN_GIT_URL` n'est exigée que par `submit` : administrer des clés et des
-machines ne pousse aucun commit.
+`WARDEN_GIT_URL` est **facultative** : le serveur annonce l'adresse du rôle `git`
+en même temps qu'il délivre le jeton de push. Elle ne sert qu'aux déploiements
+qui ne l'annoncent pas encore, et n'a de toute façon d'usage que pour `submit` —
+administrer des clés et des machines ne pousse aucun commit.
+
+`WARDEN_SERVER` peut elle aussi venir du fichier de projet (§6 bis), auquel cas
+la variable d'environnement la surcharge.
 
 ## 2. Ouvrir une session
 
@@ -212,6 +217,52 @@ le runner exécute **ce commit exact**. C'est la raison d'être du produit : ce 
 s'est exécuté est ce qui a été audité.
 
 L'inventaire et le playbook sont des chemins **relatifs au dépôt**.
+
+### Le fichier de projet
+
+Un dépôt peut déclarer ses conventions dans un `.ansibleproxy.yml` **commité à sa
+racine**, ce qui évite de retaper les mêmes drapeaux à chaque run :
+
+```yaml
+server: https://warden.example.com     # où joindre le control plane
+default_env: staging                   # environnement quand --env est absent
+inventory: inventories/{{ env }}       # « {{ env }} » suit l'environnement effectif
+runner_image: registry.example.com/mon-equipe/runner:2.3.1
+forward_env:                           # NOMS des variables du shell à transmettre
+  - VAULT_ADDR
+audit_include:                         # chemins à joindre au commit d'audit
+  - inventories/**                     # malgré les règles d'ignore
+```
+
+Avec ce fichier, la commande du dessus se réduit à :
+
+```sh
+warden submit --repo mon-depot --playbook play.yml
+```
+
+**Le serveur lit ce fichier DANS L'ARBRE DU COMMIT**, pas sur votre poste. Ce qui
+s'applique est donc exactement ce qui est audité, et une CLI modifiée ne peut pas
+faire diverger les deux. Votre copie locale ne sert qu'à trois choses que le
+serveur ne peut pas faire à votre place : savoir où l'appeler, savoir quelles
+variables lire dans votre shell, et savoir quoi mettre dans le commit.
+
+Un drapeau explicite prime toujours sur le fichier — et l'inventaire templatisé
+**suit** le drapeau : `--env prod` donne `inventories/prod`.
+
+**`forward_env` déclare des NOMS, jamais des valeurs.** Les valeurs sont lues
+dans votre shell au moment de l'appel, ne sont jamais journalisées, et sont
+détruites dès qu'elles ont été remises au pod. Seuls les noms déclarés sont
+consultés : votre environnement n'est jamais parcouru en entier.
+
+Trois noms sont **réservés** et font échouer le run s'ils apparaissent dans
+`forward_env` — `ANSIBLE_CALLBACK_PLUGINS`, `PYTHONPATH`, `LD_PRELOAD`. Le
+premier permet de remplacer le plugin de capture d'audit par un faux, ce qui
+viderait le flux d'events sans la moindre erreur. Voir l'ADR-0034.
+
+Le schéma est **strict** : une clé inconnue, une clé écrite deux fois, une ancre
+ou un alias YAML font échouer la lecture en nommant le fautif. C'est voulu —
+ignorer silencieusement une clé de configuration est précisément le mode de panne
+qu'on cherche à éliminer.
 
 `--run-ref <ref>` reprend une soumission interrompue. Un run est un
 enregistrement d'audit : il ne se rejoue pas sous le même identifiant, et le

@@ -61,6 +61,25 @@ api:
   # passe coupent toutes les sessions immédiatement.
   sessionTtlHours: 720
 
+  # Adresse du rôle `git` ANNONCÉE à la CLI avec son jeton de push (ADR-0034).
+  #
+  # Elle doit être joignable DEPUIS LE POSTE de l'utilisateur — c'est en général
+  # l'ingress d'écriture, pas un service interne au cluster. Confondre les deux
+  # fait échouer tous les push avec une erreur de résolution DNS chez le client.
+  #
+  # Vide, le serveur ne l'annonce pas et chaque utilisateur doit poser
+  # WARDEN_GIT_URL lui-même.
+  gitClientURL: ""
+
+  # Refuser les runs dont le commit ne porte pas `.ansibleproxy.yml`
+  # (ADR-0009, ADR-0034).
+  #
+  # NE PAS ACTIVER avant que tous les dépôts servis aient committé leur fichier :
+  # la bascule arrête leurs runs, avec un message qui nomme le fichier mais
+  # arrive au pire moment. C'est un interrupteur de MIGRATION, destiné à
+  # disparaître une fois la migration faite.
+  exigerConfigProjet: false
+
   # Plafond de durée d'un run, en SECONDES (décision actée n°13).
   #
   # Il devient `activeDeadlineSeconds` sur le pod runner : il arrête donc un run

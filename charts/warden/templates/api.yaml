@@ -84,6 +84,29 @@ spec:
             - name: WARDEN_INGEST_RUNNER_URL
               value: http://{{ $fullname }}-ingest:{{ include "warden.port.ingest" . }}
 
+            # L'adresse ANNONCÉE à la CLI avec son jeton de push (ADR-0028,
+            # ADR-0034). Distincte des trois ci-dessus : celles-là sont remises
+            # au POD, celle-ci part chez l'utilisateur — donc elle doit être
+            # joignable depuis son poste, pas depuis le cluster.
+            #
+            # Vide, la réponse ne la porte pas et la CLI se rabat sur son
+            # WARDEN_GIT_URL : le déploiement reste possible sans elle.
+            {{- with .Values.api.gitClientURL }}
+            - name: WARDEN_GIT_CLIENT_URL
+              value: {{ . | quote }}
+            {{- end }}
+
+            # Refuse les commits sans `.ansibleproxy.yml` (ADR-0009, ADR-0034).
+            #
+            # OPT-IN, et le défaut tolère : l'activer arrête les runs de tout
+            # dépôt qui n'a pas encore committé son fichier. C'est un geste
+            # d'exploitant, à faire une fois les dépôts dotés — pas un effet de
+            # bord de mise à jour.
+            {{- if .Values.api.exigerConfigProjet }}
+            - name: WARDEN_EXIGER_CONFIG
+              value: "1"
+            {{- end }}
+
             - name: WARDEN_POD_NAMESPACE
               value: {{ .Release.Namespace }}
             - name: WARDEN_RUNNER_IMAGE

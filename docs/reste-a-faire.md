@@ -64,56 +64,66 @@ ment coûte plus qu'un manque déclaré, parce qu'on ne le relit pas.
 
 ## 2. Flags, variables et fichier projet — §5.4, §5.4.1, §5.5
 
-Un seul mécanisme, quatre manques. La leçon d'Atlantis du §5.4.2 — **le fichier
-client est une requête, pas une déclaration** — en était la justification
-d'origine ; elle ne tient plus telle quelle depuis que la politique serveur a
-été écartée (2026-08-25). Ce qui reste est plus modeste et toujours nécessaire :
-sans ces morceaux, `warden submit` ne sait pas faire un `--check`.
+Le fichier projet et le forward de variables sont **FAITS** (2026-08-26,
+[ADR-0034](adr/0034-schema-du-fichier-de-projet.md)). Les flags Ansible restent
+ouverts, et c'est désormais le seul manque de ce lot.
 
-- [ ] **`internal/config/` ne contient qu'un `doc.go`.** Le schéma strict de
-  `.ansibleproxy.yml` (§5.4) n'existe pas : ni lecture, ni validation.
-- [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est d'abord un manque de
+- [x] **`internal/config` porte le schéma strict de `.ansibleproxy.yml`.** Six
+  champs, plafond de taille, champs inconnus refusés, clés dupliquées refusées,
+  **ancres et alias refusés**. Ce dernier point a demandé un parcours de
+  `yaml.Node` : `KnownFields` ne voit PAS un alias dont l'ancre porte sur un
+  champ connu — mesuré, pas déduit.
+- [x] **La configuration est lue depuis le commit** (ADR-0009), par un endpoint
+  `gitwire.BlobPath` sur le listener interne. `CodeUnknownPath` distingue
+  « commit absent » de « fichier absent » : le premier est une incohérence, le
+  second un état ordinaire.
+- [x] **`forward_env` fonctionne de bout en bout.** Noms du commit ∩ valeurs du
+  shell, consigne éphémère consommée à la livraison, `env/envvars` en 0600.
+- [x] **Le rédacteur de l'ADR-0017 est branché.** Il était `nil` : les valeurs
+  transmises seraient ressorties EN CLAIR dans les events, définitivement
+  (l'ADR-0013 a supprimé toute purge).
+- [x] **L'allowlist de variables (§5.4.1) existe, et sa justification est
+  corrigée.** La mesure a montré que le §5.4.1 se trompe de coupable :
+  `ANSIBLE_STDOUT_CALLBACK` est écrasée sans condition par ansible-runner, donc
+  inoffensive. Le vrai tueur est `ANSIBLE_CALLBACK_PLUGINS`, qui préfixe le
+  dossier de l'utilisateur devant celui d'ansible-runner et fait charger un faux
+  `awx_display`. Voir l'ADR-0034 pour le mécanisme exact.
+- [x] **`ValidateEnvironment` est appelée sur `POST /runs`.** Elle ne l'était
+  nulle part sur ce chemin : ce qui fermait la porte était INDIRECT — un nom
+  tordu n'a pas de droit associé — et l'environnement compose désormais un
+  chemin d'inventaire.
+- [x] **`runner_image` ne transite plus par la requête** (ADR-0009, ADR-0014).
+
+- [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est un manque de
   FONCTIONNALITÉ.** `warden submit` n'accepte que `--repo`, `--playbook`,
-  `--env`, `--inventory`, `--run-ref` et la saisie de `become` — dont `-K`,
-  seule orthographe d'Ansible reprise. Aucun des sept du §5.5 —
-  `--limit`, `--tags`, `--skip-tags`, `--check`, `--diff`, `-e/--extra-vars`,
-  `-v` — n'est atteignable. `--check` en particulier : un dry-run est le premier
-  réflexe avant de toucher à la prod, et le produit ne sait pas le faire.
+  `--env`, `--inventory`, `--run-ref` et la saisie de `become` — dont `-K`.
+  Aucun des sept du §5.5 — `--limit`, `--tags`, `--skip-tags`, `--check`,
+  `--diff`, `-e/--extra-vars`, `-v` — n'est atteignable. `--check` en
+  particulier : un dry-run est le premier réflexe avant de toucher à la prod.
 
-  **Le fil est branché partout sauf au premier maillon**, ce qui rend le travail
-  restant plus petit qu'il n'en a l'air : `client.NewRun.Flags` existe et n'est
-  jamais rempli, `POST /runs` l'accepte, la colonne `run.flags` est là,
-  `dispatch.Order.Flags` la transporte, et `exec.Config.Flags` la pose sur
-  l'`argv`. Il manque les drapeaux et leur sérialisation.
+  **Le fil est branché partout sauf au premier maillon** : `client.NewRun.Flags`
+  existe et n'est jamais rempli, `POST /runs` l'accepte, la colonne `run.flags`
+  est là, `dispatch.Order.Flags` la transporte, et `exec.Config.Flags` la pose
+  sur l'`argv`. Il manque les drapeaux et leur sérialisation.
 
-  **Attention au piège de justification.** Le §5.5 donne deux raisons à
-  l'allowlist, et elles ne tombent PAS ensemble. « Gouffre » — la compatibilité
-  exhaustive est un puits de maintenance — reste vrai quoi qu'il arrive.
-  « Surface d'attaque » suppose une politique serveur, écartée depuis : sans
-  elle, une liste écrite par celui qu'elle contraint ne contrôle rien, et
-  l'utilisateur exécute de toute façon du Python arbitraire par son playbook.
-  Une liste **fixe, câblée dans le produit** reste donc le bon design — mais
-  c'est un choix de PÉRIMÈTRE, pas un contrôle de sécurité, et l'ADR devra le
-  dire ainsi plutôt que de laisser croire l'inverse.
-- [ ] **Allowlist de variables d'environnement (§5.4.1), jamais une denylist.**
-  La plomberie *aval* est déjà écrite et attend une source :
-  `wire/dispatch.ForwardEnv` (`dispatch.go:125`), le rédacteur, `report`.
-  `core/order.go:199` note que la CLI ne les envoie pas encore.
-- [ ] **Trace du demandé vs effectif.** C'est l'écart que l'ADR-0021 a laissé
-  ouvert en toutes lettres : « cette section se rouvre le jour où la politique
-  existe ». Un refus est lui-même un signal d'audit, donc il se journalise.
+  **Le cadrage est tranché par l'ADR-0034** et vaut pour les flags : une liste
+  fixe câblée dans le produit est un choix de PÉRIMÈTRE (« la compatibilité
+  exhaustive est un gouffre »), pas un contrôle de sécurité.
 
-> **À MESURER avant d'écrire quoi que ce soit** : est-ce qu'un `ansible.cfg`
-> déposé dans le dépôt uploadé peut couper le plugin de callback — le cas que le
-> §5.4.1 désigne comme « la variable qui tue le produit » ? `ansible-runner`
-> impose son `ANSIBLE_STDOUT_CALLBACK`, et l'environnement l'emporte sur
-> `ansible.cfg` dans la précédence Ansible, donc c'est probablement déjà fermé.
-> **Probablement n'est pas mesuré.** Si l'audit est incoupable, ce lot change de
-> justification et rétrécit beaucoup : l'utilisateur peut déjà faire exécuter du
-> Python arbitraire par son playbook, donc l'allowlist ne le protège pas de
-> *lui* — elle protège l'audit.
+- [ ] **Trace du demandé vs effectif.** L'écart que l'ADR-0021 a laissé ouvert.
+  Partiellement comblé : les NOMS des variables retenues sont journalisés à la
+  création du run, et `run.environment` / `run.inventory` portent les valeurs
+  effectives. Ce qui manque est la trace de ce qui a été **écarté**, un refus
+  étant lui-même un signal d'audit.
 
----
+- [ ] **Bascule de `WARDEN_EXIGER_CONFIG`.** Le refus des commits sans
+  `.ansibleproxy.yml` (ADR-0009) est écrit et testé, mais le défaut TOLÈRE. La
+  bascule demande d'abord que tous les dépôts servis aient committé leur
+  fichier. L'interrupteur est destiné à disparaître avec sa migration.
+
+- [ ] **Versionnage du schéma**, explicitement reporté par l'ADR-0034. Le refus
+  des champs inconnus en tient lieu en attendant. Obligatoire avant que des
+  dépôts tiers dépendent du format.
 
 ## 3. Phase 3 — pré-chauffage
 
