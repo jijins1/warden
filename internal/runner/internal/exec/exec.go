@@ -100,6 +100,27 @@ type Config struct {
 	// `-e @<fichier>`, et la valeur n'apparaît nulle part dans le flux.
 	BecomePassword []byte
 
+	// ForwardEnv porte les variables du shell de l'utilisateur retenues par la
+	// composition serveur (§5.4).
+	//
+	// Elles sont posées dans `<pdd>/env/envvars`, qui est le mécanisme PROPRE
+	// d'ansible-runner et non un fichier à nous. Ça a une conséquence qu'il faut
+	// avoir en tête ici : ansible-runner lit ce fichier pour construire
+	// l'environnement du processus `ansible-playbook`, et il PRÉFIXE certaines de
+	// ses propres variables avec ce qu'il y trouve.
+	//
+	// MESURÉ sur ansible-runner 2.4.3 : `ANSIBLE_CALLBACK_PLUGINS` posée ici est
+	// placée DEVANT le dossier de plugins d'ansible-runner, et comme Ansible
+	// résout par nom, un `awx_display.py` de l'arbre audité est chargé à la place
+	// du vrai. Le flux d'events se vide alors sans la moindre erreur — l'audit
+	// disparaît en silence.
+	//
+	// Le filtre qui l'interdit vit CÔTÉ SERVEUR (`core.NomsReserves`) et ne peut
+	// pas vivre ici : ce paquet tourne dans le domaine hostile de l'ADR-0011, et
+	// une allowlist appliquée par le code qu'elle est censée contraindre ne
+	// contraint rien.
+	ForwardEnv map[string]string
+
 	// DelaiApresSignal est le sursis accordé après le SIGINT du §5.6.
 	// Zéro vaut DelaiApresSignalParDefaut.
 	DelaiApresSignal time.Duration
@@ -168,6 +189,9 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 		return "", fmt.Errorf("préparation du répertoire de travail : %w", err)
 	}
 	if err := r.poserLaCle(); err != nil {
+		return "", err
+	}
+	if err := r.poserLesVariables(); err != nil {
 		return "", err
 	}
 	if err := r.poserLeBecome(); err != nil {
@@ -359,6 +383,40 @@ func (r *Runner) poserLeBecome() error {
 	}
 	if err := os.WriteFile(filepath.Join(env, "extravars"), brut, 0o600); err != nil {
 		return fmt.Errorf("écriture du mot de passe d'élévation : %w", err)
+	}
+	return nil
+}
+
+// poserLesVariables écrit les variables transmises là où ansible-runner les lit.
+//
+// `env/envvars` attend un mapping JSON, et `encoding/json` échappe ce qu'il faut :
+// une valeur portant un guillemet ou un saut de ligne produirait sinon un fichier
+// que le moteur relit de travers, avec une erreur parlant de YAML plutôt que de
+// la variable en cause.
+//
+// 0600 posé par NOUS et non laissé à ansible-runner, pour la même raison que le
+// mot de passe d'élévation : s'en remettre à un comportement qu'on n'a pas écrit
+// pour la protection d'un secret, c'est le perdre le jour où il change.
+//
+// Rien n'est écrit quand il n'y a rien : un `envvars` vide ferait travailler
+// ansible-runner sur un fichier sans contenu à chaque run.
+func (r *Runner) poserLesVariables() error {
+	if len(r.cfg.ForwardEnv) == 0 {
+		return nil
+	}
+
+	env := filepath.Join(r.cfg.PrivateDataDir, "env")
+	if err := os.MkdirAll(env, 0o700); err != nil {
+		return fmt.Errorf("préparation du répertoire d'environnement : %w", err)
+	}
+
+	brut, err := json.Marshal(r.cfg.ForwardEnv)
+	if err != nil {
+		// Le message ne cite jamais les valeurs.
+		return errors.New("variables transmises : encodage impossible")
+	}
+	if err := os.WriteFile(filepath.Join(env, "envvars"), brut, 0o600); err != nil {
+		return fmt.Errorf("écriture des variables transmises : %w", err)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -174,6 +175,14 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		}
 	}
 
+	// Les variables du shell, si elles ont été consignées. Même chemin et même
+	// destin que le mot de passe d'élévation : lues à la LIVRAISON, détruites par
+	// leur lecture, jamais écrites en base ni dans le WAL.
+	forward, err := b.variablesTransmises(ctx, run.RunRef)
+	if err != nil {
+		return wire.Order{}, err
+	}
+
 	return wire.Order{
 		RunRef:      run.RunRef,
 		AuditSHA:    run.AuditSHA,
@@ -195,9 +204,51 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		SSHKey:         cle,
 		BecomePassword: become,
 
-		// ForwardEnv reste vide : les variables du shell de l'utilisateur
-		// transitent par la CLI (§5.4), qui ne les envoie pas encore.
+		// Les NOMS ont été filtrés par la composition (§5.4.1) et journalisés à
+		// la création du run ; les VALEURS ne le sont jamais et ne font que
+		// passer.
+		ForwardEnv: forward,
 	}, nil
+}
+
+// variablesTransmises reprend la consigne des valeurs de variables du run.
+//
+// L'absence est un état NORMAL et rend nil sans erreur : la plupart des runs ne
+// transmettent rien, et un `forward_env` vide ne mérite pas de consigne.
+//
+// La lecture DÉTRUIT la valeur, comme pour le mot de passe d'élévation. C'est ce
+// qui fait qu'un rejeu de livraison ne retrouve pas les variables — et c'est
+// voulu : elles viennent du shell de l'appelant, qui est le seul à pouvoir les
+// redonner.
+func (b *OrderBuilder) variablesTransmises(ctx context.Context, runRef string) (map[string]wire.Secret, error) {
+	if b.consigne == nil {
+		return nil, nil
+	}
+
+	brut, err := b.consigne.Take(ctx, CleForwardEnv(runRef))
+	if errors.Is(err, ErrNoStash) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("variables transmises du run %s : %w", runRef, err)
+	}
+
+	var valeurs map[string]string
+	if err := json.Unmarshal(brut, &valeurs); err != nil {
+		// Le message ne cite JAMAIS le contenu : il porte des valeurs sensibles,
+		// et une erreur de décodage est le premier endroit où on les recopierait
+		// dans un journal sans y penser.
+		return nil, fmt.Errorf("variables transmises du run %s : consigne illisible", runRef)
+	}
+	if len(valeurs) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]wire.Secret, len(valeurs))
+	for nom, v := range valeurs {
+		out[nom] = wire.Secret(v)
+	}
+	return out, nil
 }
 
 // cleDAcces émet la clé de l'environnement du run, ou rien.

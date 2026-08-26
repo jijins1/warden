@@ -71,11 +71,18 @@ type Reporter struct {
 
 // New construit le rapporteur et démarre son vidage périodique.
 //
-// `red` peut être nil, et c'est le cas NORMAL aujourd'hui : l'ordre de run ne
-// porte encore ni `forward_env` ni clé d'accès, donc aucun secret n'est injecté
-// dans le pod. La couture existe pour que le jour où l'un des deux arrive, la
-// rédaction de l'ADR-0017 s'applique sans toucher à ce chemin — elle est au bon
-// endroit, le dernier goulot avant que les octets quittent le pod.
+// `red` peut être nil, et c'est le cas de la majorité des runs : la plupart
+// n'injectent aucune valeur, et un rédacteur sans aiguille ferait parcourir
+// chaque ligne du flux pour rien. Il est armé — par `redacteurPour` dans le
+// paquet parent — dès que l'ordre porte un `forward_env` ou un mot de passe
+// d'élévation.
+//
+// Ce point est le DERNIER GOULOT avant que les octets quittent le pod, et c'est
+// pour ça que la rédaction de l'ADR-0017 vit ici plutôt qu'en amont : tout ce
+// qui remonte y passe, quelle que soit la route empruntée dans le runner.
+//
+// La clé d'accès n'entre PAS dans le jeu à masquer (ADR-0020) : elle vient du
+// serveur et n'apparaît jamais dans un résultat de module.
 func New(url, token string, red *redact.Redactor) (*Reporter, error) {
 	if url == "" {
 		return nil, errors.New("adresse de l'ingestion absente")
