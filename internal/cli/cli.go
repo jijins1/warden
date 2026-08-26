@@ -178,6 +178,14 @@ Configuration (environnement) :
 Le jeton de session est rangé dans ~/.config/warden/credentials.json, en 0600,
 indexé par adresse de serveur.`
 
+// usage rend l'aide sous forme d'erreur, pour que `main` la traite comme un
+// échec — taper une commande incomplète ne doit pas rendre un code de sortie nul.
+//
+// erreurs, où une majuscule ou un point final se retrouve au milieu d'une
+// phrase. Celui-ci est un texte d'aide de cinquante lignes, affiché tel quel et
+// jamais enveloppé : le ponctuer correctement est l'inverse d'un défaut.
+//
+//nolint:staticcheck // ST1005 vise les messages composables dans d'autres
 func usage() error { return errors.New(texteUsage) }
 
 func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error {

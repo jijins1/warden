@@ -286,7 +286,12 @@ func TestUnJetonDeSessionNeSImprimePas(t *testing.T) {
 	clair := tok.Reveal()
 
 	for nom, rendu := range map[string]string{
-		"%v":     fmt.Sprintf("%v", tok),
+		"%v": fmt.Sprintf("%v", tok),
+		// `fmt.Sprintf` et non `tok.String()` : ce test vérifie que le VERBE `%s`
+		// ne fuit pas, c'est-à-dire le chemin qu'emprunte un `slog` ou un
+		// `t.Logf` distrait. Appeler String() directement testerait une autre
+		// fonction que celle qui pose le risque.
+		//nolint:staticcheck // S1025 : la substitution proposée annulerait le test.
 		"%s":     fmt.Sprintf("%s", tok),
 		"%#v":    fmt.Sprintf("%#v", tok),
 		"JSON":   marshal(t, tok),

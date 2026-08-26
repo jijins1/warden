@@ -9,6 +9,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -155,7 +156,12 @@ func connexion(t *testing.T, h *httptest.Server) string {
 	t.Helper()
 
 	corps := strings.NewReader(`{"subject":"alice","password":"` + motDePasseDeTest + `"}`)
-	resp, err := http.Post(h.URL+"/auth/login", "application/json", corps)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.URL+"/auth/login", corps)
+	if err != nil {
+		t.Fatalf("requête de connexion: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.Client().Do(req)
 	if err != nil {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
@@ -177,10 +183,10 @@ func connexion(t *testing.T, h *httptest.Server) string {
 }
 
 // appel exécute une requête avec les en-têtes donnés.
-func appel(t *testing.T, h *httptest.Server, methode, chemin string, entetes map[string]string) *http.Response {
+func appel(t *testing.T, h *httptest.Server, methode, chemin string, entetes map[string]string) reponse {
 	t.Helper()
 
-	req, err := http.NewRequest(methode, h.URL+chemin, nil)
+	req, err := http.NewRequestWithContext(t.Context(), methode, h.URL+chemin, nil)
 	if err != nil {
 		t.Fatalf("requête: %v", err)
 	}
@@ -196,9 +202,30 @@ func appel(t *testing.T, h *httptest.Server, methode, chemin string, entetes map
 	if err != nil {
 		t.Fatalf("%s %s: %v", methode, chemin, err)
 	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
+	brut, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("%s %s: lecture du corps: %v", methode, chemin, err)
+	}
+	return reponse{StatusCode: resp.StatusCode, Header: resp.Header, Corps: brut}
 }
+
+// reponse est ce qu'un appel de test observe.
+//
+// Une VALEUR et non un `*http.Response`, et ce n'est pas cosmétique : le corps
+// est déjà lu et la connexion déjà libérée quand elle arrive à l'appelant, donc
+// il ne reste AUCUNE ressource à fermer. Rendre un `*http.Response` obligeait
+// chaque appelant à s'en souvenir — ou à s'en remettre à un `t.Cleanup` dont
+// l'ordre n'était visible nulle part, et qui gardait les connexions ouvertes
+// jusqu'à la fin du test.
+type reponse struct {
+	StatusCode int
+	Header     http.Header
+	Corps      []byte
+}
+
+// Decoder lit le corps déjà en mémoire.
+func (r reponse) Decoder() *json.Decoder { return json.NewDecoder(bytes.NewReader(r.Corps)) }
 
 func porteur(jeton string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + jeton}
@@ -219,7 +246,7 @@ func TestUnJetonOuvreLAcces(t *testing.T) {
 		Subject   string `json:"subject"`
 		ExpiresAt string `json:"expires_at"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&id); err != nil {
+	if err := resp.Decoder().Decode(&id); err != nil {
 		t.Fatalf("réponse illisible : %v", err)
 	}
 	if id.Subject != "alice" {
@@ -352,7 +379,7 @@ func TestLEnTeteDeDevNOuvrePasDeSession(t *testing.T) {
 		Subject   string `json:"subject"`
 		ExpiresAt string `json:"expires_at"`
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&id)
+	_ = resp.Decoder().Decode(&id)
 	if id.ExpiresAt != "" {
 		t.Errorf("échéance = %q : l'en-tête de développement a ouvert une session", id.ExpiresAt)
 	}
@@ -397,7 +424,13 @@ func TestUneConnexionRefuseeNeDitPasPourquoi(t *testing.T) {
 		"mauvais mot de passe": `{"subject":"alice","password":"un autre mot de passe"}`,
 	} {
 		t.Run(nom, func(t *testing.T) {
-			resp, err := http.Post(h.URL+"/auth/login", "application/json", strings.NewReader(corps))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				h.URL+"/auth/login", strings.NewReader(corps))
+			if err != nil {
+				t.Fatalf("requête: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := h.Client().Do(req)
 			if err != nil {
 				t.Fatalf("POST: %v", err)
 			}

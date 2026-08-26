@@ -192,7 +192,8 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 	// « successful », le playbook est allé au bout et le signal est arrivé après.
 	// C'est un fait observé, pas une supposition, et le taire perdrait l'issue
 	// d'un run qui a réussi.
-	if ctx.Err() != nil && !(err == nil && statut == exec.StatutReussi) {
+	succesConstate := err == nil && statut == exec.StatutReussi
+	if ctx.Err() != nil && !succesConstate {
 		slog.Warn("run abandonné au réconciliateur",
 			slog.String("run_ref", ordre.RunRef),
 			slog.String("motif", "le pod s'arrête ; l'issue observée ne serait pas celle du playbook"))
