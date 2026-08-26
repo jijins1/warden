@@ -50,6 +50,21 @@ type Options struct {
 	// répond que la ref est déjà à jour. Sans lui, une reprise tirerait un nouvel
 	// identifiant et créerait un second enregistrement du même travail.
 	RunRef string
+
+	// ForwardEnv porte les VALEURS lues dans le shell pour les noms que le
+	// fichier de projet déclare (§5.4).
+	//
+	// Non autoritaire : le serveur relit les noms dans le commit et n'en retient
+	// que l'intersection (ADR-0009). Ce qui est envoyé ici sans être déclaré dans
+	// le commit ne passera pas.
+	ForwardEnv map[string]string
+
+	// AuditInclude élargit le périmètre de la capture (§5.3).
+	//
+	// Nécessairement client : il décide de ce qui ENTRE dans le commit, donc le
+	// lire depuis le commit serait circulaire. La divergence reste détectable
+	// après coup — le fichier est dans l'arbre — mais pas empêchable à la source.
+	AuditInclude []string
 }
 
 // Result est ce que le serveur a retenu du run.
@@ -71,6 +86,11 @@ type API interface {
 }
 
 // Run exécute la séquence complète.
+//
+// `Options.GitURL` n'est PLUS obligatoire : le serveur peut annoncer l'adresse
+// avec le jeton de push. Elle reste acceptée comme repli, et son absence n'est
+// détectée qu'au moment du push — c'est-à-dire au seul moment où l'on sait
+// vraiment si elle manquait.
 //
 // L'ORDRE est celui du §5.2 et il n'est pas indifférent :
 //
@@ -97,6 +117,27 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		return nil, err
 	}
 
+	// L'adresse du rôle `git` telle que le SERVEUR l'annonce prime sur celle que
+	// l'appelant a configurée. C'est le même principe que le préfixe de ref : le
+	// serveur dit avec quel jeton, sous quel préfixe et OÙ, d'une seule phrase.
+	// La valeur locale reste le repli d'un déploiement qui ne l'annonce pas.
+	gitURL := opts.GitURL
+	if grant.PushURL != "" {
+		gitURL = grant.PushURL
+	}
+	if gitURL == "" {
+		// Contrôlé ICI et pas dans `valider` : avant l'appel au serveur, on ne
+		// sait pas encore s'il annonce l'adresse, et exiger la variable locale
+		// d'un déploiement qui l'annonce serait une exigence fausse.
+		//
+		// Mais contrôlé AVANT la capture, et c'est ce qui compte : sans ça,
+		// l'adresse vide descendrait jusqu'au push et git répondrait « URL
+		// malformée » après que l'utilisateur a payé la capture de son arbre —
+		// un message exact, sur une cause qu'il ne relierait pas (§5.7).
+		return nil, fmt.Errorf("aucune adresse pour le rôle git : ce serveur ne l'annonce pas, " +
+			"posez WARDEN_GIT_URL")
+	}
+
 	runRef := opts.RunRef
 	if runRef == "" {
 		var err error
@@ -119,7 +160,7 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("lecture du commit courant : %w", err)
 	}
 
-	scope, err := upload.DetermineScope(ctx, opts.RepoDir, upload.Options{})
+	scope, err := upload.DetermineScope(ctx, opts.RepoDir, upload.Options{Include: opts.AuditInclude})
 	if err != nil {
 		return nil, fmt.Errorf("détermination du périmètre d'audit : %w", err)
 	}
@@ -154,7 +195,7 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 	}
 	defer func() { _ = audit.Close() }()
 
-	if err := audit.Push(ctx, opts.GitURL, grant.Token, ref); err != nil {
+	if err := audit.Push(ctx, gitURL, grant.Token, ref); err != nil {
 		if errors.Is(err, git.ErrRemoteRejected) {
 			// Un refus ne réussira pas au réessai, et la cause est du côté de
 			// l'utilisateur : secret détecté, objet revendiqué sans être envoyé,
@@ -174,6 +215,7 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		// `Reveal` : le seul endroit où le mot de passe d'élévation sort de son
 		// enveloppe masquée, et il doit se voir en revue.
 		BecomePassword: string(opts.BecomePassword.Reveal()),
+		ForwardEnv:     opts.ForwardEnv,
 	})
 	if err != nil {
 		// La ref est poussée mais le run n'est pas déclaré. Le dire précisément
@@ -199,9 +241,6 @@ func valider(o Options) error {
 	}
 	if o.Playbook == "" {
 		manquants = append(manquants, "playbook")
-	}
-	if o.GitURL == "" {
-		manquants = append(manquants, "adresse du rôle git")
 	}
 	if len(manquants) > 0 {
 		return fmt.Errorf("configuration incomplète : %s", strings.Join(manquants, ", "))

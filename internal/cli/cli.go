@@ -18,6 +18,7 @@ import (
 	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/auth"
 	"github.com/jijins1/warden/internal/cli/internal/client"
+	"github.com/jijins1/warden/internal/cli/internal/projet"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
 	"github.com/jijins1/warden/internal/cli/internal/session"
 	"github.com/jijins1/warden/internal/cli/internal/stream"
@@ -34,6 +35,10 @@ const (
 	EnvServeur = "WARDEN_SERVER"  // API du control plane
 	EnvGit     = "WARDEN_GIT_URL" // rôle `git`, port d'écriture
 	EnvSujet   = "WARDEN_SUBJECT" // identité, en mode de développement
+
+	// configFichier n'est cité que dans les messages : le nom qui fait autorité
+	// est `config.File`, et la CLI le lit à travers le paquet `projet`.
+	configFichier = ".ansibleproxy.yml"
 )
 
 // Run exécute la commande demandée.
@@ -147,9 +152,26 @@ Format d'un fichier de déclaration :
       host_key: "ssh-ed25519 AAAA..."   # facultatif, mais c'est lui qui
                                         # protège du premier contact aveugle
 
+Fichier de projet (.ansibleproxy.yml, commité à la racine du dépôt) :
+  server: https://warden.example.com   où joindre le control plane
+  default_env: staging                 environnement quand --env est absent
+  inventory: inventories/{{ env }}     chemin de l'inventaire ; « {{ env }} » est
+                                       le seul substituable reconnu
+  runner_image: registry/…/runner:2.3  image du pod d'exécution
+  forward_env:                         NOMS des variables du shell à transmettre
+    - VAULT_ADDR                       (les valeurs ne sont jamais journalisées)
+  audit_include:                       chemins à joindre au commit d'audit
+    - inventories/**                   malgré les règles d'ignore
+
+  Le fichier est lu par le SERVEUR dans l'arbre du commit : ce qui s'applique est
+  ce qui est audité. La lecture locale ne sert qu'à joindre le serveur, à savoir
+  quelles variables lire dans le shell, et à composer le commit.
+
 Configuration (environnement) :
-  WARDEN_SERVER    adresse de l'API du control plane
-  WARDEN_GIT_URL   adresse du rôle git (port d'écriture)
+  WARDEN_SERVER    adresse de l'API ; prime sur « server » du fichier
+  WARDEN_GIT_URL   adresse du rôle git (port d'écriture). Facultative : le
+                   serveur l'annonce avec le jeton de push. Ne sert que pour un
+                   déploiement qui ne l'annonce pas encore.
   WARDEN_SUBJECT   identité AFFIRMÉE, acceptée seulement par un serveur en mode
                    de développement. « warden login » la rend inutile.
 
@@ -180,22 +202,44 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)
 	}
 
-	adresse, git := os.Getenv(EnvServeur), os.Getenv(EnvGit)
-	if adresse == "" || git == "" {
-		return fmt.Errorf("%s et %s doivent être définies\n\n%s", EnvServeur, EnvGit, texteUsage)
-	}
-
-	api, err := clientPour(adresse)
-	if err != nil {
-		return err
-	}
-
 	// Le répertoire courant, et non un chemin en option : la capture s'applique
 	// au dépôt dans lequel on se trouve, et un drapeau inviterait à auditer un
 	// dépôt qu'on ne regarde pas.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+
+	// Le fichier de projet est lu ICI, et cette lecture n'est PAS autoritaire :
+	// le serveur relira le même fichier dans l'arbre du commit (ADR-0009). Elle
+	// ne sert qu'aux trois choses que le serveur ne peut pas faire à notre place
+	// — savoir où l'appeler, savoir quels noms chercher dans le shell, et savoir
+	// quoi mettre dans le commit. Voir le doc du paquet `projet`.
+	config, err := projet.Lire(cwd)
+	if err != nil {
+		return err
+	}
+
+	// La variable d'environnement PRIME sur le fichier : c'est la surcharge d'un
+	// utilisateur qui vise délibérément un autre serveur, et elle ne doit pas
+	// demander d'éditer un fichier versionné pour le reste de l'équipe.
+	adresse := os.Getenv(EnvServeur)
+	if adresse == "" {
+		adresse = config.Server
+	}
+	if adresse == "" {
+		return fmt.Errorf("aucune adresse de serveur : posez %s ou déclarez `server` dans %s\n\n%s",
+			EnvServeur, configFichier, texteUsage)
+	}
+
+	// L'adresse du rôle `git` n'est plus exigée ici : le serveur l'annonce avec
+	// le jeton de push, et celle-ci n'est qu'un repli pour les déploiements qui
+	// ne l'annoncent pas encore.
+	git := os.Getenv(EnvGit)
+
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
 	}
 
 	// Facultatif : il n'est demandé que si on l'a réclamé. C'est ce que
@@ -219,6 +263,12 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		RunRef:      *runRef,
 
 		BecomePassword: motDePasseBecome,
+
+		// Les VALEURS des variables déclarées, lues dans le shell. Seuls les noms
+		// déclarés sont consultés : l'environnement n'est jamais parcouru en
+		// entier.
+		ForwardEnv:   projet.Valeurs(config.ForwardEnv, os.LookupEnv),
+		AuditInclude: config.AuditInclude,
 	})
 	if err != nil {
 		return err

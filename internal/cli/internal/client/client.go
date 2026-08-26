@@ -110,6 +110,17 @@ type Grant struct {
 	RefPrefix string `json:"ref_prefix"`
 
 	ExpiresAt int64 `json:"expires_at"`
+
+	// PushURL est l'adresse du rôle `git` telle que le SERVEUR l'annonce.
+	//
+	// Même raisonnement que RefPrefix, dont le commentaire ci-dessus dit qu'il
+	// vient du serveur « précisément pour qu'il vienne du serveur » : dire avec
+	// quel jeton et sous quel préfixe on écrit sans dire où laisserait la moitié
+	// de la phrase au client.
+	//
+	// Vide sur un déploiement qui ne l'a pas configurée : l'appelant se rabat
+	// alors sur sa propre configuration.
+	PushURL string `json:"push_url,omitempty"`
 }
 
 // IssuePushGrant obtient le jeton qui autorise le push d'audit.
@@ -145,6 +156,16 @@ type NewRun struct {
 	// BecomePassword ne survit pas à la requête : le serveur le range dans une
 	// consigne éphémère, et la livraison de l'ordre au pod le consomme.
 	BecomePassword string `json:"become_password,omitempty"`
+
+	// ForwardEnv porte les VALEURS lues dans le shell de l'appelant, et elles
+	// seules (§5.4).
+	//
+	// Les NOMS ne sont PAS autoritaires ici : le serveur les relit dans le
+	// commit et n'en retient que l'intersection (ADR-0009). Envoyer une valeur
+	// pour un nom que le commit ne déclare pas ne la fait pas passer — c'est
+	// exactement ce qui rend l'audit fidèle sans rien devoir à la discipline de
+	// cette CLI.
+	ForwardEnv map[string]string `json:"forward_env,omitempty"`
 }
 
 // RunCreated est ce que le serveur a décidé.
