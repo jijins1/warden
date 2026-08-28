@@ -7,7 +7,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -80,7 +79,7 @@ func TestUnRunSeLitParSaReference(t *testing.T) {
 	}
 
 	var brut map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&brut); err != nil {
+	if err := resp.Decoder().Decode(&brut); err != nil {
 		t.Fatalf("réponse illisible : %v", err)
 	}
 

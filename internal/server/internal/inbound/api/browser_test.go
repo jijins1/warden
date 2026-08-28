@@ -13,7 +13,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -27,27 +26,6 @@ import (
 )
 
 const origineUI = "https://warden-ui.example.com"
-
-// reponse est ce qu'on garde d'une réponse APRÈS l'avoir refermée.
-//
-// Une valeur, et non un `*http.Response` : rendre le pointeur oblige chaque
-// appelant à fermer le corps, et l'oubli ne se voit pas. Fermer ici et ne rendre
-// que ce qui se lit supprime la question plutôt que de la déplacer.
-type reponse struct {
-	code    int
-	entetes http.Header
-	cookies []*http.Cookie
-	corps   string
-}
-
-func (r reponse) cookie(nom string) *http.Cookie {
-	for _, c := range r.cookies {
-		if c.Name == nom {
-			return c
-		}
-	}
-	return nil
-}
 
 // appelUI exécute une requête et rend la réponse déjà refermée.
 func appelUI(t *testing.T, c *http.Client, methode, url string, entetes map[string]string, corps string) reponse {
@@ -76,10 +54,10 @@ func appelUI(t *testing.T, c *http.Client, methode, url string, entetes map[stri
 		t.Fatalf("lecture du corps: %v", err)
 	}
 	return reponse{
-		code:    resp.StatusCode,
-		entetes: resp.Header,
-		cookies: resp.Cookies(),
-		corps:   string(brut),
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header,
+		Corps:      brut,
+		Cookies:    resp.Cookies(),
 	}
 }
 
@@ -142,8 +120,8 @@ func ouvrirSession(t *testing.T, h *httptest.Server, c *http.Client) reponse {
 	t.Helper()
 	r := appelUI(t, c, http.MethodPost, h.URL+"/auth/login",
 		map[string]string{"Content-Type": "application/json"}, corpsDeConnexion)
-	if r.code != http.StatusOK {
-		t.Fatalf("connexion refusée : %d", r.code)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("connexion refusée : %d", r.StatusCode)
 	}
 	return r
 }
@@ -160,15 +138,15 @@ func TestUneOrigineAutoriseeObtientSesEnTetes(t *testing.T) {
 	r := appelUI(t, clientSimple(), http.MethodGet, h.URL+"/auth/whoami",
 		map[string]string{"Origin": origineUI}, "")
 
-	if got := r.entetes.Get("Access-Control-Allow-Origin"); got != origineUI {
+	if got := r.Header.Get("Access-Control-Allow-Origin"); got != origineUI {
 		t.Errorf("Allow-Origin = %q, attendu %q", got, origineUI)
 	}
-	if got := r.entetes.Get("Access-Control-Allow-Credentials"); got != "true" {
+	if got := r.Header.Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Errorf("Allow-Credentials = %q : le cookie ne partira pas", got)
 	}
 	// Sans `Vary`, un cache partagé sert à une origine la réponse taillée pour
 	// une autre.
-	if got := r.entetes.Get("Vary"); !strings.Contains(got, "Origin") {
+	if got := r.Header.Get("Vary"); !strings.Contains(got, "Origin") {
 		t.Errorf("Vary = %q, doit contenir Origin", got)
 	}
 }
@@ -179,7 +157,7 @@ func TestUneOrigineInconnueNObtientRien(t *testing.T) {
 	r := appelUI(t, clientSimple(), http.MethodGet, h.URL+"/auth/whoami",
 		map[string]string{"Origin": "https://ailleurs.example.net"}, "")
 
-	if got := r.entetes.Get("Access-Control-Allow-Origin"); got != "" {
+	if got := r.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("Allow-Origin = %q pour une origine inconnue", got)
 	}
 }
@@ -192,7 +170,7 @@ func TestSansAllowlistAucuneOrigineNestAcceptee(t *testing.T) {
 	r := appelUI(t, clientSimple(), http.MethodGet, h.URL+"/auth/whoami",
 		map[string]string{"Origin": origineUI}, "")
 
-	if got := r.entetes.Get("Access-Control-Allow-Origin"); got != "" {
+	if got := r.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("Allow-Origin = %q sans allowlist configurée", got)
 	}
 }
@@ -208,16 +186,16 @@ func TestSansOrigineLaRequeteTraverseIntacte(t *testing.T) {
 	var out struct {
 		Token string `json:"token"`
 	}
-	if err := json.Unmarshal([]byte(connexion.corps), &out); err != nil {
+	if err := connexion.Decoder().Decode(&out); err != nil {
 		t.Fatalf("réponse illisible : %v", err)
 	}
 
 	r := appelUI(t, c, http.MethodGet, h.URL+"/auth/whoami",
 		map[string]string{"Authorization": "Bearer " + out.Token}, "")
-	if r.code != http.StatusOK {
-		t.Fatalf("code = %d : la CLI a été gênée par le CORS", r.code)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("code = %d : la CLI a été gênée par le CORS", r.StatusCode)
 	}
-	if got := r.entetes.Get("Access-Control-Allow-Origin"); got != "" {
+	if got := r.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("Allow-Origin = %q sur une requête sans Origin", got)
 	}
 }
@@ -231,15 +209,15 @@ func TestLaPrevolAutoriseeAnnonceCeQuelleAccepte(t *testing.T) {
 		"Access-Control-Request-Headers": "content-type,x-warden-ui",
 	}, "")
 
-	if r.code != http.StatusNoContent {
-		t.Fatalf("prévol = %d, attendu 204", r.code)
+	if r.StatusCode != http.StatusNoContent {
+		t.Fatalf("prévol = %d, attendu 204", r.StatusCode)
 	}
-	if got := r.entetes.Get("Access-Control-Allow-Origin"); got != origineUI {
+	if got := r.Header.Get("Access-Control-Allow-Origin"); got != origineUI {
 		t.Errorf("Allow-Origin = %q", got)
 	}
 	// L'en-tête anti-CSRF doit être annonçable, sinon la prévol échoue et
 	// AUCUNE écriture n'est possible depuis le navigateur.
-	entetes := strings.ToLower(r.entetes.Get("Access-Control-Allow-Headers"))
+	entetes := strings.ToLower(r.Header.Get("Access-Control-Allow-Headers"))
 	if !strings.Contains(entetes, "x-warden-ui") {
 		t.Errorf("Allow-Headers = %q : l'en-tête anti-CSRF n'est pas annoncé", entetes)
 	}
@@ -256,8 +234,8 @@ func TestUnePrevolInconnueEstRefusee(t *testing.T) {
 		"Access-Control-Request-Method": "GET",
 	}, "")
 
-	if r.code != http.StatusForbidden {
-		t.Errorf("prévol inconnue = %d, attendu 403", r.code)
+	if r.StatusCode != http.StatusForbidden {
+		t.Errorf("prévol inconnue = %d, attendu 403", r.StatusCode)
 	}
 }
 
@@ -268,7 +246,7 @@ func TestLaConnexionPoseUnCookieDeSession(t *testing.T) {
 
 	r := ouvrirSession(t, h, clientSimple())
 
-	c := r.cookie("warden_session")
+	c := r.CookieNomme("warden_session")
 	if c == nil {
 		t.Fatal("aucun cookie de session posé")
 	}
@@ -287,7 +265,7 @@ func TestLaConnexionPoseUnCookieDeSession(t *testing.T) {
 	var out struct {
 		Token string `json:"token"`
 	}
-	if err := json.Unmarshal([]byte(r.corps), &out); err != nil {
+	if err := r.Decoder().Decode(&out); err != nil {
 		t.Fatalf("réponse illisible : %v", err)
 	}
 	if out.Token == "" {
@@ -302,8 +280,8 @@ func TestLeCookieOuvreLaLecture(t *testing.T) {
 	ouvrirSession(t, h, c)
 
 	r := appelUI(t, c, http.MethodGet, h.URL+"/auth/whoami", nil, "")
-	if r.code != http.StatusOK {
-		t.Fatalf("whoami par cookie = %d, attendu 200", r.code)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("whoami par cookie = %d, attendu 200", r.StatusCode)
 	}
 }
 
@@ -316,8 +294,8 @@ func TestLeCookieSeulNOuvrePasLEcriture(t *testing.T) {
 	ouvrirSession(t, h, c)
 
 	r := appelUI(t, c, http.MethodPost, h.URL+"/auth/logout", nil, "")
-	if r.code != http.StatusForbidden {
-		t.Errorf("POST par cookie sans en-tête UI = %d, attendu 403", r.code)
+	if r.StatusCode != http.StatusForbidden {
+		t.Errorf("POST par cookie sans en-tête UI = %d, attendu 403", r.StatusCode)
 	}
 }
 
@@ -328,8 +306,8 @@ func TestLeCookieAvecLEnTeteUIOuvreLEcriture(t *testing.T) {
 
 	r := appelUI(t, c, http.MethodPost, h.URL+"/auth/logout",
 		map[string]string{"X-Warden-UI": "1"}, "")
-	if r.code != http.StatusNoContent {
-		t.Errorf("logout = %d, attendu 204", r.code)
+	if r.StatusCode != http.StatusNoContent {
+		t.Errorf("logout = %d, attendu 204", r.StatusCode)
 	}
 }
 
@@ -343,11 +321,11 @@ func TestLeLogoutEffaceLeCookie(t *testing.T) {
 
 	r := appelUI(t, c, http.MethodPost, h.URL+"/auth/logout",
 		map[string]string{"X-Warden-UI": "1"}, "")
-	if r.code != http.StatusNoContent {
-		t.Fatalf("logout = %d", r.code)
+	if r.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout = %d", r.StatusCode)
 	}
 
-	ck := r.cookie("warden_session")
+	ck := r.CookieNomme("warden_session")
 	if ck == nil {
 		t.Fatal("le logout n'a pas réémis le cookie pour l'effacer")
 	}
@@ -369,7 +347,7 @@ func TestLePorteurLEmporteSurLeCookie(t *testing.T) {
 	// session expirée continuerait de marcher sans que personne le voie.
 	r := appelUI(t, c, http.MethodGet, h.URL+"/auth/whoami",
 		map[string]string{"Authorization": "Bearer " + jetonBienForme()}, "")
-	if r.code != http.StatusUnauthorized {
-		t.Errorf("code = %d, attendu 401 : le porteur invalide est retombé sur le cookie", r.code)
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("code = %d, attendu 401 : le porteur invalide est retombé sur le cookie", r.StatusCode)
 	}
 }
