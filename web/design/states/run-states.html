@@ -1,0 +1,186 @@
+<!-- @dsCard group="States" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>warden — Run states</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0B0D10; --surface:#12151A; --surface-2:#181C23;
+    --border:#262C36; --text:#E6EAF0; --text-dim:#9BA6B4; --text-faint:#6B7683;
+    --primary:#7C8CFF;
+    --ok:#3FB950; --ok-bg:#0E2A15;
+    --failed:#F85149; --failed-bg:#3A1315;
+    --running:#58A6FF; --running-bg:#0C2438;
+    --interrupted:#8B9BB4; --interrupted-bg:#1A1F28;
+    --changed:#D9A21B;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px; background:var(--bg); color:var(--text);
+         font-family:var(--sans); font-size:14px; line-height:1.5; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:-0.01em; }
+  h2 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em;
+       color:var(--text-faint); margin:32px 0 12px; padding-bottom:8px;
+       border-bottom:1px solid var(--border); }
+  .lede { color:var(--text-dim); margin:0 0 8px; max-width:70ch; }
+
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:3px 9px 3px 7px;
+          border-radius:5px; font-size:12px; font-weight:600; line-height:1.4;
+          border:1px solid transparent; white-space:nowrap; }
+  .chip svg { width:12px; height:12px; flex:none; }
+  .c-running { color:var(--running); background:var(--running-bg); border-color:#1B4570; }
+  .c-succeeded { color:var(--ok); background:var(--ok-bg); border-color:#1C5029; }
+  .c-failed { color:var(--failed); background:var(--failed-bg); border-color:#6B2427; }
+  .c-interrupted { color:var(--interrupted); background:var(--interrupted-bg); border-color:#39414F; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .c-running svg { animation: pulse 1.4s ease-in-out infinite; }
+
+  .grid { display:grid; grid-template-columns:auto 1fr; gap:10px 20px; align-items:start;
+          background:var(--surface); border:1px solid var(--border);
+          border-radius:9px; padding:18px 20px; }
+  .grid .what { font-size:13px; color:var(--text-dim); padding-top:2px; }
+  .grid .what b { color:var(--text); font-weight:600; }
+
+  .causes { display:flex; flex-direction:column; gap:6px; }
+  .cause-row { display:flex; align-items:center; gap:12px; padding:9px 12px;
+               background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+  .cause-row.strong { border-color:#5E4A22; background:#1C170C; }
+  .pair { display:inline-flex; align-items:stretch; white-space:nowrap; }
+  .pair .chip { border-radius:5px 0 0 5px; border-right:none; }
+  .cause-tag { display:inline-flex; align-items:center; font-family:var(--mono);
+               font-size:11px; padding:3px 8px; border-radius:0 5px 5px 0;
+               background:var(--surface-2); border:1px solid var(--border);
+               color:var(--text-dim); }
+  .cause-tag.hot { color:var(--changed); border-color:#5E4A22; background:#241D0B; }
+  .cause-what { font-size:12.5px; color:var(--text-dim); flex:1; }
+  .cause-what b { color:var(--text); font-weight:600; }
+  .weight { font-family:var(--mono); font-size:10px; text-transform:uppercase;
+            letter-spacing:0.06em; color:var(--text-faint); flex:none; }
+  .weight.hot { color:var(--changed); }
+
+  .bad-good { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:4px; }
+  .bg-box { border-radius:9px; padding:16px 18px; border:1px solid var(--border);
+            background:var(--surface); }
+  .bg-box.bad { border-color:#6B2427; }
+  .bg-box.good { border-color:#1C5029; }
+  .bg-label { font-family:var(--mono); font-size:10px; text-transform:uppercase;
+              letter-spacing:0.08em; margin-bottom:12px; }
+  .bad .bg-label { color:var(--failed); }
+  .good .bg-label { color:var(--ok); }
+  .bg-why { font-size:12.5px; color:var(--text-dim); margin-top:12px; line-height:1.55; }
+
+  .note { margin-top:28px; padding:14px 16px; background:var(--surface);
+          border:1px solid var(--border); border-left:2px solid var(--primary);
+          border-radius:0 8px 8px 0; color:var(--text-dim); font-size:13px; max-width:92ch; }
+  .note strong { color:var(--text); font-weight:600; }
+  code { font-family:var(--mono); font-size:12px; color:var(--primary); }
+</style>
+</head>
+<body>
+  <h1>Run states</h1>
+  <p class="lede">
+    Four states, from <code>core/run.go:13</code>. Every chip carries an icon, a word and
+    a colour — all three, always. Colour alone fails a colour-blind reader and fails
+    again at low contrast; in a product whose only job is to report what happened
+    truthfully, that is not a cosmetic defect.
+  </p>
+
+  <h2>The four</h2>
+  <div class="grid">
+    <span class="chip c-running"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>Running</span>
+    <span class="what">The pod exists. Written on a fact the control plane <b>observes</b> — never on the pod's word.</span>
+
+    <span class="chip c-succeeded"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4L9.6 3.9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Succeeded</span>
+    <span class="what">The playbook ran to completion and reported success.</span>
+
+    <span class="chip c-failed"><svg viewBox="0 0 12 12"><path d="M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>Failed</span>
+    <span class="what">The playbook itself failed. A verdict <b>about your code</b>.</span>
+
+    <span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span>
+    <span class="what">The run was cut short. <b>Not a verdict about the playbook</b> — which is why it is slate and not red. Never shown without its cause.</span>
+  </div>
+
+  <h2>Interrupted always carries its cause</h2>
+  <div class="causes">
+    <div class="cause-row strong">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag hot">user_interrupt</span></span>
+      <span class="cause-what"><b>Someone saw something wrong</b> and stopped it.</span>
+      <span class="weight hot">strong signal</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">admin_killed</span></span>
+      <span class="cause-what">Stopped by an administrator. <b>Still owes a who and a why.</b></span>
+      <span class="weight">deliberate</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">server_task_timeout</span></span>
+      <span class="cause-what">Configuration, or a host that stopped answering.</span>
+      <span class="weight">investigate</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">pod_oom_killed</span></span>
+      <span class="cause-what">Resources. Raise the limit, or shrink the work.</span>
+      <span class="weight">resources</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">pod_evicted</span></span>
+      <span class="cause-what">Infrastructure. Nothing to do with the playbook.</span>
+      <span class="weight">infra</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">node_lost</span></span>
+      <span class="cause-what">Infrastructure. Nothing to do with the playbook.</span>
+      <span class="weight">infra</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">client_disconnect_timeout</span></span>
+      <span class="cause-what">Accidental. <b>Signals nothing</b> — a laptop closed, no more.</span>
+      <span class="weight">noise</span>
+    </div>
+    <div class="cause-row">
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag">unknown</span></span>
+      <span class="cause-what">An <b>honest admission</b>, kept on purpose. Shown as such — never dressed up as a plausible cause.</span>
+      <span class="weight">unknown</span>
+    </div>
+  </div>
+
+  <h2>The mistake this component exists to prevent</h2>
+  <div class="bad-good">
+    <div class="bg-box bad">
+      <div class="bg-label">✗ Never</div>
+      <span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span>
+      <div class="bg-why">
+        A bare <code>interrupted</code>. The reader cannot tell a colleague hitting Ctrl-C
+        because they saw a mistake from a laptop that went to sleep. Those two demand
+        opposite responses, and the badge gives no way to choose.
+      </div>
+    </div>
+    <div class="bg-box good">
+      <div class="bg-label">✓ Always</div>
+      <span class="pair"><span class="chip c-interrupted"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause-tag hot">user_interrupt</span></span>
+      <div class="bg-why">
+        State and cause are <b>one component</b>, not a chip plus an optional detail
+        somewhere below the fold. If the cause cannot be rendered, the state must not be
+        rendered either.
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>Where this rule comes from.</strong> Not from a style guide —
+    from <code>core/run.go:19</code>, which says it in as many words: <em>"interrupted
+    without the cause is almost useless: a user's Ctrl-C is a strong signal — they saw
+    something wrong — where a client_disconnect_timeout is accidental and signals
+    nothing. Confusing them amounts to throwing away the information that matters."</em>
+    <br><br>
+    The API enforces the same shape: a <code>Closure</code> is refused if it carries
+    <code>interrupted</code> without a valid cause, and refused again if it carries a
+    cause on any other state. The UI mirrors an invariant that already exists — it does
+    not invent one.
+  </div>
+</body>
+</html>

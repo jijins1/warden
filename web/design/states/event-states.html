@@ -1,0 +1,130 @@
+<!-- @dsCard group="States" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>warden — Event states</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0B0D10; --surface:#12151A; --surface-2:#181C23;
+    --border:#262C36; --text:#E6EAF0; --text-dim:#9BA6B4; --text-faint:#6B7683;
+    --primary:#7C8CFF;
+    --ok:#3FB950; --ok-bg:#0E2A15; --ok-br:#1C5029;
+    --changed:#D9A21B; --changed-bg:#2E2408; --changed-br:#5E4A22;
+    --failed:#F85149; --failed-bg:#3A1315; --failed-br:#6B2427;
+    --unreachable:#DB61D9; --unreachable-bg:#331033; --unreachable-br:#5F2A5E;
+    --skipped:#5C93B8; --skipped-bg:#0F2029; --skipped-br:#26485C;
+    --unknown:#7D8590; --unknown-bg:#1C2027; --unknown-br:#39414F;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px; background:var(--bg); color:var(--text);
+         font-family:var(--sans); font-size:14px; line-height:1.5; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:-0.01em; }
+  h2 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em;
+       color:var(--text-faint); margin:32px 0 12px; padding-bottom:8px;
+       border-bottom:1px solid var(--border); }
+  .lede { color:var(--text-dim); margin:0 0 8px; max-width:70ch; }
+
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:3px 9px 3px 7px;
+          border-radius:5px; font-size:12px; font-weight:600; line-height:1.4;
+          border:1px solid transparent; white-space:nowrap; }
+  .chip svg { width:12px; height:12px; flex:none; }
+  .c-ok { color:var(--ok); background:var(--ok-bg); border-color:var(--ok-br); }
+  .c-changed { color:var(--changed); background:var(--changed-bg); border-color:var(--changed-br); }
+  .c-failed { color:var(--failed); background:var(--failed-bg); border-color:var(--failed-br); }
+  .c-unreachable { color:var(--unreachable); background:var(--unreachable-bg); border-color:var(--unreachable-br); }
+  .c-skipped { color:var(--skipped); background:var(--skipped-bg); border-color:var(--skipped-br); }
+  .c-unknown { color:var(--unknown); background:var(--unknown-bg); border-color:var(--unknown-br);
+               border-style:dashed; }
+
+  .grid { display:grid; grid-template-columns:auto 1fr auto; gap:10px 20px; align-items:center;
+          background:var(--surface); border:1px solid var(--border);
+          border-radius:9px; padding:18px 20px; }
+  .what { font-size:13px; color:var(--text-dim); }
+  .what b { color:var(--text); font-weight:600; }
+  .weight { font-family:var(--mono); font-size:10px; text-transform:uppercase;
+            letter-spacing:0.06em; color:var(--text-faint); text-align:right; }
+
+  .pairbox { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .pb { background:var(--surface); border:1px solid var(--border);
+        border-radius:9px; padding:16px 18px; }
+  .pb.a { border-color:var(--failed-br); }
+  .pb.b { border-color:var(--unreachable-br); }
+  .pb-why { font-size:12.5px; color:var(--text-dim); margin-top:12px; line-height:1.55; }
+  .pb-why b { color:var(--text); font-weight:600; }
+
+  .note { margin-top:28px; padding:14px 16px; background:var(--surface);
+          border:1px solid var(--border); border-left:2px solid var(--primary);
+          border-radius:0 8px 8px 0; color:var(--text-dim); font-size:13px; max-width:92ch; }
+  .note strong { color:var(--text); font-weight:600; }
+  code { font-family:var(--mono); font-size:12px; color:var(--primary); }
+</style>
+</head>
+<body>
+  <h1>Event states</h1>
+  <p class="lede">
+    Six values, from <code>events/event.go:19</code>. The set is closed and validated
+    server-side — <code>rescued</code> and <code>ignored</code> are explicitly rejected,
+    so the UI never needs a fallback branch for a seventh.
+  </p>
+
+  <h2>The six</h2>
+  <div class="grid">
+    <span class="chip c-ok"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4L9.6 3.9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ok</span>
+    <span class="what">The task ran and changed nothing. The quiet majority.</span>
+    <span class="weight">quiet</span>
+
+    <span class="chip c-changed"><svg viewBox="0 0 12 12"><path d="M6 1.6l4.4 4.4L6 10.4 1.6 6z" fill="currentColor"/></svg>changed</span>
+    <span class="what"><b>Something on a real machine was modified.</b> The answer to the only question that matters after a run.</span>
+    <span class="weight">loud</span>
+
+    <span class="chip c-failed"><svg viewBox="0 0 12 12"><path d="M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>failed</span>
+    <span class="what">The task ran on the host and failed. A problem <b>in the play</b>.</span>
+    <span class="weight">loud</span>
+
+    <span class="chip c-unreachable"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3 9l6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>unreachable</span>
+    <span class="what">The host was never reached. A problem in the <b>network or the inventory</b>.</span>
+    <span class="weight">loud</span>
+
+    <span class="chip c-skipped"><svg viewBox="0 0 12 12"><path d="M3 3l3.4 3-3.4 3M7 3l3.4 3L7 9" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>skipped</span>
+    <span class="what">A <code>when:</code> said no. Expected, and rarely interesting.</span>
+    <span class="weight">quiet</span>
+
+    <span class="chip c-unknown"><svg viewBox="0 0 12 12"><path d="M4.4 4.4a1.7 1.7 0 113 1.1c-.6.5-1.1.8-1.1 1.6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/><circle cx="6.2" cy="9.2" r=".9" fill="currentColor"/></svg>unknown</span>
+    <span class="what">Kept on purpose. Dashed border: it reads as <b>an admission</b>, not as a result.</span>
+    <span class="weight">admission</span>
+  </div>
+
+  <h2>failed ≠ unreachable</h2>
+  <div class="pairbox">
+    <div class="pb a">
+      <span class="chip c-failed"><svg viewBox="0 0 12 12"><path d="M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>failed</span>
+      <div class="pb-why">We reached the machine. It did what we asked and the task did not
+      succeed. <b>Go read the playbook.</b></div>
+    </div>
+    <div class="pb b">
+      <span class="chip c-unreachable"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3 9l6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>unreachable</span>
+      <div class="pb-why">We never got there at all. SSH, the key, the address, the host
+      key. <b>Go read the inventory.</b></div>
+    </div>
+  </div>
+  <p class="lede" style="margin-top:14px">
+    Two different files to open, so two clearly different colours — red and magenta,
+    never two shades of the same hue. This is the single most common misreading in an
+    Ansible summary, and colour is what prevents it.
+  </p>
+
+  <div class="note">
+    <strong>Why <code>changed</code> gets full weight.</strong> It is tempting to treat
+    <code>ok</code> and <code>changed</code> as one calm family and reserve colour for
+    failure. That would be backwards: this product exists to answer <em>what had already
+    changed</em> when a run was cut short mid-flight — the README says so, and it is why
+    events are persisted as they happen rather than buffered. <code>GET
+    /runs?changed_min=</code> exists for the same reason. Muting <code>changed</code>
+    would hide the field the whole system is built to record.
+  </div>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>warden — Type &amp; density</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0B0D10; --surface:#12151A; --surface-2:#181C23; --surface-3:#1F242C;
+    --border:#262C36; --text:#E6EAF0; --text-dim:#9BA6B4; --text-faint:#6B7683;
+    --primary:#7C8CFF; --ok:#3FB950; --changed:#D9A21B;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px; background:var(--bg); color:var(--text);
+         font-family:var(--sans); font-size:14px; line-height:1.5; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:-0.01em; }
+  h2 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em;
+       color:var(--text-faint); margin:32px 0 12px; padding-bottom:8px;
+       border-bottom:1px solid var(--border); }
+  .lede { color:var(--text-dim); margin:0 0 8px; max-width:68ch; }
+
+  .scale { display:flex; flex-direction:column; gap:2px; }
+  .line { display:flex; align-items:baseline; gap:20px; padding:9px 12px;
+          border-radius:7px; background:var(--surface); border:1px solid var(--border); }
+  .spec { font-family:var(--mono); font-size:10px; color:var(--text-faint);
+          width:150px; flex:none; letter-spacing:0.02em; }
+  .d1 { font-size:20px; font-weight:600; letter-spacing:-0.01em; }
+  .d2 { font-size:16px; font-weight:600; }
+  .d3 { font-size:14px; font-weight:600; }
+  .b1 { font-size:14px; }
+  .b2 { font-size:13px; color:var(--text-dim); }
+  .cap { font-size:11px; font-weight:600; text-transform:uppercase;
+         letter-spacing:0.08em; color:var(--text-faint); }
+
+  .mono-demo { display:flex; flex-direction:column; gap:2px; }
+  .m-line { display:flex; align-items:center; gap:20px; padding:9px 12px;
+            border-radius:7px; background:var(--surface); border:1px solid var(--border); }
+  .m-val { font-family:var(--mono); font-size:13px; font-variant-numeric:tabular-nums;
+           letter-spacing:-0.01em; }
+  .m-what { font-size:12px; color:var(--text-dim); }
+
+  table { width:100%; border-collapse:collapse; background:var(--surface);
+          border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  th { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em;
+       color:var(--text-faint); text-align:left; padding:7px 12px;
+       background:var(--surface-2); border-bottom:1px solid var(--border); }
+  td { padding:6px 12px; font-size:12.5px; border-bottom:1px solid var(--border);
+       font-variant-numeric:tabular-nums; }
+  tr:last-child td { border-bottom:none; }
+  .mn { font-family:var(--mono); font-size:12px; }
+  .dim { color:var(--text-dim); }
+
+  .note { margin-top:28px; padding:14px 16px; background:var(--surface);
+          border:1px solid var(--border); border-left:2px solid var(--primary);
+          border-radius:0 8px 8px 0; color:var(--text-dim); font-size:13px; max-width:90ch; }
+  .note strong { color:var(--text); font-weight:600; }
+  code { font-family:var(--mono); font-size:12px; color:var(--primary); }
+</style>
+</head>
+<body>
+  <h1>Type &amp; density</h1>
+  <p class="lede">
+    Two families, and the split is semantic rather than aesthetic: sans for prose,
+    mono for anything the reader will copy, compare character by character, or paste
+    into a shell.
+  </p>
+
+  <h2>Scale</h2>
+  <div class="scale">
+    <div class="line"><span class="spec">display / 20 / 600</span><span class="d1">Runs</span></div>
+    <div class="line"><span class="spec">title / 16 / 600</span><span class="d2">site.yml on prod</span></div>
+    <div class="line"><span class="spec">subtitle / 14 / 600</span><span class="d3">Gather package facts</span></div>
+    <div class="line"><span class="spec">body / 14 / 400</span><span class="b1">The runner flushes its events and stops there.</span></div>
+    <div class="line"><span class="spec">secondary / 13 / 400</span><span class="b2">Closed by the controller 6 seconds later.</span></div>
+    <div class="line"><span class="spec">caption / 11 / 600 / caps</span><span class="cap">Environment</span></div>
+  </div>
+
+  <h2>Mono — identifiers</h2>
+  <div class="mono-demo">
+    <div class="m-line"><span class="m-val">01JBQ7X4M2K9WPZ3N8VTYD6H5A</span><span class="m-what">run_ref — a ULID. Never truncated below 8 leading characters.</span></div>
+    <div class="m-line"><span class="m-val">a18b134f</span><span class="m-what">audit commit — short SHA, full value on hover and on copy</span></div>
+    <div class="m-line"><span class="m-val">db-prod-02</span><span class="m-what">host, as the Ansible inventory names it</span></div>
+    <div class="m-line"><span class="m-val">playbooks/site.yml</span><span class="m-what">playbook path, resolved from the commit</span></div>
+    <div class="m-line"><span class="m-val">10.20.0.42</span><span class="m-what">address — this is where we connect</span></div>
+    <div class="m-line"><span class="m-val">12.4s&nbsp;&nbsp;&nbsp;418ms</span><span class="m-what">durations — tabular figures, so columns align</span></div>
+  </div>
+
+  <h2>Density</h2>
+  <table>
+    <thead><tr><th>Token</th><th>Value</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td class="mn">row-height-dense</td><td class="mn">28px</td><td class="dim">event stream rows — thousands per run</td></tr>
+      <tr><td class="mn">row-height</td><td class="mn">40px</td><td class="dim">run list rows</td></tr>
+      <tr><td class="mn">mat.density</td><td class="mn">-2</td><td class="dim">global Angular Material density</td></tr>
+      <tr><td class="mn">radius-sm / md / lg</td><td class="mn">4 / 7 / 10px</td><td class="dim">chips / cards / panes</td></tr>
+      <tr><td class="mn">gap-x</td><td class="mn">4 · 8 · 12 · 20 · 32px</td><td class="dim">the only spacing steps used</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>Why density −2 and not the Material default.</strong>
+    The event volume of a run is <em>not measured</em> — the README says so plainly, and
+    the follower batches at <code>500</code> rows per read for exactly that reason. A
+    default-density table showing forty rows on a 1080p screen would make a real run
+    unreadable. Compact is the working case here, not an option.<br><br>
+    <strong>Why tabular figures everywhere.</strong> Durations and task numbers are
+    <em>scanned down a column</em>, not read in a sentence. Proportional digits make
+    a column of numbers ragged, and a ragged column defeats the scan.
+  </div>
+</body>
+</html>

@@ -1,0 +1,194 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>warden — Run list</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0B0D10; --surface:#12151A; --surface-2:#181C23; --surface-3:#1F242C;
+    --border:#262C36; --border-strong:#333B47;
+    --text:#E6EAF0; --text-dim:#9BA6B4; --text-faint:#6B7683;
+    --primary:#7C8CFF; --primary-bg:#171A33;
+    --ok:#3FB950; --ok-bg:#0E2A15; --ok-br:#1C5029;
+    --changed:#D9A21B; --changed-bg:#2E2408; --changed-br:#5E4A22;
+    --failed:#F85149; --failed-bg:#3A1315; --failed-br:#6B2427;
+    --running:#58A6FF; --running-bg:#0C2438; --running-br:#1B4570;
+    --interrupted:#8B9BB4; --interrupted-bg:#1A1F28; --interrupted-br:#39414F;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:28px; background:var(--bg); color:var(--text);
+         font-family:var(--sans); font-size:14px; line-height:1.5; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:-0.01em; }
+  .lede { color:var(--text-dim); margin:0 0 20px; max-width:72ch; font-size:13px; }
+
+  /* Filter bar */
+  .filters { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .field { display:inline-flex; align-items:center; gap:7px; height:30px; padding:0 10px;
+           background:var(--surface); border:1px solid var(--border);
+           border-radius:7px; font-size:12.5px; color:var(--text-dim); }
+  .field b { color:var(--text); font-weight:500; }
+  .field svg { width:11px; height:11px; opacity:.55; }
+  .field.on { border-color:var(--primary); background:var(--primary-bg); color:var(--text); }
+  .spacer { flex:1; }
+  .count { font-family:var(--mono); font-size:11.5px; color:var(--text-faint); }
+
+  /* Table */
+  .table { background:var(--surface); border:1px solid var(--border);
+           border-radius:9px; overflow:hidden; }
+  .thead, .trow { display:grid; grid-template-columns:132px 1fr 108px 128px 92px 74px 68px;
+                  align-items:center; gap:14px; padding:0 14px; }
+  .thead { height:32px; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .th { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em;
+        color:var(--text-faint); }
+  .th.r, .td.r { text-align:right; }
+  .trow { height:40px; border-bottom:1px solid var(--border); cursor:pointer; }
+  .trow:last-child { border-bottom:none; }
+  .trow:hover { background:var(--surface-2); }
+  .trow.sel { background:var(--primary-bg); box-shadow:inset 2px 0 0 var(--primary); }
+  .td { font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        font-variant-numeric:tabular-nums; }
+  .mono { font-family:var(--mono); font-size:12px; }
+  .dim { color:var(--text-dim); }
+  .faint { color:var(--text-faint); }
+  .play { color:var(--text); font-weight:500; }
+
+  .chip { display:inline-flex; align-items:center; gap:5px; padding:2px 8px 2px 6px;
+          border-radius:5px; font-size:11.5px; font-weight:600; line-height:1.4;
+          border:1px solid transparent; white-space:nowrap; }
+  .chip svg { width:11px; height:11px; flex:none; }
+  .c-ok { color:var(--ok); background:var(--ok-bg); border-color:var(--ok-br); }
+  .c-failed { color:var(--failed); background:var(--failed-bg); border-color:var(--failed-br); }
+  .c-running { color:var(--running); background:var(--running-bg); border-color:var(--running-br); }
+  .c-int { color:var(--interrupted); background:var(--interrupted-bg); border-color:var(--interrupted-br); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .c-running svg { animation:pulse 1.4s ease-in-out infinite; }
+  .cause { font-family:var(--mono); font-size:10px; color:var(--text-faint);
+           margin-left:6px; }
+  .cause.hot { color:var(--changed); }
+
+  .env { display:inline-block; font-family:var(--mono); font-size:10.5px;
+         padding:1.5px 7px; border-radius:4px; background:var(--surface-3);
+         border:1px solid var(--border-strong); color:var(--text-dim); }
+  .env.prod { color:var(--changed); border-color:var(--changed-br); background:#241D0B; }
+
+  .chg { font-family:var(--mono); font-size:12px; font-weight:600; }
+  .chg.zero { color:var(--text-faint); font-weight:400; }
+  .chg.some { color:var(--changed); }
+
+  .more { display:flex; justify-content:center; padding:12px; }
+  .btn { height:30px; padding:0 16px; display:inline-flex; align-items:center;
+         border-radius:7px; background:var(--surface-2); border:1px solid var(--border);
+         color:var(--text-dim); font-size:12.5px; font-family:var(--sans); cursor:pointer; }
+  .btn:hover { border-color:var(--border-strong); color:var(--text); }
+
+  .note { margin-top:22px; padding:14px 16px; background:var(--surface);
+          border:1px solid var(--border); border-left:2px solid var(--primary);
+          border-radius:0 8px 8px 0; color:var(--text-dim); font-size:13px; max-width:92ch; }
+  .note strong { color:var(--text); font-weight:600; }
+  code { font-family:var(--mono); font-size:12px; color:var(--primary); }
+</style>
+</head>
+<body>
+  <h1>Run list</h1>
+  <p class="lede">
+    <code>GET /runs</code>. Scoped to the caller by the server — <code>VisibleRunFilter</code>
+    overwrites the owner rather than validating it, so this is always <em>my</em> runs and
+    the heading must never imply otherwise.
+  </p>
+
+  <div class="filters">
+    <span class="field on">Environment <b>prod</b><svg viewBox="0 0 12 12"><path d="M3 4.5L6 8l3-3.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></span>
+    <span class="field">Inventory<svg viewBox="0 0 12 12"><path d="M3 4.5L6 8l3-3.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></span>
+    <span class="field">State<svg viewBox="0 0 12 12"><path d="M3 4.5L6 8l3-3.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></span>
+    <span class="field on">Changed <b>≥ 1</b></span>
+    <span class="field">Last 7 days<svg viewBox="0 0 12 12"><path d="M3 4.5L6 8l3-3.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></span>
+    <span class="spacer"></span>
+    <span class="count">6 shown</span>
+  </div>
+
+  <div class="table">
+    <div class="thead">
+      <span class="th">Run</span><span class="th">Playbook</span><span class="th">Environment</span>
+      <span class="th">State</span><span class="th r">Changed</span><span class="th r">Duration</span>
+      <span class="th r">Started</span>
+    </div>
+
+    <div class="trow sel">
+      <span class="td mono">01JBQ7X4M2</span>
+      <span class="td play">playbooks/site.yml</span>
+      <span class="td"><span class="env prod">prod</span></span>
+      <span class="td"><span class="chip c-running"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>Running</span></span>
+      <span class="td r chg some">3</span>
+      <span class="td r mono dim">18.2s</span>
+      <span class="td r faint mono">now</span>
+    </div>
+
+    <div class="trow">
+      <span class="td mono">01JBQ6M8T1</span>
+      <span class="td play">playbooks/nginx.yml</span>
+      <span class="td"><span class="env prod">prod</span></span>
+      <span class="td"><span class="chip c-ok"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4L9.6 3.9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Succeeded</span></span>
+      <span class="td r chg some">12</span>
+      <span class="td r mono dim">1m 04s</span>
+      <span class="td r faint mono">14:22</span>
+    </div>
+
+    <div class="trow">
+      <span class="td mono">01JBQ5K2W9</span>
+      <span class="td play">playbooks/site.yml</span>
+      <span class="td"><span class="env">staging</span></span>
+      <span class="td"><span class="chip c-int"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause hot">user_interrupt</span></span>
+      <span class="td r chg some">2</span>
+      <span class="td r mono dim">9.7s</span>
+      <span class="td r faint mono">13:58</span>
+    </div>
+
+    <div class="trow">
+      <span class="td mono">01JBQ4H7P3</span>
+      <span class="td play">playbooks/patch.yml</span>
+      <span class="td"><span class="env prod">prod</span></span>
+      <span class="td"><span class="chip c-failed"><svg viewBox="0 0 12 12"><path d="M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>Failed</span></span>
+      <span class="td r chg some">1</span>
+      <span class="td r mono dim">42.1s</span>
+      <span class="td r faint mono">11:07</span>
+    </div>
+
+    <div class="trow">
+      <span class="td mono">01JBQ3D1F6</span>
+      <span class="td play">playbooks/facts.yml</span>
+      <span class="td"><span class="env">staging</span></span>
+      <span class="td"><span class="chip c-ok"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4L9.6 3.9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Succeeded</span></span>
+      <span class="td r chg zero">0</span>
+      <span class="td r mono dim">6.3s</span>
+      <span class="td r faint mono">10:41</span>
+    </div>
+
+    <div class="trow">
+      <span class="td mono">01JBQ2A9R4</span>
+      <span class="td play">playbooks/site.yml</span>
+      <span class="td"><span class="env">staging</span></span>
+      <span class="td"><span class="chip c-int"><svg viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1" fill="currentColor"/></svg>Interrupted</span><span class="cause">pod_oom_killed</span></span>
+      <span class="td r chg some">5</span>
+      <span class="td r mono dim">2m 11s</span>
+      <span class="td r faint mono">09:15</span>
+    </div>
+
+    <div class="more"><button class="btn">Load more</button></div>
+  </div>
+
+  <div class="note">
+    <strong>"Load more", not page numbers.</strong> The endpoint paginates by
+    <em>keyset</em>: it returns an opaque <code>cursor</code>, and there is no total and
+    no page count to compute one from. A <code>MatPaginator</code> showing "page 3 of 47"
+    would be inventing both numbers. The cursor model is also what keeps the list stable
+    while runs are being created underneath it.<br><br>
+    <strong>Changed is a first-class column</strong>, right-aligned with tabular figures
+    so it can be scanned down, and zero is greyed so a non-zero value catches the eye. It
+    is the column <code>changed_min</code> filters on.
+  </div>
+</body>
+</html>
