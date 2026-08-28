@@ -45,18 +45,22 @@ func ContextSession(ctx context.Context) *core.Session {
 
 // AuthnMiddleware resolves the caller into a provisioned user.
 //
-// Deux chemins, dans cet ordre, et l'ordre est le point :
+// Trois chemins, dans cet ordre, et l'ordre est le point :
 //
 //  1. `Authorization: Bearer` — une session ouverte par `warden login`. C'est le
 //     chemin RÉEL : le porteur a prouvé qu'il connaissait un mot de passe.
-//  2. `X-User-Subject` — une simple affirmation, acceptée derrière l'opt-in
+//  2. le cookie `warden_session` — le MÊME jeton, porté par un navigateur
+//     (ADR-0035). Parce qu'il est ambiant, une écriture par ce chemin exige en
+//     plus l'en-tête `X-Warden-UI`.
+//  3. `X-User-Subject` — une simple affirmation, acceptée derrière l'opt-in
 //     explicite `WARDEN_INSECURE_DEV_AUTH`. Elle reste pour le développement et
 //     les tests de bout en bout, et poser cet opt-in vaut accepter que n'importe
 //     qui se déclare n'importe qui.
 //
-// Le second n'est essayé qu'à défaut du premier, de sorte qu'un déploiement qui
-// aurait laissé traîner l'opt-in n'affaiblit au moins pas les appelants qui
-// s'authentifient correctement.
+// Chacun n'est essayé qu'à défaut du précédent. Le porteur EN PREMIER, de sorte
+// qu'un jeton invalide ne retombe jamais sur un cookie traînant : la CLI ne doit
+// pas changer de comportement selon ce qu'un navigateur a laissé dans le même
+// magasin, et une session expirée doit se voir plutôt que de continuer à marcher.
 //
 // Ce middleware ne provisionne JAMAIS : créer un compte appartient au flux qui a
 // vérifié une identité, et un upsert piloté par un en-tête non authentifié
@@ -65,6 +69,10 @@ func (a *Server) AuthnMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if jeton, présent := jetonPorteur(r); présent {
 			a.parSession(w, r, next, jeton)
+			return
+		}
+		if jeton, présent := jetonDuCookie(r); présent {
+			a.parCookie(w, r, next, jeton)
 			return
 		}
 		if a.insecureDevAuth {
@@ -93,6 +101,25 @@ func jetonPorteur(r *http.Request) (string, bool) {
 		return "", true // présent mais inutilisable : ce sera un 401
 	}
 	return strings.TrimSpace(brut[len(prefixe):]), true
+}
+
+// parCookie authentifie un navigateur, et exige l'en-tête anti-CSRF en écriture.
+//
+// Le cookie est AMBIANT : le navigateur l'attache sans que le JS de la page le
+// demande, y compris sur une requête déclenchée par un autre site.
+// `SameSite=Strict` couvre déjà le cas cross-site, mais il suppose que les deux
+// hôtes partagent un domaine enregistrable — et un sous-domaine compromis reste
+// « same-site ». L'en-tête est le verrou qui ne dépend pas de cette hypothèse :
+// le poser exige du JS, donc une prévol, donc une origine déclarée.
+//
+// En LECTURE il n'est pas exigé : un GET ne change rien, et l'imposer casserait
+// la navigation sans rien protéger.
+func (a *Server) parCookie(w http.ResponseWriter, r *http.Request, next http.Handler, jeton string) {
+	if methodeMutante(r.Method) && r.Header.Get(enTeteUI) == "" {
+		http.Error(w, "missing "+enTeteUI+" header", http.StatusForbidden)
+		return
+	}
+	a.parSession(w, r, next, jeton)
 }
 
 func (a *Server) parSession(w http.ResponseWriter, r *http.Request, next http.Handler, brut string) {

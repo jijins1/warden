@@ -6,7 +6,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
@@ -20,6 +23,20 @@ type Config struct {
 	// Development only: any client can claim any provisioned identity. When
 	// false the API refuses every request until a real authenticator exists.
 	InsecureDevAuth bool
+
+	// UIOrigins liste les origines navigateur autorisées (ADR-0035).
+	//
+	// VIDE vaut « aucun navigateur », jamais « tous » : c'est ce qui fait qu'un
+	// déploiement muet n'ouvre pas l'API à n'importe quel site. La même liste
+	// sert au CORS et au `CheckOrigin` du WebSocket.
+	UIOrigins []string
+
+	// UICookieInsecure retire l'attribut `Secure` du cookie de session.
+	//
+	// Développement local UNIQUEMENT, sur `http://localhost` où un cookie
+	// `Secure` ne serait jamais stocké. Nommé comme `InsecureDevAuth` et pour la
+	// même raison : personne ne doit le poser par accident.
+	UICookieInsecure bool
 
 	GracefulShutdown time.Duration
 }
@@ -39,10 +56,19 @@ func FromEnv() (*Config, error) {
 	// Opt-in, and named so nobody sets it by accident.
 	insecureDevAuth := os.Getenv("WARDEN_INSECURE_DEV_AUTH") == "1"
 
+	// Une liste séparée par des virgules. Absente, aucun navigateur n'est servi
+	// et la CLI continue de fonctionner : c'est le déploiement d'avant l'UI.
+	var uiOrigins []string
+	if brut := os.Getenv("WARDEN_UI_ORIGINS"); brut != "" {
+		uiOrigins = strings.Split(brut, ",")
+	}
+
 	return &Config{
 		Addr:             addr,
 		DatabaseURL:      dsn,
 		InsecureDevAuth:  insecureDevAuth,
+		UIOrigins:        uiOrigins,
+		UICookieInsecure: os.Getenv("WARDEN_UI_COOKIE_INSECURE") == "1",
 		GracefulShutdown: 30 * time.Second,
 	}, nil
 }
@@ -173,6 +199,17 @@ type Server struct {
 
 	// insecureDevAuth mirrors Config.InsecureDevAuth; see AuthnMiddleware.
 	insecureDevAuth bool
+
+	// origines est l'allowlist navigateur, partagée par le CORS et le WebSocket.
+	origines origines
+
+	// cookieNonSecurise reflète Config.UICookieInsecure.
+	cookieNonSecurise bool
+
+	// upgrader porte le CheckOrigin du flux. Champ du serveur et non variable de
+	// paquet : une variable globale ne pourrait pas consulter l'allowlist de CE
+	// déploiement, et c'est exactement l'oubli que l'ADR-0035 ferme.
+	upgrader websocket.Upgrader
 }
 
 // New creates a new API server from its ports.
@@ -190,12 +227,34 @@ func New(cfg *Config, deps Deps) (*Server, error) {
 		return nil, fmt.Errorf("port Events requis")
 	}
 
+	orig := nouvellesOrigines(cfg.UIOrigins)
+
 	return &Server{
 		cfg:    cfg,
 		deps:   deps,
 		policy: NewPolicy(),
 
-		insecureDevAuth: cfg.InsecureDevAuth,
+		insecureDevAuth:   cfg.InsecureDevAuth,
+		origines:          orig,
+		cookieNonSecurise: cfg.UICookieInsecure,
+
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+			// LA même allowlist que le CORS. Le handshake WebSocket n'est pas
+			// soumis au CORS et le navigateur y attache les cookies tout seul :
+			// sans ce contrôle, n'importe quel site ouvrirait un flux d'audit
+			// avec la session de qui le visite.
+			CheckOrigin: func(r *http.Request) bool {
+				origine := r.Header.Get("Origin")
+				if origine == "" {
+					// Ni navigateur ni page : la CLI, qui s'authentifie par
+					// porteur. Aucune ambiance de credentials à détourner.
+					return true
+				}
+				return orig.autorise(origine)
+			},
+		},
 		srv: &http.Server{
 			Addr: cfg.Addr,
 			// Sans délai sur la lecture des en-têtes, une connexion qui les
@@ -228,6 +287,7 @@ func (a *Server) Run(ctx context.Context) error {
 func (a *Server) Handler() http.Handler {
 	router := http.NewServeMux()
 	router.HandleFunc("GET /runs", a.HandleListRuns)
+	router.HandleFunc("GET /runs/{run_ref}", a.HandleGetRun)
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
@@ -297,7 +357,10 @@ func (a *Server) Handler() http.Handler {
 	racine := http.NewServeMux()
 	racine.HandleFunc("POST /auth/login", a.HandleLogin)
 	racine.Handle("/", a.AuthnMiddleware(router))
-	return racine
+
+	// Le CORS enveloppe TOUT, connexion comprise : exiger une session pour
+	// obtenir les en-têtes qui permettent d'en ouvrir une n'irait nulle part.
+	return a.CORSMiddleware(racine)
 }
 
 // servir lance le serveur et bloque jusqu'à l'annulation du contexte.
