@@ -1,0 +1,166 @@
+:host {
+  display: block;
+  position: relative;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-lg);
+  overflow: hidden;
+  background: var(--mat-sys-surface-container-low);
+}
+
+.barre {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-2);
+  padding: var(--w-gap-2) var(--w-gap-3);
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface-container);
+}
+
+.segments {
+  display: inline-flex;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-md);
+  overflow: hidden;
+
+  button {
+    padding: 3px 10px;
+    border: none;
+    border-right: 1px solid var(--mat-sys-outline-variant);
+    background: var(--mat-sys-surface-container-low);
+    color: var(--mat-sys-on-surface-variant);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+
+    &:last-child { border-right: none; }
+    &.actif {
+      background: var(--w-primary-bg);
+      color: var(--mat-sys-on-surface);
+      font-weight: 600;
+    }
+  }
+}
+
+.espace { flex: 1; }
+.seq { font-size: 11px; color: var(--mat-sys-outline); }
+
+.lien {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--w-mono);
+  font-size: 11.5px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: battement 1.6s ease-in-out infinite;
+}
+
+.lien.direct { color: var(--w-ok); }
+.lien.alerte { color: var(--w-changed); }
+.lien.fini { color: var(--mat-sys-outline); }
+.lien.echec { color: var(--w-failed); }
+
+@keyframes battement {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led { animation: none; }
+}
+
+.flux {
+  height: 60vh;
+  min-height: 320px;
+}
+
+.ev {
+  display: grid;
+  grid-template-columns: 52px 116px minmax(120px, 1fr) 112px 96px 62px;
+  align-items: center;
+  gap: var(--w-gap-3);
+  height: var(--w-row-dense);
+  padding: 0 var(--w-gap-3);
+  border-bottom: 1px solid color-mix(in srgb, var(--mat-sys-outline-variant) 45%, transparent);
+  font-size: 12px;
+}
+
+// Une barre de 2px au bord gauche, pas un fond : sur une colonne dense, remplir
+// les lignes transformerait la page en aplat de couleur et ferait perdre le
+// parcours. Seul l'échec teinte en plus — c'est le seul état qui doit arrêter
+// l'œil.
+.ev.chg { box-shadow: inset 2px 0 0 var(--w-changed); }
+.ev.ech {
+  box-shadow: inset 2px 0 0 var(--w-failed);
+  background: color-mix(in srgb, var(--w-failed-bg) 55%, transparent);
+}
+
+.s { font-size: 11px; color: var(--mat-sys-outline); text-align: right; }
+.tache, .hote, .role {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hote { font-size: 11.5px; color: var(--mat-sys-on-surface-variant); }
+.role, .heure { font-size: 11px; color: var(--mat-sys-outline); }
+.heure { text-align: right; }
+
+.reprise {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-3);
+  height: var(--w-row-dense);
+  padding: 0 var(--w-gap-3);
+  background: var(--mat-sys-surface-container);
+}
+
+.reprise .trait { flex: 1; height: 1px; background: var(--mat-sys-outline-variant); }
+.reprise .texte { font-size: 10.5px; color: var(--mat-sys-on-surface-variant); }
+
+.rattraper {
+  position: absolute;
+  right: var(--w-gap-4);
+  bottom: var(--w-gap-4);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: 999px;
+  background: var(--mat-sys-surface-container-highest);
+  color: var(--mat-sys-on-surface);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+
+  mat-icon { font-size: 16px; width: 16px; height: 16px; }
+}
+
+.erreur {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-2);
+  margin: 0;
+  padding: var(--w-gap-2) var(--w-gap-3);
+  background: var(--w-failed-bg);
+  color: var(--w-failed);
+  font-size: 12.5px;
+
+  mat-icon { font-size: 18px; width: 18px; height: 18px; }
+}
+
+.fin-run {
+  margin: 0;
+  padding: var(--w-gap-2) var(--w-gap-3);
+  border-top: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface-container);
+  font-size: 12.5px;
+  color: var(--mat-sys-on-surface-variant);
+}

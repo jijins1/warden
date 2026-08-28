@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -6,6 +13,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RunsService } from '../../core/api/runs.service';
+import { APP_CONFIG } from '../../core/config/app-config';
+import { RunStream, versWebSocket } from '../../core/api/run-stream';
+import { EventStream } from './event-stream';
 import { RunDetail as RunDetailDTO } from '../../core/api/wire';
 import { ApiError } from '../../core/http/api-error';
 import { StateChip } from '../../shared/state-chip/state-chip';
@@ -27,6 +37,7 @@ import { DureePipe } from '../../shared/pipes/duree.pipe';
     DureePipe,
     StateChip,
     EnvBadge,
+    EventStream,
     MatButtonModule,
     MatIconModule,
     MatProgressBarModule,
@@ -38,6 +49,10 @@ import { DureePipe } from '../../shared/pipes/duree.pipe';
 })
 export class RunDetail {
   readonly #runs = inject(RunsService);
+  readonly #wsBase = versWebSocket(inject(APP_CONFIG).apiUrl.replace(/\/+$/, ''));
+
+  /** Le flux, créé une fois le run connu et fermé avec la vue. */
+  protected readonly flux = signal<RunStream | null>(null);
 
   /** Lié depuis la route par `withComponentInputBinding`. */
   readonly runRef = input.required<string>();
@@ -47,17 +62,30 @@ export class RunDetail {
   protected readonly erreur = signal<string | null>(null);
 
   constructor() {
-    // Un `effect` plutôt qu'un chargement unique : naviguer d'un run à l'autre
-    // réutilise le composant, et ne recharger qu'au constructeur laisserait la
-    // page afficher le run précédent.
     void this.#charger();
+
+    // Le flux est FERMÉ avec la vue. Sans cela, quitter la page laisserait la
+    // socket ouverte et son réessai tourner en fond : un onglet longtemps
+    // ouvert accumulerait une connexion par run consulté.
+    inject(DestroyRef).onDestroy(() => this.flux()?.arreter());
   }
 
   async #charger(): Promise<void> {
     this.chargement.set(true);
     this.erreur.set(null);
     try {
-      this.run.set(await this.#runs.parReference(this.runRef()));
+      const r = await this.#runs.parReference(this.runRef());
+      this.run.set(r);
+
+      // Ouvert MÊME sur un run terminé : le serveur relit la table depuis
+      // l'offset 0 et envoie l'historique puis le cadre de fin. Un run clos se
+      // relit donc par le même chemin qu'un run en vol — il n'y a pas deux
+      // codes à maintenir.
+      const flux = new RunStream(
+        `${this.#wsBase}/runs/${encodeURIComponent(r.run_ref)}/stream`,
+      );
+      flux.demarrer();
+      this.flux.set(flux);
     } catch (e: unknown) {
       const err = e as Partial<ApiError>;
       // 404 couvre deux cas que le serveur refuse de distinguer — inexistant, ou

@@ -93,5 +93,9 @@
         <dd class="w-mono">{{ r.started_at | duree: r.ended_at }}</dd>
       </div>
     </dl>
+
+    @if (flux(); as f) {
+      <w-event-stream [flux]="f" />
+    }
   }
 </section>
