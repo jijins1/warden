@@ -16,11 +16,24 @@ export const routes: Routes = [
     loadComponent: () => import('./layout/shell').then((m) => m.Shell),
     children: [
       {
+        path: 'runs',
+        title: 'My runs — warden',
+        loadComponent: () => import('./features/runs/run-list').then((m) => m.RunList),
+      },
+      {
+        // `runRef` est lié par `withComponentInputBinding` : c'est ce qui rend
+        // un lien profond rechargeable, et la raison d'être de
+        // `GET /runs/{run_ref}`.
+        path: 'runs/:runRef',
+        title: 'Run — warden',
+        loadComponent: () => import('./features/runs/run-detail').then((m) => m.RunDetail),
+      },
+      {
         path: 'account',
         title: 'Account — warden',
         loadComponent: () => import('./features/account/account').then((m) => m.Account),
       },
-      { path: '', pathMatch: 'full', redirectTo: 'account' },
+      { path: '', pathMatch: 'full', redirectTo: 'runs' },
     ],
   },
   { path: '**', redirectTo: '' },
