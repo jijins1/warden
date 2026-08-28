@@ -1,0 +1,47 @@
+<mat-toolbar class="barre">
+  <a class="marque" routerLink="/">warden</a>
+
+  <nav class="nav">
+    <a routerLink="/account" routerLinkActive="actif">Account</a>
+  </nav>
+
+  <span class="espace"></span>
+
+  <button
+    mat-icon-button
+    [matMenuTriggerFor]="menuTheme"
+    matTooltip="Theme"
+    aria-label="Theme">
+    <mat-icon>contrast</mat-icon>
+  </button>
+  <mat-menu #menuTheme="matMenu">
+    <button mat-menu-item (click)="themes.poser('system')">
+      <mat-icon>computer</mat-icon><span>System</span>
+    </button>
+    <button mat-menu-item (click)="themes.poser('light')">
+      <mat-icon>light_mode</mat-icon><span>Light</span>
+    </button>
+    <button mat-menu-item (click)="themes.poser('dark')">
+      <mat-icon>dark_mode</mat-icon><span>Dark</span>
+    </button>
+  </mat-menu>
+
+  @if (auth.utilisateur(); as moi) {
+    <button mat-button [matMenuTriggerFor]="menuCompte" class="compte">
+      <span class="w-mono">{{ moi.subject }}</span>
+      <mat-icon iconPositionEnd>expand_more</mat-icon>
+    </button>
+    <mat-menu #menuCompte="matMenu">
+      <a mat-menu-item routerLink="/account">
+        <mat-icon>badge</mat-icon><span>Account</span>
+      </a>
+      <button mat-menu-item (click)="deconnecter()">
+        <mat-icon>logout</mat-icon><span>Sign out</span>
+      </button>
+    </mat-menu>
+  }
+</mat-toolbar>
+
+<main class="contenu">
+  <router-outlet />
+</main>

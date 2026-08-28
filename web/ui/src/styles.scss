@@ -6,6 +6,9 @@
 // `font-src` tiers.
 @use '@fontsource-variable/inter/index.css' as inter-font;
 @use '@fontsource-variable/jetbrains-mono/index.css' as mono-font;
+// Les icônes aussi : `mat-icon` s'appuie sur une police à ligatures, et le
+// schematic la chargeait depuis le CDN Google avec les autres.
+@use 'material-icons/iconfont/outlined.css' as icon-font;
 
 @use './styles/tokens';
 
