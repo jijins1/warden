@@ -1,0 +1,15 @@
+{{- if .Values.namespace.create }}
+# Tout vit dans UN namespace, et ce n'est pas une commodité.
+#
+# L'ADR-0023 a écarté TokenReview précisément parce que c'est une ressource non
+# namespacée : la valider aurait exigé un ClusterRole, donc une permission hors
+# du namespace du produit, ce que la contrainte d'exploitation interdit. Le
+# produit n'a de droits que chez lui — et les pods runner qu'il crée y vivent
+# aussi.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: warden
+{{- end }}

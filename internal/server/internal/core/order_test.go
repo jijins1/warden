@@ -239,6 +239,7 @@ func (e *emetteurFactice) Issue(_ context.Context, user, env string, _ []string)
 func TestLOrdrePorteLaCleDeSonEnvironnement(t *testing.T) {
 	e := &emetteurFactice{cle: "-----BEGIN OPENSSH PRIVATE KEY-----"}
 	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
 
 	ordre, err := b.OrderFor(t.Context(), 1)
 	if err != nil {
@@ -264,6 +265,7 @@ func TestLOrdrePorteLaCleDeSonEnvironnement(t *testing.T) {
 func TestUnEnvironnementSansCleNEmpechePasLeRun(t *testing.T) {
 	e := &emetteurFactice{err: core.ErrNoKey}
 	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
 
 	ordre, err := b.OrderFor(t.Context(), 1)
 	if err != nil {
@@ -280,6 +282,7 @@ func TestUnEnvironnementSansCleNEmpechePasLeRun(t *testing.T) {
 func TestUnePanneDuMagasinDeClesFaitEchouerLaLivraison(t *testing.T) {
 	e := &emetteurFactice{err: errors.New("API Kubernetes indisponible")}
 	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
 
 	if _, err := b.OrderFor(t.Context(), 1); err == nil {
 		t.Fatal("la livraison a réussi malgré un magasin de clés en panne")
@@ -297,5 +300,48 @@ func TestSansMagasinDeClesLOrdrePartQuandMeme(t *testing.T) {
 	}
 	if len(ordre.SSHKey) != 0 {
 		t.Errorf("clé = %q, attendu vide", ordre.SSHKey.Reveal())
+	}
+}
+
+// --- l'autorisation à la livraison (§10.2, §10.3) ---
+
+// LE test qui donne un sens à la révocation. `POST /runs` a déjà contrôlé le
+// droit à la création ; si la clé n'était pas revérifiée ICI, retirer un droit ne
+// ferait rien aux runs déjà enregistrés — et le §10.3 exige que le changement
+// prenne effet.
+func TestUnDroitRevoqueEmpecheLaLivraisonDeLaCle(t *testing.T) {
+	e := &emetteurFactice{cle: "-----BEGIN OPENSSH PRIVATE KEY-----"}
+	droits := nouveauxDroits(cle(runValide().UserID, "prod"))
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+	b = b.AvecDroits(droits)
+
+	if _, err := b.OrderFor(t.Context(), 1); err != nil {
+		t.Fatalf("livraison refusée alors que le droit est vivant : %v", err)
+	}
+
+	delete(droits.accordes, cle(runValide().UserID, "prod")) // révocation
+
+	_, err := b.OrderFor(t.Context(), 1)
+	if !errors.Is(err, core.ErrEnvironnementInterdit) {
+		t.Fatalf("err = %v : la clé a été livrée malgré un droit révoqué", err)
+	}
+	// Et le magasin de clés n'a même pas été SOLLICITÉ la seconde fois : le
+	// refus précède la sortie du secret.
+	if len(e.envs) != 1 {
+		t.Errorf("le magasin de clés a été appelé %d fois, attendu 1", len(e.envs))
+	}
+}
+
+// Sans magasin de droits, aucune clé ne sort. C'est le défaut voulu : un
+// composeur mal assemblé ne doit pas distribuer des credentials.
+func TestSansMagasinDeDroitsAucuneCleNeSort(t *testing.T) {
+	e := &emetteurFactice{cle: "-----BEGIN OPENSSH PRIVATE KEY-----"}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, e, "https://git.invalid")
+
+	if _, err := b.OrderFor(t.Context(), 1); !errors.Is(err, core.ErrEnvironnementInterdit) {
+		t.Errorf("err = %v : une clé a été livrée sans magasin de droits", err)
+	}
+	if len(e.envs) != 0 {
+		t.Error("le magasin de clés a été sollicité sans contrôle de droit")
 	}
 }

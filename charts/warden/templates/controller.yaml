@@ -1,0 +1,88 @@
+{{- $fullname := include "warden.fullname" . -}}
+# Le rôle `controller` : la marche 3 de la machine à états du §6.4.
+#
+# Sans lui, un run dont le pod est évincé, tué par l'OOM ou emporté avec son nœud
+# reste « en cours » pour toujours — et le produit MENT sur ce qu'il a fait. C'est
+# aussi lui qui ramasse les pods terminés (§8.7), faute de quoi ils s'accumulent
+# dans le namespace.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "controller" "root" .) | nindent 4 }}
+spec:
+  # UN seul réplica. L'ADR-0006 prévoit la leader election par Lease ; elle
+  # n'existe pas encore et elle ne changerait rien à la correction — la clôture
+  # est gardée par `ended_at IS NULL` et le ramassage ne touche que des pods déjà
+  # terminés, donc deux contrôleurs feraient du travail en double, pas du travail
+  # faux. Ce `1` est ce qui rend le doublon inutile en attendant.
+  replicas: 1
+  strategy:
+    # Recreate et non RollingUpdate : pendant une mise à jour, deux contrôleurs
+    # coexisteraient. C'est inoffensif, mais l'inoffensif repose ici sur une
+    # garde SQL, et rien ne gagne à l'éprouver à chaque déploiement.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "warden.selectorLabels" (dict "component" "controller") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "warden.selectorLabels" (dict "component" "controller") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $fullname }}-controller
+      volumes:
+        # Le document des droits (ADR-0033).
+        #
+        # Monté ICI et pas dans `api` : le contrôleur est le rôle dont le métier
+        # est de faire correspondre la base à ce que le monde extérieur dit, et
+        # il tourne à UN réplica. Dans `api`, qui peut en avoir N, ce serait N
+        # réconciliateurs sur le même document.
+        - name: grants
+          configMap:
+            name: {{ $fullname }}-grants
+            # Facultatif : un contrôleur démarré avant que le ConfigMap existe
+            # doit tourner, pas rester bloqué au montage. Le code traite
+            # l'absence du fichier comme « ne rien faire » — surtout pas comme un
+            # document vide, qui révoquerait tous les droits du produit.
+            optional: true
+      securityContext:
+        {{- include "warden.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: controller
+          image: {{ include "warden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["controller"]
+          securityContext:
+            {{- include "warden.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: WARDEN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "warden.databaseSecret" . }}
+                  key: {{ .Values.database.key }}
+            - name: WARDEN_POD_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: WARDEN_GRANTS_FILE
+              value: /etc/warden/grants.yaml
+
+            # DEUX rythmes, et ils sont séparés exprès — voir `values.yaml`.
+            - name: WARDEN_RECONCILE_SECONDS
+              value: {{ .Values.controller.reconcileSeconds | quote }}
+            - name: WARDEN_GRANTS_SECONDS
+              value: {{ .Values.controller.grantsSeconds | quote }}
+          volumeMounts:
+            - name: grants
+              mountPath: /etc/warden
+              readOnly: true
+          {{- with .Values.controller.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          # AUCUN port, donc aucune sonde TCP. Le contrôleur ne sert rien : rien
+          # ne doit pouvoir le solliciter de l'extérieur, et il n'a rien à
+          # répondre à personne. Un port ouvert « pour la sonde » serait une
+          # surface ajoutée en échange de rien.

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: warden
+description: >-
+  Proxy d'exécution Ansible : git est le transport ET le magasin d'audit.
+  Déploie les rôles `api`, `git` et `controller` d'un même binaire (ADR-0006).
+type: application
+
+# Version de la CHART, indépendante de celle du produit. Elle change quand les
+# manifestes changent, même si le binaire ne bouge pas.
+version: 0.1.0
+
+# Version du PRODUIT déployé par défaut. C'est aussi le tag d'image par défaut,
+# ce qui évite d'avoir à tenir les deux en accord à la main.
+appVersion: "dev"
+
+keywords: [ansible, audit, git, kubernetes]
+home: https://github.com/jijins1/warden
+sources: [https://github.com/jijins1/warden]

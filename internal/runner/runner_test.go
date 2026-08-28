@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	wire "github.com/jijins1/warden/internal/wire/dispatch"
 )
 
 // TestLeCheminDuJetonEstContraintAuMontage est la propriété qui compte.
@@ -73,5 +75,54 @@ func TestLeRunnerNaccepteAucunArgument(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "aucun argument") {
 		t.Errorf("refusé pour une autre raison : %v", err)
+	}
+}
+
+// LE test du branchement de l'ADR-0017. Sans lui, les valeurs transmises
+// ressortiraient EN CLAIR dans les events remontés — le rédacteur était `nil`
+// jusqu'ici, et rien ne l'aurait signalé.
+func TestRedacteurMasqueLesValeursInjectees(t *testing.T) {
+	red := redacteurPour(wire.Order{
+		ForwardEnv: map[string]wire.Secret{
+			"VAULT_TOKEN": wire.Secret("hvs.SUPERSECRET123"),
+		},
+		BecomePassword: wire.Secret("motdepasse-eleve"),
+	})
+	if red == nil {
+		t.Fatal("un ordre portant des valeurs injectées doit armer le rédacteur")
+	}
+
+	sortie, _, _ := red.RedactText(
+		"le mot de passe est motdepasse-eleve et le jeton hvs.SUPERSECRET123")
+	if strings.Contains(sortie, "hvs.SUPERSECRET123") {
+		t.Errorf("la valeur transmise ressort en clair : %q", sortie)
+	}
+	if strings.Contains(sortie, "motdepasse-eleve") {
+		t.Errorf("le mot de passe d'élévation ressort en clair : %q", sortie)
+	}
+}
+
+// La clé d'accès N'ENTRE PAS dans le jeu à masquer (ADR-0020) : elle vient du
+// serveur et n'apparaît jamais dans un résultat de module. L'ajouter ferait
+// masquer des fragments de diff sans rapport.
+func TestRedacteurIgnoreLaCleDAcces(t *testing.T) {
+	if red := redacteurPour(wire.Order{SSHKey: wire.Secret("-----BEGIN KEY-----")}); red != nil {
+		t.Error("une clé d'accès seule ne doit pas armer le rédacteur")
+	}
+}
+
+// Rien à masquer, pas de rédacteur : le faire parcourir chaque ligne du flux
+// pour zéro aiguille serait payé sur le chemin chaud.
+func TestRedacteurNilQuandRienNEstInjecte(t *testing.T) {
+	if red := redacteurPour(wire.Order{RunRef: "x"}); red != nil {
+		t.Error("un ordre sans valeur injectée ne doit pas armer le rédacteur")
+	}
+}
+
+// enClair sort les valeurs de leur enveloppe, et rend nil quand il n'y a rien —
+// ce que `poserLesVariables` distingue pour ne pas écrire de fichier vide.
+func TestEnClairRendNilSurVide(t *testing.T) {
+	if enClair(nil) != nil || enClair(map[string]wire.Secret{}) != nil {
+		t.Error("enClair doit rendre nil plutôt qu'une map vide")
 	}
 }

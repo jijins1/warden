@@ -1,0 +1,57 @@
+# Valeurs du déploiement `warden-dev` de référence.
+#
+# Ce fichier n'a rien à faire dans le dépôt du produit à terme : il décrit UN
+# déploiement, pas le produit. Il y reste tant qu'il n'existe pas de dépôt de
+# déploiement, et c'est la même dette que celle du document de droits.
+
+# Le namespace existe déjà et n'est PAS repris dans la release.
+#
+# L'adopter voudrait dire qu'un `helm uninstall` le supprime — donc emporte tout
+# ce qu'il contient, y compris le volume des dépôts et la base, dont les
+# `resource-policy: keep` ne protègent RIEN contre la suppression de leur
+# namespace.
+namespace:
+  create: false
+
+image:
+  registry: gitea.ruokki.ovh/ruokki
+  tag: dev
+  # `Always` et non le défaut : le tag `dev` est MUTABLE. Avec `IfNotPresent`,
+  # republier la même étiquette ne redéploierait pas le binaire, et le pod
+  # continuerait de tourner sur l'image en cache sans que rien ne le dise.
+  pullPolicy: Always
+
+grants:
+  environments:
+    prod:
+      - ruokki
+    # Environnement d'essai. Il n'a NI clé NI machine — volontairement : un run
+    # qui s'y exécute prouve toute la chaîne (session, commit d'audit, push,
+    # dispatch, fetch, events, clôture) sans pouvoir joindre quoi que ce soit.
+    # C'est ce qu'il faut pour vérifier un déploiement sans toucher à `prod`.
+    test:
+      - warden-test
+
+# Deux cibles, une par environnement d'essai.
+#
+# `enrolement` existe depuis cinq jours et est enrôlée dans `prod` sous le nom
+# `cible-test`, avec sa clé d'hôte épinglée : sa clé de map ne doit PAS changer,
+# faute de quoi le pod serait recréé et l'empreinte avec lui.
+#
+# `test` est la seconde, pour l'environnement du même nom. Une cible par
+# environnement plutôt qu'une partagée : ajouter la clé de `test` aux
+# `authorized_keys` de la machine de `prod` mélangerait exactement ce que les
+# environnements servent à séparer.
+testTargets:
+  enabled: true
+  targets:
+    enrolement: {}
+    test: {}
+
+ingress:
+  api:
+    host: warden-dev.ruokki.ovh
+    tlsSecret: warden-api-cert-tls
+  git:
+    host: warden-git-dev.ruokki.ovh
+    tlsSecret: warden-git-cert-tls

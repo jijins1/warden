@@ -71,11 +71,18 @@ type Reporter struct {
 
 // New construit le rapporteur et démarre son vidage périodique.
 //
-// `red` peut être nil, et c'est le cas NORMAL aujourd'hui : l'ordre de run ne
-// porte encore ni `forward_env` ni clé d'accès, donc aucun secret n'est injecté
-// dans le pod. La couture existe pour que le jour où l'un des deux arrive, la
-// rédaction de l'ADR-0017 s'applique sans toucher à ce chemin — elle est au bon
-// endroit, le dernier goulot avant que les octets quittent le pod.
+// `red` peut être nil, et c'est le cas de la majorité des runs : la plupart
+// n'injectent aucune valeur, et un rédacteur sans aiguille ferait parcourir
+// chaque ligne du flux pour rien. Il est armé — par `redacteurPour` dans le
+// paquet parent — dès que l'ordre porte un `forward_env` ou un mot de passe
+// d'élévation.
+//
+// Ce point est le DERNIER GOULOT avant que les octets quittent le pod, et c'est
+// pour ça que la rédaction de l'ADR-0017 vit ici plutôt qu'en amont : tout ce
+// qui remonte y passe, quelle que soit la route empruntée dans le runner.
+//
+// La clé d'accès n'entre PAS dans le jeu à masquer (ADR-0020) : elle vient du
+// serveur et n'apparaît jamais dans un résultat de module.
 func New(url, token string, red *redact.Redactor) (*Reporter, error) {
 	if url == "" {
 		return nil, errors.New("adresse de l'ingestion absente")
@@ -195,6 +202,34 @@ func (r *Reporter) Close(ctx context.Context, f wire.Final) error {
 		close(r.arret)
 		<-r.fini
 		err = r.vider(ctx, &f)
+	})
+	return err
+}
+
+// Abandonner vide ce qui reste SANS prononcer d'issue.
+//
+// C'est le chemin du runner qui meurt sous son propre run : le pod est évincé,
+// tué par l'OOM, ou arrêté sur `activeDeadlineSeconds`. Ce que le runner sait
+// alors, ce sont ses events — et le §6.3 dit que c'est ce qui compte le plus,
+// puisque la question d'audit est « qu'est-ce qui avait déjà été modifié ». Ce
+// qu'il ne sait PAS, c'est pourquoi il meurt : `ansible-runner` interrompu
+// rapporte « failed », ce qui se lirait comme un playbook en échec alors que le
+// playbook n'a rien dit.
+//
+// La clôture revient donc au réconciliateur, seul à voir `DeadlineExceeded`,
+// « Evicted » ou « OOMKilled » (§6.4, marche 3). Laisser le run ouvert n'est
+// sûr que PARCE QUE ce composant existe : avant lui, cela l'aurait laissé en vol
+// pour toujours.
+//
+// Exclusive de Close, par le même `unefois` : le chemin d'arrêt passe par
+// plusieurs `defer`, et abandonner puis clore enverrait une trame terminale
+// après coup.
+func (r *Reporter) Abandonner(ctx context.Context) error {
+	var err error
+	r.unefois.Do(func() {
+		close(r.arret)
+		<-r.fini
+		err = r.vider(ctx, nil)
 	})
 	return err
 }

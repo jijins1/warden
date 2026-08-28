@@ -40,12 +40,18 @@ type Fin struct {
 // gérer sa fermeture en plus du reste.
 type Client struct {
 	base    *url.URL
+	token   string
 	subject string
 	dialer  *websocket.Dialer
 }
 
 // New construit le client.
-func New(baseURL, subject string) (*Client, error) {
+//
+// Le jeton de session ET le sujet, parce que le flux traverse le MÊME middleware
+// que l'API : ce qui authentifie l'un authentifie l'autre. Les oublier ici
+// donnerait un `warden submit` qui pousse, lance le run, puis échoue à en suivre
+// la sortie — le pire des trois résultats.
+func New(baseURL, token, subject string) (*Client, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("adresse du serveur invalide : %w", err)
@@ -64,6 +70,7 @@ func New(baseURL, subject string) (*Client, error) {
 
 	return &Client{
 		base:    u,
+		token:   token,
 		subject: subject,
 		dialer: &websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
@@ -124,8 +131,13 @@ func (c *Client) lireUneFois(ctx context.Context, runRef string, depuis int64, v
 		u.RawQuery = "from_offset=" + strconv.FormatInt(depuis+1, 10)
 	}
 
+	// Même priorité que le client HTTP : le jeton l'emporte, et l'affirmation
+	// n'est pas envoyée avec lui.
 	entetes := http.Header{}
-	if c.subject != "" {
+	switch {
+	case c.token != "":
+		entetes.Set("Authorization", "Bearer "+c.token)
+	case c.subject != "":
 		entetes.Set("X-User-Subject", c.subject)
 	}
 

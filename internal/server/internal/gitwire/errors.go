@@ -44,7 +44,7 @@ func (c Code) HTTPStatus() int {
 	switch c {
 	case CodeBadRequest:
 		return 400
-	case CodeUnknownRepo, CodeUnknownObject:
+	case CodeUnknownRepo, CodeUnknownObject, CodeUnknownPath:
 		return 404
 	case CodeMirrorFailed:
 		// 502 et non 500 : la panne est CHEZ LA FORGE, pas chez nous. La

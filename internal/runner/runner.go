@@ -20,6 +20,7 @@ import (
 	"github.com/jijins1/warden/internal/runner/internal/dispatch"
 	"github.com/jijins1/warden/internal/runner/internal/exec"
 	"github.com/jijins1/warden/internal/runner/internal/fetch"
+	"github.com/jijins1/warden/internal/runner/internal/redact"
 	"github.com/jijins1/warden/internal/runner/internal/report"
 	wire "github.com/jijins1/warden/internal/wire/dispatch"
 	ingestwire "github.com/jijins1/warden/internal/wire/ingest"
@@ -123,17 +124,15 @@ func jouerLeRun(ctx context.Context, ordre wire.Order, token string) error {
 // doit encore dire ce qui avait déjà été modifié, ce qui suppose que le canal de
 // remontée existe avant la première tâche et survive à l'échec de la dernière.
 func executer(ctx context.Context, ordre wire.Order, espace, token string) error {
-	// Aucun rédacteur : l'ordre ne porte pas encore de `forward_env`, donc aucune
-	// variable de playbook n'est injectée dans ce pod. La couture de l'ADR-0017
-	// est en place dans `report` et s'appliquera sans toucher à ce chemin le jour
-	// où elles arriveront.
+	// LE RÉDACTEUR est armé des valeurs INJECTÉES dans ce run (ADR-0017).
 	//
-	// La clé d'accès, elle, N'ENTRE PAS dans le jeu à masquer, et c'est la
-	// distinction que l'ADR-0020 pose : les credentials d'accès viennent du
-	// serveur et n'apparaissent jamais dans un résultat de module ni dans un
-	// `--diff`. Ce que l'ADR-0017 masque est l'autre famille — les valeurs que
-	// le playbook rend dans des fichiers.
-	rapporteur, err := report.New(os.Getenv(ingestwire.EnvIngestURL), token, nil)
+	// La clé d'accès N'ENTRE PAS dans le jeu à masquer, et c'est la distinction
+	// que l'ADR-0020 pose : les credentials d'accès viennent du serveur et
+	// n'apparaissent jamais dans un résultat de module ni dans un `--diff`. Ce
+	// que l'ADR-0017 masque est l'autre famille — les valeurs que le playbook
+	// rend dans des fichiers, c'est-à-dire précisément celles qu'on lui injecte.
+	rapporteur, err := report.New(os.Getenv(ingestwire.EnvIngestURL), token,
+		redacteurPour(ordre))
 	if err != nil {
 		return fmt.Errorf("run %s : remontée des events : %w", ordre.RunRef, err)
 	}
@@ -154,6 +153,10 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		// Le mot de passe d'élévation vient de l'utilisateur, pas du serveur :
 		// il ne relève pas du magasin de l'ADR-0020 et ne fait que transiter.
 		BecomePassword: ordre.BecomePassword.Reveal(),
+		// Les variables du shell, déjà filtrées par la composition serveur
+		// (§5.4.1). Le filtre ne peut pas vivre ici : ce binaire tourne dans le
+		// domaine hostile de l'ADR-0011.
+		ForwardEnv: enClair(ordre.ForwardEnv),
 	})
 	if err != nil {
 		// Le run est clos malgré tout : sans cela il resterait `running` pour
@@ -173,14 +176,34 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		return joindre(clore(ctx, rapporteur, ingestwire.StatusFailed, ""),
 			fmt.Errorf("run %s : %w", ordre.RunRef, errReport))
 	}
+	// Le pod meurt SOUS le run. MESURÉ sur le cluster : à l'expiration
+	// d'`activeDeadlineSeconds`, le signal annule le contexte, `ansible-runner`
+	// est interrompu et rapporte « failed » — que le playbook ait échoué ou non.
+	// Le clore ici inscrirait « votre playbook a échoué » à propos d'un playbook
+	// qui n'a rien dit, c'est-à-dire un mensonge dans le journal d'audit.
+	//
+	// Le runner rapporte donc ce qu'il SAIT — ses events, ce qui avait déjà été
+	// modifié (§6.3) — et laisse la clôture au réconciliateur, seul à voir
+	// « DeadlineExceeded », « Evicted » ou « OOMKilled » (§6.4, marche 3). Ce
+	// renvoi n'est sûr que parce que ce composant existe : avant lui, le run
+	// serait resté en vol pour toujours.
+	//
+	// Un succès CONSTATÉ fait exception : si `ansible-runner` a rapporté
+	// « successful », le playbook est allé au bout et le signal est arrivé après.
+	// C'est un fait observé, pas une supposition, et le taire perdrait l'issue
+	// d'un run qui a réussi.
+	succesConstate := err == nil && statut == exec.StatutReussi
+	if ctx.Err() != nil && !succesConstate {
+		slog.Warn("run abandonné au réconciliateur",
+			slog.String("run_ref", ordre.RunRef),
+			slog.String("motif", "le pod s'arrête ; l'issue observée ne serait pas celle du playbook"))
+		return joindre(abandonner(ctx, rapporteur),
+			fmt.Errorf("run %s : arrêt du pod : %w", ordre.RunRef, ctx.Err()))
+	}
+
 	if err != nil {
-		// Panne de PILOTAGE, distincte d'un playbook qui échoue. Si le contexte
-		// est annulé, c'est le Ctrl-C du §5.6 et non un défaut.
-		final, cause := ingestwire.StatusFailed, ingestwire.Cause("")
-		if ctx.Err() != nil {
-			final, cause = ingestwire.StatusInterrupted, ingestwire.CauseUserInterrupt
-		}
-		return joindre(clore(ctx, rapporteur, final, cause),
+		// Panne de PILOTAGE, distincte d'un playbook qui échoue.
+		return joindre(clore(ctx, rapporteur, ingestwire.StatusFailed, ""),
 			fmt.Errorf("run %s : %w", ordre.RunRef, err))
 	}
 
@@ -205,6 +228,15 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 // Le contexte est DÉTACHÉ de celui du run : l'annulation du §5.6 est justement
 // le moment où il reste le plus à dire, et fermer avec un contexte déjà annulé
 // ferait échouer l'écriture de la terminaison qu'on essaie de journaliser.
+// abandonner vide le dernier lot SANS clore, et pour la même raison que `clore`
+// détache son contexte : c'est au moment de l'arrêt qu'il reste le plus à dire.
+func abandonner(ctx context.Context, r *report.Reporter) error {
+	fond, annuler := context.WithTimeout(context.WithoutCancel(ctx), delaiDeCloture)
+	defer annuler()
+
+	return r.Abandonner(fond)
+}
+
 func clore(ctx context.Context, r *report.Reporter, statut ingestwire.Status, cause ingestwire.Cause) error {
 	fond, annuler := context.WithTimeout(context.WithoutCancel(ctx), delaiDeCloture)
 	defer annuler()
@@ -255,4 +287,56 @@ func lireJeton(chemin string) (string, error) {
 		return "", errors.New("le jeton d'amorçage monté est vide")
 	}
 	return jeton, nil
+}
+
+// Bornes de la rédaction (ADR-0017).
+//
+// L'ADR pose que le seuil est « un paramètre de politique serveur, pas une
+// constante du code ». La politique serveur est écartée en v1 (ADR-0021), donc
+// il est ici — et il devra déménager avec elle plutôt que d'être recopié.
+const (
+	redactionLongueurMin = 5
+	redactionSeuil       = 100
+)
+
+// redacteurPour arme le rédacteur des valeurs injectées dans ce run.
+//
+// Rend nil quand il n'y a rien à masquer, ce que `report` traite déjà : un
+// rédacteur sans aiguille ferait parcourir chaque ligne du flux pour rien.
+//
+// Le mot de passe d'élévation EST du jeu. Il est injecté par `env/extravars`,
+// donc il relève exactement de la famille que l'ADR-0017 vise — les valeurs
+// qu'on donne au playbook et qu'il peut recopier dans un fichier. Que le flux
+// mesuré ne le contienne pas aujourd'hui ne dit rien de ce qu'un playbook en
+// fera.
+func redacteurPour(ordre wire.Order) *redact.Redactor {
+	secrets := make([]redact.Secret, 0, len(ordre.ForwardEnv)+1)
+	for nom, v := range ordre.ForwardEnv {
+		secrets = append(secrets, redact.Secret{Name: nom, Value: string(v.Reveal())})
+	}
+	if len(ordre.BecomePassword) > 0 {
+		secrets = append(secrets, redact.Secret{
+			Name: "ansible_become_password", Value: string(ordre.BecomePassword.Reveal()),
+		})
+	}
+	if len(secrets) == 0 {
+		return nil
+	}
+	return redact.NewRedactor(secrets, redactionLongueurMin, redactionSeuil)
+}
+
+// enClair sort les valeurs de leur enveloppe masquée.
+//
+// Une fonction nommée plutôt qu'une boucle en ligne : c'est le seul endroit du
+// runner où les variables transmises perdent leur protection d'impression, et ça
+// doit se voir en revue — comme le `Reveal` de la clé d'accès juste au-dessus.
+func enClair(m map[string]wire.Secret) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for nom, v := range m {
+		out[nom] = string(v.Reveal())
+	}
+	return out
 }

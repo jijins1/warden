@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
@@ -29,47 +31,131 @@ func withUser(r *http.Request, user *core.User) *http.Request {
 // opt-in (Config.InsecureDevAuth).
 const devAuthHeader = "X-User-Subject"
 
+// ctxKeySession stores the caller's session, when there is one.
+type ctxKeySession struct{}
+
+// ContextSession returns the caller's session, or nil when the caller was
+// authenticated by some other means (the development header).
+func ContextSession(ctx context.Context) *core.Session {
+	if val, ok := ctx.Value(ctxKeySession{}).(*core.Session); ok {
+		return val
+	}
+	return nil
+}
+
 // AuthnMiddleware resolves the caller into a provisioned user.
 //
-// There is no real authenticator yet. Rather than ship a header the client can
-// set to any value, the server refuses every request unless the operator has
-// explicitly turned on the insecure development mode. An audit product that
-// silently accepts "I am alice" is worse than one that refuses to answer.
+// Deux chemins, dans cet ordre, et l'ordre est le point :
 //
-// Even in dev mode the subject is only looked up, never created: provisioning
-// belongs to a login flow that has verified the identity, and an upsert driven
-// by an unauthenticated header lets anyone grow the users table.
+//  1. `Authorization: Bearer` — une session ouverte par `warden login`. C'est le
+//     chemin RÉEL : le porteur a prouvé qu'il connaissait un mot de passe.
+//  2. `X-User-Subject` — une simple affirmation, acceptée derrière l'opt-in
+//     explicite `WARDEN_INSECURE_DEV_AUTH`. Elle reste pour le développement et
+//     les tests de bout en bout, et poser cet opt-in vaut accepter que n'importe
+//     qui se déclare n'importe qui.
 //
-// TODO: real authentication (OIDC or mTLS) — see ADR-0021.
+// Le second n'est essayé qu'à défaut du premier, de sorte qu'un déploiement qui
+// aurait laissé traîner l'opt-in n'affaiblit au moins pas les appelants qui
+// s'authentifient correctement.
+//
+// Ce middleware ne provisionne JAMAIS : créer un compte appartient au flux qui a
+// vérifié une identité, et un upsert piloté par un en-tête non authentifié
+// laisserait n'importe qui faire grossir la table des utilisateurs.
 func (a *Server) AuthnMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !a.insecureDevAuth {
-			http.Error(w, "no authenticator configured", http.StatusNotImplemented)
+		if jeton, présent := jetonPorteur(r); présent {
+			a.parSession(w, r, next, jeton)
 			return
 		}
+		if a.insecureDevAuth {
+			a.parEnTeteDeDev(w, r, next)
+			return
+		}
+		// Ni jeton ni mode de développement. `WWW-Authenticate` dit à un client
+		// automatisé ce qu'on attend de lui, ce qu'un 401 nu ne dit pas.
+		w.Header().Set("WWW-Authenticate", `Bearer realm="warden"`)
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+	})
+}
 
-		subject := r.Header.Get(devAuthHeader)
-		if subject == "" {
+// jetonPorteur extrait le jeton d'un en-tête `Authorization: Bearer`.
+//
+// Le booléen distingue « aucun en-tête » de « en-tête illisible ». Sans cette
+// distinction, un jeton mal formé retomberait silencieusement sur l'en-tête de
+// développement, et un client cassé paraîtrait fonctionner.
+func jetonPorteur(r *http.Request) (string, bool) {
+	brut := r.Header.Get("Authorization")
+	if brut == "" {
+		return "", false
+	}
+	const prefixe = "Bearer "
+	if len(brut) <= len(prefixe) || !strings.EqualFold(brut[:len(prefixe)], prefixe) {
+		return "", true // présent mais inutilisable : ce sera un 401
+	}
+	return strings.TrimSpace(brut[len(prefixe):]), true
+}
+
+func (a *Server) parSession(w http.ResponseWriter, r *http.Request, next http.Handler, brut string) {
+	if a.deps.Auth == nil {
+		http.Error(w, "no authenticator configured", http.StatusNotImplemented)
+		return
+	}
+
+	jeton, err := core.ParseSessionToken(brut)
+	if err != nil {
+		refuserLeJeton(w)
+		return
+	}
+
+	user, session, err := a.deps.Auth.Authentifier(r.Context(), jeton)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
+			// Inconnu, expiré, révoqué, ou compte désactivé : la même réponse
+			// pour les quatre. Les distinguer dirait à qui présente un jeton au
+			// hasard lequel de ses essais a touché quelque chose.
+			refuserLeJeton(w)
+			return
+		}
+		slog.Error("authentification par session en échec", slog.String("error", err.Error()))
+		http.Error(w, "authentication failed", http.StatusInternalServerError)
+		return
+	}
+
+	r = withUser(r, &user)
+	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeySession{}, &session)))
+}
+
+// refuserLeJeton répond 401 avec le motif que la RFC 6750 prévoit, pour qu'un
+// client sache qu'il doit se reconnecter plutôt que réessayer.
+func refuserLeJeton(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate",
+		`Bearer realm="warden", error="invalid_token"`)
+	http.Error(w, "session expired or invalid — run `warden login`", http.StatusUnauthorized)
+}
+
+func (a *Server) parEnTeteDeDev(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	subject := r.Header.Get(devAuthHeader)
+	if subject == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="warden"`)
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := a.deps.Users.UserBySubject(r.Context(), core.UserLocal, subject)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
+		http.Error(w, "user lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if user.Disabled {
+		http.Error(w, "account disabled", http.StatusForbidden)
+		return
+	}
 
-		user, err := a.deps.Users.UserBySubject(r.Context(), core.UserLocal, subject)
-		if err != nil {
-			if errors.Is(err, core.ErrNotFound) {
-				http.Error(w, "authentication required", http.StatusUnauthorized)
-				return
-			}
-			http.Error(w, "user lookup failed", http.StatusInternalServerError)
-			return
-		}
-		if user.Disabled {
-			http.Error(w, "account disabled", http.StatusForbidden)
-			return
-		}
-
-		next.ServeHTTP(w, withUser(r, &user))
-	})
+	next.ServeHTTP(w, withUser(r, &user))
 }
 
 // Policy holds the authorization rules. Every handler that reads audit data
@@ -102,7 +188,15 @@ func (p *Policy) CanAdministerRepos(_ context.Context, user *core.User) bool {
 // CanViewRun reports whether the user may read a run and everything hanging off
 // it (events, diffs, git diffs).
 //
-// TODO: users who own the hosts a run touched.
+// The rule is ownership of the run and nothing else. An administrator does not
+// qualify — see CanAdministerRepos for why that separation is deliberate — and
+// neither does someone who operates the machines the run touched.
+//
+// That second case is §6.5's "everything that touched db-prod-02 this month",
+// and its absence is load-bearing rather than cosmetic: it is precisely why
+// HandleListByHost filters its result down to the caller instead of serving the
+// host's whole history. Widening it needs a notion of who owns a host, which
+// does not exist yet; the type comment above says where it would enter.
 func (p *Policy) CanViewRun(ctx context.Context, user *core.User, run *core.Run) bool {
 	if user == nil || run == nil {
 		return false

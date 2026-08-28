@@ -76,8 +76,22 @@ func TestInsecureDevAuthIsOptIn(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.AuthnMiddleware(mux).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 when no authenticator is configured, got %d", rec.Code)
+	// 401 et non 501, et c'est le CODE qui a raison contre ce test.
+	//
+	// Le 501 datait d'avant les sessions (ADR-0032), quand aucun authentifieur
+	// n'existait et que le serveur l'annonçait. Depuis, `AuthnMiddleware` répond
+	// 401 avec un `WWW-Authenticate` — ce qui dit à un client automatisé ce
+	// qu'on attend de lui, là où un 501 lui ferait croire que la fonctionnalité
+	// n'existe pas.
+	//
+	// Ce que le test établit ne change PAS : l'en-tête de développement reste
+	// inerte tant que l'exploitant ne l'a pas activé, et le refus le prouve
+	// aussi bien.
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("attendu 401 sans authentifieur configuré, obtenu %d", rec.Code)
+	}
+	if rec.Header().Get("WWW-Authenticate") == "" {
+		t.Error("le refus doit dire ce qu'il attend (RFC 6750), sinon un client automatisé ne peut pas s'y adapter")
 	}
 }
 

@@ -7,8 +7,16 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
+
+// uniqueViolation est le SQLSTATE d'une violation de contrainte unique.
+//
+// Écrit en clair plutôt que tiré de `jackc/pgerrcode` : ce module n'est pas une
+// dépendance du produit, et l'ajouter tout entier pour une constante de cinq
+// caractères figée par la norme SQL serait un mauvais échange.
+const uniqueViolation = "23505"
 
 // NewRun vit désormais dans le cœur : la création d'un run est une opération
 // du domaine, et son port doit pouvoir être déclaré sans connaître PostgreSQL
@@ -88,6 +96,16 @@ RETURNING id`
 		string(genre), cible,
 	).Scan(&id)
 	if err != nil {
+		// Une violation d'unicité ici ne peut porter que sur `run_ref` : c'est la
+		// SEULE contrainte unique de la table qu'un INSERT puisse heurter, l'`id`
+		// étant engendré. Le code SQLSTATE suffit donc, et se fier à lui plutôt
+		// qu'au nom de la contrainte évite qu'un renommage fasse retomber ce cas
+		// en 500 sans que rien ne le signale. Ajouter une seconde contrainte
+		// unique à `run` obligerait à revenir ici.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return 0, fmt.Errorf("création du run %s: %w", n.RunRef, core.ErrRunRefExists)
+		}
 		return 0, fmt.Errorf("création du run %s: %w", n.RunRef, err)
 	}
 	return id, nil

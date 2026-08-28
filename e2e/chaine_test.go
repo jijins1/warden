@@ -51,10 +51,17 @@ import (
 )
 
 const (
-	nsE2E     = "warden-e2e-chaine"
-	depot     = "depot"
-	sujet     = "alice"
-	secretGit = "secret-interne-de-la-chaine-e2e"
+	nsE2E = "warden-e2e-chaine"
+	depot = "depot"
+
+	// configProjet est le fichier de configuration des dépôts de ce test.
+	//
+	// Il déclare une variable à transmettre pour que la chaîne du §5.4 soit
+	// EXERCÉE et non seulement compilée : sans `forward_env`, le fichier ne
+	// prouverait que sa propre lecture.
+	configProjet = "default_env: prod\nforward_env:\n  - WARDEN_E2E_VARIABLE\n"
+	sujet        = "alice"
+	secretGit    = "secret-interne-de-la-chaine-e2e"
 )
 
 // --- outillage git ----------------------------------------------------------
@@ -100,6 +107,7 @@ func forge(t *testing.T) (urlHote string, port int, mainSHA string) {
 	src := t.TempDir()
 	run(t, src, "init", "--initial-branch=main", ".")
 	ecrire(t, src, "site.yml", "- hosts: all\n  tasks: []\n")
+	ecrire(t, src, ".ansibleproxy.yml", configProjet)
 	run(t, src, "add", ".")
 	run(t, src, "commit", "-m", "branche protégée")
 	mainSHA = strings.TrimSpace(run(t, src, "rev-parse", "HEAD"))
@@ -509,6 +517,9 @@ func TestLaChaineComplete(t *testing.T) {
 	poste := t.TempDir()
 	run(t, poste, "init", "--initial-branch=main", ".")
 	ecrire(t, poste, "site.yml", "- hosts: all\n  tasks: []\n")
+	// C'est CE fichier-là que le serveur lira, dans l'arbre du commit d'audit
+	// (ADR-0009) : ce qui s'applique et ce qui est audité sont le même octet.
+	ecrire(t, poste, ".ansibleproxy.yml", configProjet)
 	run(t, poste, "add", ".")
 	run(t, poste, "commit", "-m", "état local")
 	ecrire(t, poste, "inventory.ini", "[prod]\nweb-01\n")

@@ -137,6 +137,7 @@ func TestPushDepuisLeMagasinDAppoint(t *testing.T) {
 	auth := vuAuth.Load()
 	if auth == nil {
 		t.Fatal("aucun en-tête Authorization reçu: WithAuth ne traverse pas le transport")
+		return // `t.Fatal` termine déjà ; explicite pour les analyseurs qui ne le prouvent pas
 	}
 	if *auth != "Bearer "+jetonDeTest {
 		t.Errorf("Authorization = %q", *auth)

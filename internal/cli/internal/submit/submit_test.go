@@ -88,10 +88,14 @@ type apiFactice struct {
 	prefix string
 	recus  []client.NewRun
 	erreur error
+
+	// pushURL est ce que le serveur ANNONCE. Vide, il n'annonce rien et
+	// l'appelant se rabat sur sa propre configuration.
+	pushURL string
 }
 
 func (a *apiFactice) IssuePushGrant(context.Context, string) (client.Grant, error) {
-	return client.Grant{Token: "jeton-de-push", RefPrefix: a.prefix}, nil
+	return client.Grant{Token: "jeton-de-push", RefPrefix: a.prefix, PushURL: a.pushURL}, nil
 }
 
 func (a *apiFactice) CreateRun(_ context.Context, n client.NewRun) (client.RunCreated, error) {
@@ -243,7 +247,10 @@ func TestUneConfigurationIncompleteLeDitEnUneFois(t *testing.T) {
 	if err == nil {
 		t.Fatal("erreur attendue")
 	}
-	for _, attendu := range []string{"dépôt", "playbook", "git"} {
+	// L'adresse du rôle `git` ne fait PLUS partie de ce lot : le serveur
+	// l'annonce avec le jeton de push, donc l'exiger avant de l'avoir appelé
+	// serait une exigence fausse. Son absence a son propre test ci-dessous.
+	for _, attendu := range []string{"dépôt", "playbook"} {
 		if !strings.Contains(err.Error(), attendu) {
 			t.Errorf("le message ne nomme pas %q : %v", attendu, err)
 		}
@@ -294,5 +301,40 @@ func TestRejouerUneSoumissionEstIdempotent(t *testing.T) {
 	apres := strings.TrimSpace(lancerGit(t, bare, "rev-parse", "--verify", "refs/audit/7/"+opts.RunRef))
 	if apres != pousse {
 		t.Errorf("le rejeu a produit un commit différent : %s -> %s", pousse, apres)
+	}
+}
+
+// L'adresse du rôle `git` manque des DEUX côtés : ni le serveur ne l'annonce, ni
+// l'appelant ne l'a posée. Le dire tôt et précisément, plutôt que de laisser git
+// parler d'URL malformée après la capture de l'arbre (§5.7).
+func TestAdresseGitAbsenteDesDeuxCotes(t *testing.T) {
+	_, err := submit.Run(t.Context(), &apiFactice{prefix: "refs/audit/7/"}, submit.Options{
+		RepoDir: t.TempDir(), Repo: "depot", Playbook: "site.yml",
+	})
+	if err == nil {
+		t.Fatal("erreur attendue quand aucune adresse git n'est disponible")
+	}
+	if !strings.Contains(err.Error(), "WARDEN_GIT_URL") {
+		t.Errorf("le message doit dire quoi faire : %v", err)
+	}
+}
+
+// Le serveur ANNONCE l'adresse : elle prime, et la variable locale devient
+// inutile. C'est ce que l'option retenue achète — aucune adresse
+// d'infrastructure recopiée dans le fichier versionné de chaque projet.
+func TestLAdresseAnnonceeParLeServeurPrime(t *testing.T) {
+	repoDir, _, gitURL, _ := monde(t)
+
+	api := &apiFactice{prefix: "refs/audit/7/", pushURL: gitURL}
+	res, err := submit.Run(t.Context(), api, submit.Options{
+		RepoDir: repoDir, Repo: "depot", Playbook: "site.yml",
+		// Volontairement VIDE : tout doit venir du serveur.
+		GitURL: "",
+	})
+	if err != nil {
+		t.Fatalf("submit.Run : %v", err)
+	}
+	if res.RunRef == "" {
+		t.Error("aucun run déclaré")
 	}
 }

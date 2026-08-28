@@ -72,6 +72,21 @@ func DeclarerMultiligne(fs *flag.FlagSet, nom, quoi string) *Source {
 	return s
 }
 
+// Abreger ajoute une abréviation à `--ask-<nom>`.
+//
+// Elle existe pour UNE raison, et l'uniformité des trois drapeaux ci-dessus est
+// justement ce qui la rend nécessaire : quand l'outil qu'on remplace a déjà une
+// abréviation établie, s'en écarter coûte plus cher que l'uniformité ne
+// rapporte. `-K` est le `--ask-become-pass` d'`ansible-playbook` depuis
+// toujours, et le §5.1 fait de la familiarité l'objectif d'expérience du
+// produit — un réflexe qui échoue est ce qu'il existe pour éviter.
+//
+// Le MÊME booléen que `--ask-<nom>` : les deux formes sont interchangeables, et
+// les donner toutes deux n'est pas une erreur.
+func (s *Source) Abreger(fs *flag.FlagSet, lettre, quoi string) {
+	fs.BoolVar(&s.Demande, lettre, false, quoi)
+}
+
 // Fournie dit si l'appelant a désigné une provenance.
 //
 // Utile pour les valeurs FACULTATIVES — le mot de passe de `become` n'est

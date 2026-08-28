@@ -1,4 +1,5 @@
-# PostgreSQL par l'opérateur CNPG déjà présent sur le cluster.
+{{- if .Values.postgres.enabled }}
+# PostgreSQL par l'opérateur CNPG.
 #
 # L'ADR-0008 fait de PostgreSQL le journal ET le transport des events : ce n'est
 # pas une base de côté, c'est le composant dont la disponibilité conditionne le
@@ -9,10 +10,18 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: warden-db
-  namespace: warden-dev
+  name: {{ include "warden.fullname" . }}-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "database" "root" .) | nindent 4 }}
+  annotations:
+    # La base SURVIT à la désinstallation, même raison que le PVC des dépôts :
+    # l'ADR-0008 fait de PostgreSQL le JOURNAL, pas un cache. Un `helm uninstall`
+    # qui l'emporterait détruirait l'audit de tous les runs passés. La supprimer
+    # reste possible, mais à la main et donc en le voulant.
+    helm.sh/resource-policy: keep
 spec:
-  instances: 1
+  instances: {{ .Values.postgres.instances }}
 
   bootstrap:
     initdb:
@@ -20,13 +29,15 @@ spec:
       owner: warden
 
   storage:
-    size: 10Gi
+    size: {{ .Values.postgres.storage.size }}
+    {{- with .Values.postgres.storage.storageClass }}
     # Explicite alors que le cluster a une classe par défaut : il en a même DEUX
     # marquées `(default)`, ce qui rend le choix implicite indéterminé. Nommer la
     # classe est ici la seule façon de savoir ce qu'on obtient.
-    storageClass: local-path
+    storageClass: {{ . }}
+    {{- end }}
 
-  # CNPG publie les credentials dans un Secret `warden-db-app`, dont la clé `uri`
+  # CNPG publie les credentials dans un Secret `<cluster>-app`, dont la clé `uri`
   # est directement la chaîne de connexion attendue par le produit. Rien à
   # recopier, donc rien à désynchroniser.
 
@@ -53,3 +64,4 @@ spec:
       - name: warden_diff_reader
         ensure: present
         login: false
+{{- end }}

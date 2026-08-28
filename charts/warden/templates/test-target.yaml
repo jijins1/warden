@@ -1,0 +1,98 @@
+{{- if .Values.testTargets.enabled }}
+{{- $fullname := include "warden.fullname" . -}}
+{{- $root := . -}}
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ CIBLES DE TEST. N'ONT RIEN À FAIRE EN PRODUCTION.                        │
+# │                                                                          │
+# │ Chacune sert un sshd qui accepte le MOT DE PASSE, ce qu'aucune machine   │
+# │ gérée ne devrait faire au-delà de son enrôlement. Elles existent pour    │
+# │ qu'un `warden enroll` ait quelque chose à enrôler dans un cluster de     │
+# │ développement, et pour rien d'autre.                                     │
+# │                                                                          │
+# │ D'où `enabled: false` par défaut — en manifeste simple, il suffisait     │
+# │ d'un `kubectl apply -f deploy/` distrait pour les poser.                 │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# PLUSIEURS cibles, et non une seule : un environnement ne devrait pas emprunter
+# la machine d'un autre. Vérifier `test` en ajoutant sa clé aux
+# `authorized_keys` de la cible de `prod` mélangerait exactement ce que les
+# environnements existent pour séparer.
+#
+# Pourquoi des POD et pas des VM : reproductibles, jetables, joignables depuis le
+# runner sans rien ouvrir. Elles sont délibérément NUES — ni Python, ni sudo —
+# parce que c'est le cas qu'un enrôlement doit couvrir : une machine fraîchement
+# installée.
+#
+# LA CLÉ D'HÔTE EST FRAPPÉE À CHAQUE DÉMARRAGE. Conséquence à connaître avant de
+# toucher à ce fichier : RECRÉER une cible change son empreinte, et un
+# réenrôlement échouera alors sur `ErrEmpreinteChangee`. C'est le comportement
+# voulu — et c'est pourquoi les clés de ce map ne se renomment pas à la légère,
+# un nom changé étant un pod détruit et recréé.
+{{- range $cle, $cible := .Values.testTargets.targets }}
+{{- $nom := printf "%s-cible-%s" $fullname $cle }}
+{{- $secret := $cible.existingSecret | default $nom }}
+---
+# Le Secret n'est PAS rendu par la chart, même raison que le secret interne : un
+# mot de passe d'exemple dans un dépôt git finit toujours par tourner quelque
+# part. À créer avant d'activer :
+#
+#   kubectl create secret generic {{ $secret }} -n {{ $root.Release.Namespace }} \
+#     --from-literal=password="$(openssl rand -base64 24)"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $nom }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $nom }}
+    app.kubernetes.io/component: test-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $nom }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $nom }}
+        app.kubernetes.io/component: test-target
+    spec:
+      # PAS de jeton de service : ces cibles n'ont aucune raison de parler à
+      # l'API Kubernetes, et un playbook d'essai qui tournerait dessus non plus.
+      automountServiceAccountToken: false
+      containers:
+        - name: sshd
+          # L'image AVEC Python : Ansible exécute ses modules en Python sur la
+          # machine distante. Celle des tests d'enrôlement en est dépourvue, et
+          # doit le rester — voir `build/cible.Dockerfile`.
+          image: {{ $root.Values.image.registry }}/{{ $cible.image | default $root.Values.testTargets.image }}:{{ $root.Values.image.tag | default $root.Chart.AppVersion }}
+          imagePullPolicy: Always
+          env:
+            - name: CIBLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: {{ $root.Values.testTargets.passwordKey }}
+          ports:
+            - { name: ssh, containerPort: 22 }
+          readinessProbe:
+            tcpSocket: { port: ssh }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $nom }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $nom }}
+    app.kubernetes.io/component: test-target
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $nom }}
+  ports: [{ name: ssh, port: 22, targetPort: ssh }]
+{{- end }}
+{{- end }}

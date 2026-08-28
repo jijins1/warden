@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -31,6 +32,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
+	"github.com/jijins1/warden/internal/server/internal/outbound/grantfile"
 	"github.com/jijins1/warden/internal/server/internal/outbound/keyinventory"
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
@@ -86,7 +88,7 @@ func Run(ctx context.Context, r Role) error {
 	case RoleGit:
 		return runGit(ctx)
 	case RoleController:
-		return fmt.Errorf("rôle %q: pas encore implémenté", r)
+		return runController(ctx)
 	default:
 		return fmt.Errorf("rôle %q: pas encore implémenté", r)
 	}
@@ -129,6 +131,320 @@ func runIngest(ctx context.Context) error {
 	defer fermer()
 
 	return servirIngestion(ctx, adresse, h)
+}
+
+// runController réconcilie l'état de la base sur ce que le cluster montre.
+//
+// C'est la marche 3 de la machine à états du §6.4, et sans elle le produit MENT :
+// un run dont le pod est évincé, tué par l'OOM ou emporté avec son nœud reste
+// « en cours » pour toujours, alors que la question d'audit qui compte — qu'est-ce
+// qui avait déjà été modifié — a une réponse dans le journal d'events.
+//
+// Il ne sert AUCUN port. C'est délibéré : rien ne doit pouvoir le solliciter de
+// l'extérieur, et il n'a rien à répondre à personne.
+//
+// PAS DE LEADER ELECTION à ce stade, alors que l'ADR-0006 la prévoit. Elle ne
+// changerait rien à la correction : la garde `ended_at IS NULL` rend la clôture
+// idempotente, et le ramassage ne touche que des pods déjà terminés. Deux
+// contrôleurs en parallèle feraient donc du travail en double, pas du travail
+// faux — et le Lease s'ajoutera quand le coût du doublon comptera.
+func runController(ctx context.Context) error {
+	dsn, err := databaseURL(EnvDatabaseURL)
+	if err != nil {
+		return err
+	}
+	ns := os.Getenv(EnvPodNamespace)
+	if ns == "" {
+		// Sans namespace, il n'y a rien à observer. Démarrer quand même donnerait
+		// un contrôleur qui tourne, ne réconcilie rien et paraît sain — la pire
+		// des trois issues.
+		return fmt.Errorf("rôle controller : %s est requise", EnvPodNamespace)
+	}
+
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("ouverture du magasin: %w", err)
+	}
+	defer st.Close()
+
+	k8s, err := clientKubernetes()
+	if err != nil {
+		return err
+	}
+	// Les adresses de dispatch et d'ingestion sont exigées par le constructeur de
+	// l'orchestrateur parce qu'un pod LANCÉ sans elles ne saurait qui appeler. Le
+	// contrôleur n'en lance aucun ; les valeurs posées ici ne partent nulle part,
+	// et les inventer serait plus honnête que d'affaiblir un contrôle qui protège
+	// le chemin de lancement.
+	orch, err := orchestrator.New(k8s, orchestrator.Config{
+		Namespace:   ns,
+		DispatchURL: valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid"),
+		IngestURL:   valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid"),
+	})
+	if err != nil {
+		return err
+	}
+
+	rec, err := core.NewReconciler(st, orch)
+	if err != nil {
+		return err
+	}
+
+	// Les DROITS sont réconciliés par le contrôleur, et pas par le rôle `api`.
+	//
+	// C'est le rôle dont le métier est justement de faire correspondre la base à
+	// ce que le monde extérieur dit — ici un fichier plutôt qu'un cluster. Et il
+	// tourne à UN réplica : le mettre dans `api`, qui peut en avoir N, ferait
+	// tourner N réconciliateurs sur le même document.
+	droits := grantfile.New(os.Getenv(EnvGrantsFile))
+
+	// DEUX boucles, DEUX rythmes, et c'est une correction d'un couplage initial.
+	//
+	// Les avoir liés paraissait économe — un seul minuteur, un seul endroit où se
+	// tromper — mais ça mettait deux besoins opposés sur la même horloge :
+	//
+	//   - les PODS coûtent un LIST à l'API Kubernetes à chaque passage, et le
+	//     retard qu'ils bornent est un retard d'AUDIT : un run tué met une minute
+	//     à être clos, ce qui ne gêne personne. On veut pouvoir ralentir.
+	//   - les DROITS coûtent une lecture de fichier et une comparaison de
+	//     chaîne — quasiment rien tant que rien ne change — et le retard qu'ils
+	//     bornent est un retard de SÉCURITÉ : révoquer un accès doit prendre effet
+	//     vite. On veut pouvoir accélérer.
+	//
+	// Sur une horloge commune, accélérer la révocation aurait payé un LIST
+	// Kubernetes toutes les dix secondes pour rien.
+	intervallePods := secondesOuDefaut(EnvReconcileSeconds, core.IntervalleReconciliation)
+	intervalleDroits := secondesOuDefaut(EnvGrantsSeconds, IntervalleDesDroits)
+
+	slog.Info("contrôleur démarré",
+		slog.String("namespace", ns),
+		slog.Duration("intervalle_pods", intervallePods))
+	if droits != nil {
+		slog.Info("droits lus depuis un fichier",
+			slog.String("chemin", droits.Chemin()),
+			slog.Duration("intervalle", intervalleDroits),
+			slog.String("note", "c'est la seule source ; aucune commande ne les modifie"))
+	}
+
+	err = servirTous(ctx,
+		func(ctx context.Context) error {
+			return rec.Boucler(ctx, intervallePods, journaliserBilan)
+		},
+		func(ctx context.Context) error {
+			return boucleDesDroits(ctx, droits, st, intervalleDroits)
+		},
+	)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// IntervalleDesDroits est le rythme de relecture du document de droits.
+//
+// Dix secondes, contre trente pour les pods, et l'écart est délibéré. Un passage
+// à vide ne coûte qu'une lecture de fichier et une comparaison de chaîne — pas
+// de requête, ni à la base ni à Kubernetes — alors que ce qu'il borne est le
+// délai de prise d'effet d'une RÉVOCATION.
+//
+// Le kubelet domine de toute façon : il met quelques dizaines de secondes à
+// republier un ConfigMap modifié. Descendre sous dix secondes n'achèterait donc
+// rien de mesurable.
+const IntervalleDesDroits = 10 * time.Second
+
+// boucleDesDroits relit le document et réconcilie, jusqu'à l'annulation.
+//
+// Sans source configurée, elle attend simplement l'annulation : rendre une
+// erreur ferait tomber le contrôleur entier, alors qu'un déploiement sans
+// document de droits est un déploiement valide — il n'accorde rien.
+func boucleDesDroits(ctx context.Context, source *grantfile.Source, st *store.Store, intervalle time.Duration) error {
+	if source == nil {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if intervalle <= 0 {
+		intervalle = IntervalleDesDroits
+	}
+
+	t := time.NewTicker(intervalle)
+	defer t.Stop()
+
+	for {
+		// Un passage IMMÉDIAT au démarrage : le cas qui compte le plus est le
+		// redémarrage du contrôleur après un changement de droits, où le document
+		// attend déjà d'être appliqué.
+		reconcilierLesDroits(ctx, source, st)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+// journaliserBilan rend un passage lisible sans le noyer.
+//
+// Le passage à vide est le cas NORMAL et il est journalisé en debug : à trente
+// secondes d'intervalle, l'écrire en info remplirait les logs de bruit, et le
+// bruit est ce qui fait qu'on ne voit pas la line qui compte.
+func journaliserBilan(b core.Bilan, err error) {
+	if err != nil {
+		slog.Error("passage de réconciliation en échec",
+			slog.String("error", err.Error()),
+			slog.Int("examinés", b.Examines), slog.Int("clos", b.Clos))
+		return
+	}
+	if b.Clos == 0 && b.Ramasses == 0 {
+		slog.Debug("réconciliation : rien à faire", slog.Int("examinés", b.Examines))
+		return
+	}
+	slog.Info("réconciliation",
+		slog.Int("examinés", b.Examines),
+		slog.Int("clos", b.Clos),
+		slog.Int("ramassés", b.Ramasses))
+}
+
+// secondesDeDeadline lit le plafond de durée d'un run.
+//
+// Une valeur illisible fait ÉCHOUER le démarrage plutôt que retomber sur le
+// défaut : « 30m » écrit là où des secondes sont attendues donnerait
+// silencieusement deux heures, et personne ne le verrait avant d'avoir besoin du
+// plafond — c'est-à-dire quand un run pend.
+func secondesDeDeadline() (int64, error) {
+	brut := os.Getenv(EnvRunDeadlineSeconds)
+	if brut == "" {
+		return 0, nil // l'orchestrateur applique son défaut
+	}
+	n, err := strconv.ParseInt(brut, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s=%q : un nombre de SECONDES strictement positif est attendu",
+			EnvRunDeadlineSeconds, brut)
+	}
+	return n, nil
+}
+
+// secondesOuDefaut lit une durée exprimée en SECONDES.
+//
+// Une valeur illisible est ignorée avec un avertissement plutôt que fatale : ces
+// deux réglages sont des rythmes, et leur défaut est sûr. Refuser de démarrer le
+// contrôleur pour un intervalle mal écrit coûterait plus que ça ne protège — au
+// contraire du plafond de durée d'un run, où un défaut silencieux de deux heures
+// ne se verrait qu'au moment d'en avoir besoin.
+func secondesOuDefaut(nom string, defaut time.Duration) time.Duration {
+	brut := os.Getenv(nom)
+	if brut == "" {
+		return defaut
+	}
+	n, err := strconv.Atoi(brut)
+	if err != nil || n <= 0 {
+		slog.Warn("intervalle illisible, le défaut s'applique",
+			slog.String("variable", nom), slog.String("valeur", brut),
+			slog.Duration("défaut", defaut))
+		return defaut
+	}
+	return time.Duration(n) * time.Second
+}
+
+// dureeDeSession lit la validité d'une session.
+//
+// Une valeur illisible est IGNORÉE plutôt que fatale, contrairement au plafond
+// de durée d'un run : celui-ci protège d'un run qui pend, alors qu'ici le défaut
+// est sûr. Refuser de démarrer le control plane entier pour une variable mal
+// écrite coûterait plus que ça ne protège — mais l'avertissement doit se voir.
+func dureeDeSession() time.Duration {
+	brut := os.Getenv(EnvSessionTTL)
+	if brut == "" {
+		return 0 // le cœur applique son défaut
+	}
+	h, err := strconv.Atoi(brut)
+	if err != nil || h <= 0 {
+		slog.Warn("durée de session illisible, le défaut s'applique",
+			slog.String("variable", EnvSessionTTL), slog.String("valeur", brut),
+			slog.Duration("défaut", core.DureeSession))
+		return 0
+	}
+	return time.Duration(h) * time.Hour
+}
+
+// reconcilierLesDroits applique le document de droits s'il a changé.
+//
+// Adossée au passage du réconciliateur de pods plutôt qu'à sa propre boucle : le
+// rythme est le même, et un second minuteur n'achèterait qu'un second endroit où
+// se tromper d'intervalle.
+//
+// Aucune erreur n'est REMONTÉE : elles sont journalisées et le passage suivant
+// réessaie. Faire échouer la boucle sur un YAML cassé arrêterait aussi la
+// réconciliation des pods, qui n'a rien à voir — et laisserait des runs en vol.
+func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *store.Store) {
+	if source == nil {
+		return
+	}
+
+	doc, change, err := source.Lire()
+	switch {
+	case errors.Is(err, grantfile.ErrAbsent):
+		// NE RIEN FAIRE. Un contrôleur démarré avant que le ConfigMap soit posé
+		// ne doit pas conclure « personne n'a de droit » et tout révoquer.
+		return
+	case err != nil:
+		slog.Error("document de droits illisible",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	case !change:
+		return
+	}
+
+	actuels, err := st.ListGrants(ctx, "")
+	if err != nil {
+		source.Oublier()
+		slog.Error("lecture des droits en échec", slog.String("error", err.Error()))
+		return
+	}
+
+	plan, err := core.PlanifierLesDroits(doc, actuels)
+	if err != nil {
+		// Le document est syntaxiquement lisible mais refusé : document vide,
+		// environnement mal formé, compte vide. C'est une erreur de RÉDACTION, et
+		// elle doit se voir dans les journaux du contrôleur — c'est le seul
+		// endroit où elle apparaîtra, puisque personne ne lance de commande.
+		slog.Error("document de droits refusé",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	}
+	if plan.Vide() {
+		slog.Info("droits inchangés", slog.Int("conformes", plan.Inchanges))
+		return
+	}
+
+	// `parQui` est ZÉRO : personne n'a accordé ces droits à la main. La trace dit
+	// « le document », ce qui est vrai — l'auteur du changement est dans
+	// l'historique git, pas ici.
+	if err := st.AppliquerLePlan(ctx, plan, 0); err != nil {
+		source.Oublier()
+		slog.Error("application des droits en échec",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	}
+
+	for _, c := range plan.Revoquer {
+		slog.Warn("droit révoqué par le document",
+			slog.String("sujet", c.Subject), slog.String("environnement", c.Environment))
+	}
+	for _, c := range plan.Accorder {
+		slog.Warn("droit accordé par le document",
+			slog.String("sujet", c.Subject), slog.String("environnement", c.Environment))
+	}
+	slog.Info("droits réconciliés",
+		slog.Int("accordés", len(plan.Accorder)), slog.Int("révoqués", len(plan.Revoquer)),
+		slog.Int("inchangés", plan.Inchanges))
+}
+
+func valeurOuDefaut(nom, defaut string) string {
+	if v := os.Getenv(nom); v != "" {
+		return v
+	}
+	return defaut
 }
 
 func runAPI(ctx context.Context) error {
@@ -196,6 +512,7 @@ func runAPI(ctx context.Context) error {
 		repo    core.RepoDiffer
 		mirrors core.MirrorRefresher
 		refs    core.RefResolver
+		projet  core.ProjectConfigReader
 		makers  core.RepoMaterializer
 		grants  core.PushGrantIssuer
 		creator core.RunCreator
@@ -213,6 +530,11 @@ func runAPI(ctx context.Context) error {
 			return fmt.Errorf("client du rôle git: %w", err)
 		}
 		repo, mirrors, refs, makers = gc, gc, gc, gc
+		// La configuration de projet suit le MÊME client : elle est lue dans
+		// l'arbre du commit par le rôle `git` (ADR-0009). Sans rôle `git`
+		// configuré, elle reste nil et `core.ProjectConfigFor` rend une
+		// configuration vide — les runs partent comme avant.
+		projet = gc
 
 		// Le frappeur de jetons est construit à part du client HTTP : signer ne
 		// fait AUCUN appel réseau, et les mêler donnerait à une opération
@@ -265,8 +587,18 @@ func runAPI(ctx context.Context) error {
 			if ingestURL == "" {
 				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvIngestRunnerURL)
 			}
+			// Le plafond de durée d'un run vient du DÉPLOIEMENT, faute d'une
+			// configuration projet (ADR-0014). C'est la décision actée n°13 : ce
+			// qui borne un run qui pend même contrôleur mort, donc la seule
+			// protection qui ne dépend d'aucun de nos processus. Absente, la
+			// valeur par défaut de l'orchestrateur s'applique.
+			deadline, err := secondesDeDeadline()
+			if err != nil {
+				return err
+			}
 			orch, err := orchestrator.New(k8s, orchestrator.Config{
 				Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
+				DeadlineSeconds: deadline,
 			})
 			if err != nil {
 				return err
@@ -310,6 +642,10 @@ func runAPI(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("composeur d'ordres: %w", err)
 			}
+			// L'autorisation est revérifiée à la LIVRAISON de la clé, et c'est ce
+			// qui donne un sens à la révocation (§10.3). Sans ce branchement, le
+			// composeur refuserait toute clé — c'est le défaut voulu.
+			ob = ob.AvecDroits(st)
 			// La consigne sert DEUX chemins : le mot de passe d'un enrôlement et
 			// celui d'élévation d'un playbook. Les deux viennent d'un humain et
 			// ne font que passer, d'où le même magasin.
@@ -321,26 +657,49 @@ func runAPI(ctx context.Context) error {
 		}
 	}
 
+	// L'authentification par mot de passe ne demande QUE PostgreSQL : elle est
+	// branchée toujours, sans condition sur le rôle `git` ni sur le cluster.
+	// C'est délibéré — un déploiement dégradé doit rester un déploiement où l'on
+	// s'authentifie, sans quoi la dégradation ouvrirait la porte.
+	auth, err := core.NewAuthenticator(st, st, dureeDeSession())
+	if err != nil {
+		return err
+	}
+
 	server, err := api.New(cfg, api.Deps{
-		Runs:      st,
-		Users:     st,
-		Diffs:     dr,
-		Events:    f,
-		Repo:      repo,
-		Repos:     st,
-		RepoMaker: makers,
-		Creator:   creator,
-		Mirrors:   mirrors,
-		Refs:      refs,
-		Grants:    grants,
-		Starter:   starter,
-		Running:   st,
+		Runs:          st,
+		Users:         st,
+		Auth:          auth,
+		Accounts:      st,
+		Diffs:         dr,
+		Events:        f,
+		Repo:          repo,
+		Repos:         st,
+		RepoMaker:     makers,
+		Creator:       creator,
+		Mirrors:       mirrors,
+		Refs:          refs,
+		ProjectConfig: projet,
+		// Annoncée à la CLI avec son jeton de push (ADR-0028). Vide, la CLI se
+		// rabat sur sa propre variable d'environnement.
+		GitPushURL: os.Getenv(EnvGitClientURL),
+		// Opt-in EXPLICITE, et le défaut tolère : la bascule arrête les runs de
+		// tout dépôt qui n'a pas encore committé son fichier, donc elle doit être
+		// un geste d'exploitant et non un effet de bord de mise à jour.
+		ExigenceConfig: core.ExigenceConfig(os.Getenv(EnvExigerConfig) == "1"),
+		Grants:         grants,
+		Starter:        starter,
+		Running:        st,
 		// Le catalogue et l'inventaire ne demandent que PostgreSQL : ils sont
 		// branchés toujours. Le MAGASIN de clés demande le cluster, donc il
 		// suit la même condition que le démarrage des runs — sans lui, poser
 		// une clé répond 501 et la consulter fonctionne.
-		Keys:     st,
-		Hosts:    st,
+		Keys:  st,
+		Hosts: st,
+		// Les droits par environnement ne demandent que PostgreSQL : branchés
+		// toujours, comme l'authentification. Un déploiement dégradé doit rester
+		// un déploiement où l'autorisation s'applique.
+		Access:   st,
 		KeyStore: keyStore,
 		Stash:    consigne,
 	})
@@ -404,6 +763,8 @@ const (
 	EnvDispatchAddr     = "WARDEN_DISPATCH_ADDR"      // canal de dispatch SSE, servi aux pods runner
 	EnvIngestAddr       = "WARDEN_INGEST_ADDR"        // ingestion des events, servie aux pods runner
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
+	EnvGitClientURL     = "WARDEN_GIT_CLIENT_URL"     // adresse ANNONCÉE à la CLI avec son jeton de push : le port d'ÉCRITURE
+	EnvExigerConfig     = "WARDEN_EXIGER_CONFIG"      // "1" refuse les commits sans .ansibleproxy.yml (ADR-0009)
 	// EnvDispatchRunnerURL est l'adresse du canal telle qu'un POD la joint. Comme
 	// pour git, elle diffère de l'adresse d'écoute : le service écoute dans le
 	// control plane, le pod appelle depuis le cluster.
@@ -413,6 +774,35 @@ const (
 	EnvIngestRunnerURL = "WARDEN_INGEST_RUNNER_URL"
 	EnvPodNamespace    = "WARDEN_POD_NAMESPACE" // namespace où vivent les pods runner
 	EnvRunnerImage     = "WARDEN_RUNNER_IMAGE"  // image du runner, en attendant la configuration projet (ADR-0014)
+
+	// EnvRunDeadlineSeconds borne la durée d'un run, en SECONDES. C'est la
+	// décision actée n°13 : `activeDeadlineSeconds` sur le pod arrête un run qui
+	// pend même si le contrôleur est mort, donc c'est la seule protection qui ne
+	// dépend d'aucun de nos processus. Absente, le défaut de l'orchestrateur
+	// s'applique — deux heures.
+	EnvRunDeadlineSeconds = "WARDEN_RUN_DEADLINE_SECONDS"
+
+	// EnvSessionTTL est la validité d'une session `warden login`, en HEURES.
+	// Absente, le défaut du cœur s'applique — trente jours. Voir
+	// `core.DureeSession` pour l'arbitrage qu'il représente.
+	EnvSessionTTL = "WARDEN_SESSION_TTL_HOURS"
+
+	// EnvReconcileSeconds est le rythme du réconciliateur de PODS, en secondes.
+	// Chaque passage coûte un LIST à l'API Kubernetes ; ce qu'il borne est un
+	// retard d'audit, pas de sécurité.
+	EnvReconcileSeconds = "WARDEN_RECONCILE_SECONDS"
+
+	// EnvGrantsSeconds est le rythme de relecture des DROITS, en secondes.
+	// Distinct du précédent : un passage à vide ne coûte qu'une lecture de
+	// fichier, et ce qu'il borne est le délai de prise d'effet d'une révocation.
+	EnvGrantsSeconds = "WARDEN_GRANTS_SECONDS"
+
+	// EnvGrantsFile est le document des droits par environnement (ADR-0033),
+	// monté depuis un ConfigMap versionné dans le dépôt de déploiement. C'est la
+	// SEULE source : aucune commande ne modifie les droits.
+	//
+	// Absente, le contrôleur ne réconcilie aucun droit — et n'en révoque aucun.
+	EnvGrantsFile = "WARDEN_GRANTS_FILE"
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il

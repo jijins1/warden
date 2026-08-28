@@ -1,0 +1,110 @@
+{{- if .Values.networkPolicy.enabled }}
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ LE FICHIER QUI COMPTE LE PLUS.                                           │
+# │                                                                          │
+# │ Il porte un contrôle que le code NE PEUT PAS porter : le §2 pose qu'un   │
+# │ playbook arbitraire équivaut à une exécution de code dans le pod, donc   │
+# │ ce qui borne ce que ce code peut joindre n'est pas le binaire du runner  │
+# │ — qu'un playbook peut ignorer — mais la politique réseau qui l'entoure.  │
+# │                                                                          │
+# │ À VÉRIFIER PLUTÔT QU'À SUPPOSER : sur un cluster où les NetworkPolicy    │
+# │ sont acceptées mais IGNORÉES par le CNI, tout fonctionnera à l'identique │
+# │ et rien ne sera confiné.                                                 │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Les pods runner : egress OUVERT, ingress fermé.
+#
+# L'egress n'est pas restreint. Un playbook joint n'importe quelle adresse, dans
+# le cluster comme au dehors. C'est un écart assumé : le périmètre du §10.2 doit
+# être posé par run à partir du scope de l'utilisateur, rien ne le calcule, et le
+# développement avance avec l'egress ouvert plutôt qu'avec un produit qui ne
+# joint rien. L'ADR-0020 pose que ce contrôle EST l'autorisation de la v1 : il
+# n'y en a donc plus. À reprendre avant toute production.
+#
+# Le périmètre étroit qui existait — DNS, `git` en lecture seule, dispatch et
+# ingestion — est dans l'historique git, à restaurer tel quel le jour venu. Il
+# n'est PAS une valeur de chart : il n'existe pas encore de CNI capable
+# d'exprimer un périmètre par nom sur ce cluster, et offrir un interrupteur pour
+# une chose qui n'existe pas serait offrir une fausse assurance.
+#
+# La sélection se fait sur les ÉTIQUETTES que l'orchestrateur pose. Un pod qui
+# n'en porterait pas ne serait pas sélectionné — raison pour laquelle une
+# étiquette invalide fait échouer le lancement plutôt que d'être omise.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "warden.fullname" . }}-runner-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "runner" "root" .) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: warden-runner
+
+  # `Egress` est ABSENT de policyTypes : aucune règle de sortie n'est donc
+  # évaluée pour ces pods. C'est la façon la plus courte de dire « tout est
+  # permis », et la plus lisible — une règle 0.0.0.0/0 se confondrait avec un
+  # périmètre qu'on aurait mal écrit.
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+# Le rôle `git` n'accepte QUE ce que sa décomposition en ports prévoit.
+#
+# Sans ingress explicite, n'importe quel pod du cluster joindrait son API interne
+# — celle qui rafraîchit des miroirs et crée des dépôts — avec pour seule
+# barrière le jeton partagé. L'ADR-0024 dit que ce jeton est « la plus interne »
+# de trois couches ; les deux autres sont le port distinct et cette politique.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "warden.fullname" . }}-git-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "git" "root" .) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "warden.selectorLabels" (dict "component" "git") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # L'API interne : le seul rôle `api`, et personne d'autre.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "warden.selectorLabels" (dict "component" "api") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: {{ include "warden.port.gitInternal" . }} }
+
+    # La lecture : les pods runner.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: warden-runner
+      ports:
+        - { protocol: TCP, port: {{ include "warden.port.gitRead" . }} }
+
+    # L'écriture : la CLI, qui vient de l'extérieur du cluster par l'ingress.
+    # Restreindre davantage suppose de connaître d'où entrent les développeurs,
+    # ce qui est une décision de site et non de produit.
+    - ports:
+        - { protocol: TCP, port: {{ include "warden.port.gitPush" . }} }
+---
+# Rien ne joint le contrôleur, et il ne joint que la base et l'API Kubernetes.
+#
+# Il n'a PAS d'egress ouvert, contrairement aux pods runner : il n'exécute aucun
+# code d'utilisateur. L'ingress vide dit ce que la ligne au-dessus affirme.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "warden.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "controller" "root" .) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "warden.selectorLabels" (dict "component" "controller") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress: []
+{{- end }}

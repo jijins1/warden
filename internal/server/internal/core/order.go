@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,9 +32,14 @@ type RunByIDReader interface {
 // commencer la vie du jeton quand le pod le reçoit, et non quand le contrôleur
 // décide qu'il le recevra.
 type OrderBuilder struct {
-	runs    RunByIDReader
-	grants  FetchGrantIssuer
-	keys    KeyIssuer
+	runs   RunByIDReader
+	grants FetchGrantIssuer
+	keys   KeyIssuer
+
+	// droits porte l'autorisation par environnement (§10.2). Nil interdit TOUT :
+	// `VerifierLAcces` refuse quand le magasin manque, parce qu'un contrôle qui
+	// s'efface avec sa dépendance n'est pas un contrôle.
+	droits  EnvironmentGrants
 	gitBase string
 	fetchTL time.Duration
 
@@ -54,6 +60,16 @@ type OrderBuilder struct {
 // `cles` est le CATALOGUE et non l'émetteur : ce qu'un enrôlement pose est la
 // partie PUBLIQUE, et demander sa partie privée pour n'en lire que la moitié
 // ferait passer une opération d'administration par le magasin de secrets.
+// AvecDroits branche l'autorisation par environnement (§10.2).
+//
+// Une option et non un paramètre du constructeur, comme `AvecEnrolement` : les
+// appelants existants continuent de compiler. Sans elle, `cleDAcces` refuse de
+// délivrer la moindre clé — c'est le défaut voulu.
+func (b *OrderBuilder) AvecDroits(droits EnvironmentGrants) *OrderBuilder {
+	b.droits = droits
+	return b
+}
+
 func (b *OrderBuilder) AvecEnrolement(hosts HostCatalog, cles KeyCatalog, consigne SecretStash) *OrderBuilder {
 	b.hosts, b.cles, b.consigne = hosts, cles, consigne
 	return b
@@ -159,6 +175,14 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		}
 	}
 
+	// Les variables du shell, si elles ont été consignées. Même chemin et même
+	// destin que le mot de passe d'élévation : lues à la LIVRAISON, détruites par
+	// leur lecture, jamais écrites en base ni dans le WAL.
+	forward, err := b.variablesTransmises(ctx, run.RunRef)
+	if err != nil {
+		return wire.Order{}, err
+	}
+
 	return wire.Order{
 		RunRef:      run.RunRef,
 		AuditSHA:    run.AuditSHA,
@@ -180,9 +204,51 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		SSHKey:         cle,
 		BecomePassword: become,
 
-		// ForwardEnv reste vide : les variables du shell de l'utilisateur
-		// transitent par la CLI (§5.4), qui ne les envoie pas encore.
+		// Les NOMS ont été filtrés par la composition (§5.4.1) et journalisés à
+		// la création du run ; les VALEURS ne le sont jamais et ne font que
+		// passer.
+		ForwardEnv: forward,
 	}, nil
+}
+
+// variablesTransmises reprend la consigne des valeurs de variables du run.
+//
+// L'absence est un état NORMAL et rend nil sans erreur : la plupart des runs ne
+// transmettent rien, et un `forward_env` vide ne mérite pas de consigne.
+//
+// La lecture DÉTRUIT la valeur, comme pour le mot de passe d'élévation. C'est ce
+// qui fait qu'un rejeu de livraison ne retrouve pas les variables — et c'est
+// voulu : elles viennent du shell de l'appelant, qui est le seul à pouvoir les
+// redonner.
+func (b *OrderBuilder) variablesTransmises(ctx context.Context, runRef string) (map[string]wire.Secret, error) {
+	if b.consigne == nil {
+		return nil, nil
+	}
+
+	brut, err := b.consigne.Take(ctx, CleForwardEnv(runRef))
+	if errors.Is(err, ErrNoStash) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("variables transmises du run %s : %w", runRef, err)
+	}
+
+	var valeurs map[string]string
+	if err := json.Unmarshal(brut, &valeurs); err != nil {
+		// Le message ne cite JAMAIS le contenu : il porte des valeurs sensibles,
+		// et une erreur de décodage est le premier endroit où on les recopierait
+		// dans un journal sans y penser.
+		return nil, fmt.Errorf("variables transmises du run %s : consigne illisible", runRef)
+	}
+	if len(valeurs) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]wire.Secret, len(valeurs))
+	for nom, v := range valeurs {
+		out[nom] = wire.Secret(v)
+	}
+	return out, nil
 }
 
 // cleDAcces émet la clé de l'environnement du run, ou rien.
@@ -194,6 +260,15 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 func (b *OrderBuilder) cleDAcces(ctx context.Context, run Run) (wire.Secret, error) {
 	if b.keys == nil {
 		return nil, nil
+	}
+
+	// LE DROIT est revérifié ICI, à la livraison, alors que `POST /runs` l'a déjà
+	// contrôlé à la création. Ce n'est pas une redondance : c'est ce qui donne un
+	// sens à la RÉVOCATION. Sans ce second appel, retirer un droit ne ferait rien
+	// aux runs déjà enregistrés, et le §10.3 exige que le changement prenne
+	// effet. C'est aussi le dernier point avant que la clé sorte.
+	if err := VerifierLAcces(ctx, b.droits, run.UserID, run.Environment); err != nil {
+		return nil, fmt.Errorf("clé d'accès du run %s : %w", run.RunRef, err)
 	}
 
 	// `hostScope` est nil : le périmètre par utilisateur du §10.2 n'existe pas.

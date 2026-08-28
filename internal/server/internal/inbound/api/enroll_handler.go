@@ -132,6 +132,10 @@ func (a *Server) HandleCreateEnrollment(w http.ResponseWriter, r *http.Request) 
 		Kind:         core.RunEnrollment,
 		EnrollTarget: &cible,
 	})
+	if errors.Is(err, core.ErrRunRefExists) {
+		a.enrolementDejaConnu(w, r, p)
+		return
+	}
 	if err != nil {
 		slog.Error("création du run d'enrôlement en échec",
 			slog.String("run_ref", p.RunRef), slog.String("error", err.Error()))
@@ -166,4 +170,80 @@ func (a *Server) HandleCreateEnrollment(w http.ResponseWriter, r *http.Request) 
 
 	w.WriteHeader(http.StatusCreated)
 	ecrireJSON(w, enrollCreated{RunRef: p.RunRef, Pod: pod})
+}
+
+// enrolementDejaConnu répond quand le `run_ref` soumis existe déjà.
+//
+// La CLI réutilise le même identifiant pour REPRENDRE un enrôlement interrompu,
+// et l'étape 1 de la création est idempotente exprès pour cela. L'étape 2 ne
+// peut pas l'être : un run est un enregistrement d'AUDIT, et le recréer sous le
+// même identifiant effacerait le premier — ce que le produit existe précisément
+// pour empêcher.
+//
+// Reste donc à dire ce qu'est devenu le run, et quoi faire. C'est tout l'écart
+// entre un 500 « could not record the enrollment », qui parle de PostgreSQL, et
+// une réponse dont l'utilisateur peut se servir.
+func (a *Server) enrolementDejaConnu(w http.ResponseWriter, r *http.Request, p enrollPayload) {
+	ctx := r.Context()
+
+	// La consigne posée à l'étape 1 n'a plus de destinataire : aucun pod ne
+	// viendra la lire. La CONSOMMER la détruit — la laisser vivre laisserait
+	// dormir le mot de passe de quelqu'un dans un Secret que rien ne relira.
+	if _, err := a.deps.Stash.Take(ctx, p.RunRef); err != nil && !errors.Is(err, core.ErrNoStash) {
+		slog.Warn("consigne d'un enrôlement refusé non reprise",
+			slog.String("run_ref", p.RunRef), slog.String("error", err.Error()))
+	}
+
+	refuser := func(message string) {
+		http.Error(w, message, http.StatusConflict)
+	}
+
+	// Le message générique, utilisé chaque fois qu'on ne peut pas DÉCRIRE le run
+	// sans risque : illisible, ou appartenant à quelqu'un d'autre. Décrire le run
+	// d'autrui ferait de cet endpoint un oracle, ce que `requireRunAccess` refuse
+	// déjà ailleurs pour la même raison.
+	const generique = "run_ref is already in use: start a fresh enrollment without --run-ref"
+
+	existant, err := a.deps.Runs.RunByRef(ctx, p.RunRef)
+	if err != nil {
+		refuser(generique)
+		return
+	}
+	if user := ContextUser(ctx); user == nil || existant.UserID != user.ID {
+		refuser(generique)
+		return
+	}
+	if existant.Kind != core.RunEnrollment {
+		refuser(generique)
+		return
+	}
+
+	if existant.State == core.RunRunning {
+		refuser("enrollment " + p.RunRef + " is already running: follow it instead of starting it again")
+		return
+	}
+	if existant.State != core.RunSucceeded {
+		refuser("enrollment " + p.RunRef + " already ended (" + string(existant.State) +
+			"): start a fresh enrollment without --run-ref")
+		return
+	}
+
+	// Le cas qui a motivé tout ceci : l'enrôlement a RÉUSSI, donc la clé est
+	// posée sur la machine, et seule la déclaration a été refusée. Renvoyer
+	// « déjà utilisé » ferait recommencer un travail déjà fait ; ce qu'il faut
+	// dire est qu'il ne reste que l'inventaire.
+	hote := p.Host
+	if existant.EnrollTarget != nil {
+		hote = existant.EnrollTarget.Host
+	}
+	if a.deps.Hosts != nil {
+		if _, err := a.deps.Hosts.HostByName(ctx, existant.Environment, hote); err == nil {
+			refuser("enrollment " + p.RunRef + " already completed and " + hote +
+				" is declared: start a fresh enrollment without --run-ref")
+			return
+		}
+	}
+	refuser("enrollment " + p.RunRef + " already completed: the key is installed on " + hote +
+		", only the inventory entry is missing. Declare it with `warden host declare`, " +
+		"or start a fresh enrollment without --run-ref")
 }

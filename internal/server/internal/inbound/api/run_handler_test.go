@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,6 +81,13 @@ func monterEcriture(t *testing.T) (*Server, *gitFactice, *creatorFactice, *frapp
 			Name: "depot", RemoteURL: "https://forge.invalid/x.git", MainlineRef: "refs/heads/main",
 		}}},
 		Creator: c, Mirrors: g, Refs: g, Grants: f,
+		// Alice (1) et Bob (2) ont tous deux droit à `prod` : ces tests portent
+		// sur le commit d'audit et le démarrage, pas sur l'autorisation, qui a
+		// son propre fichier. Sans ce port, ils échoueraient tous en 403 — le
+		// refus par défaut faisant exactement son travail.
+		Access: droitsFactices{
+			"1/prod": {}, "2/prod": {},
+		},
 	})
 	if err != nil {
 		t.Fatalf("api.New : %v", err)
@@ -355,5 +363,90 @@ func TestSansLanceurLeRunEstEnregistreSansDemarrer(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	if out.Pod != "" {
 		t.Errorf("un pod est annoncé sans lanceur : %q", out.Pod)
+	}
+}
+
+// droitsFactices double le magasin des droits, indexé par "userID/environnement".
+type droitsFactices map[string]struct{}
+
+func (d droitsFactices) PeutAtteindre(_ context.Context, userID int64, env string) (bool, error) {
+	_, ok := d[fmt.Sprintf("%d/%s", userID, env)]
+	return ok, nil
+}
+
+func (d droitsFactices) ListGrants(context.Context, string) ([]core.EnvironmentGrant, error) {
+	return nil, nil
+}
+
+func (d droitsFactices) Grant(context.Context, string, string, int64) (core.EnvironmentGrant, error) {
+	return core.EnvironmentGrant{}, nil
+}
+
+func (d droitsFactices) Revoke(context.Context, string, string) error { return nil }
+
+func (d droitsFactices) AppliquerLePlan(context.Context, core.GrantPlan, int64) error { return nil }
+
+// --- l'autorisation par environnement (§10.2) ---
+
+// LE test du contrôle. Sans droit, le run est refusé AVANT tout effet : rien
+// n'est créé, et surtout la clé de l'environnement n'est jamais délivrée.
+func TestUnRunSurUnEnvironnementInterditEstRefuse(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot",`+
+		`"environment":"interdit","playbook":"site.yml","base_sha":"`+shaMain+`"}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("statut %d, attendu 403 : %s", w.Code, w.Body.String())
+	}
+	// Le message NOMME l'environnement : sans lui, l'utilisateur cherche une
+	// faute de frappe au lieu de demander un accès.
+	if !strings.Contains(w.Body.String(), "interdit") {
+		t.Errorf("le message ne nomme pas l'environnement : %s", w.Body.String())
+	}
+	if len(c.recus) != 0 {
+		t.Errorf("un run a été créé malgré le refus : %+v", c.recus)
+	}
+}
+
+// Le refus précède les EFFETS. Un run refusé ne doit rien avoir remué — ni
+// rafraîchi le miroir, ni consigné de mot de passe d'élévation.
+func TestUnRunRefuseNaRienRemue(t *testing.T) {
+	s, g, _, _ := monterEcriture(t)
+
+	posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot",`+
+		`"environment":"interdit","playbook":"site.yml","base_sha":"`+shaMain+`"}`)
+
+	// La ref d'audit n'a même pas été RÉSOLUE : le refus précède toute lecture
+	// du dépôt, donc un run refusé n'a rien remué.
+	if len(g.refsDemandees) != 0 {
+		t.Errorf("le dépôt a été interrogé pour un run refusé : %v", g.refsDemandees)
+	}
+}
+
+// Le droit d'Alice ne vaut pas pour Bob : le contrôle lit bien l'utilisateur
+// AUTHENTIFIÉ, pas quelque chose du corps de la requête.
+func TestLeDroitEstLuSurLAppelantAuthentifie(t *testing.T) {
+	s, err := New(&Config{Addr: "127.0.0.1:0"}, Deps{
+		Runs: stubPort{}, Users: stubPort{}, Diffs: stubPort{}, Events: stubPort{},
+		Repos: &magasinFactice{repos: []core.Repo{{
+			Name: "depot", RemoteURL: "https://forge.invalid/x.git", MainlineRef: "refs/heads/main",
+		}}},
+		Creator: &creatorFactice{}, Mirrors: &gitFactice{mainline: shaMain},
+		Refs: &gitFactice{parRef: map[string]string{
+			core.AuditRefFor(2, "01JZQ000000000000000000BCD"): shaBob,
+		}},
+		Grants: &frappeurFactice{},
+		Access: droitsFactices{"1/prod": {}}, // Alice seule
+	})
+	if err != nil {
+		t.Fatalf("api.New : %v", err)
+	}
+
+	w := posterRun(t, s, utilisateurNormal(), `{"run_ref":"01JZQ000000000000000000BCD","repo":"depot",`+
+		`"environment":"prod","playbook":"site.yml","base_sha":"`+shaMain+`"}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("statut %d, attendu 403 : Bob a utilisé le droit d'Alice", w.Code)
 	}
 }

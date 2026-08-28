@@ -55,10 +55,16 @@
 // adresse figurant dans la requête, et l'exposer à un pod runner donnerait à du
 // code arbitraire un moyen d'émettre des requêtes depuis le détenteur du volume.
 //
-// Les deux chemins sont câblés. Ce qui manque est ailleurs : le CLAIM, qui doit
-// créer la ref d'espace de noms du run et frapper son jeton de lecture, vit dans
-// le contrôleur et reste à écrire (§8.4). `CreateRunNamespace` et
-// `IssueFetchGrant` existent et n'ont donc pas encore d'appelant.
+// Les deux chemins sont câblés, et le CLAIM qui les emploie l'est aussi. Il ne
+// vit PAS dans le contrôleur, contrairement à ce que le §8.4 laissait attendre,
+// mais dans le rôle `api` : c'est `POST /runs` qui démarre un run, donc c'est là
+// que la ref d'espace de noms se crée et que le jeton de lecture se frappe.
+//
+//   - `CreateRunNamespace` est appelée par `core.RunStarter` (`core/start.go`),
+//     avant le lancement du pod ;
+//   - `IssueFetchGrant` l'est par `core.OrderBuilder` (`core/order.go`), au
+//     moment de composer l'ordre — donc À LA LIVRAISON et jamais avant, ce qui
+//     est la propriété que l'ADR-0018 achète.
 //
 // AVERTISSEMENT sur la propriété d'isolation, tranché par l'ADR-0026 qui amende
 // l'ADR-0007 sur ce point. L'ADR-0007 fait reposer la

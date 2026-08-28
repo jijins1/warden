@@ -43,6 +43,10 @@ d'implémentation prises en cours de route.
 | [0028](0028-jeton-de-push-auto-porteur.md) | Les jetons git portent leur propre portée signée ; le serveur écrit le miroir de la principale | Accepted |
 | [0029](0029-remontee-devents-du-runner.md) | Remontée d'events du runner : un seul message montant, qui clôt aussi le run | Accepted |
 | [0030](0030-enrolement-des-machines.md) | Enrôlement des machines : deux modes, deux magasins, et l'egress qu'on a ouvert | Accepted |
+| [0031](0031-reconciliation-des-runs-tues.md) | Réconcilier les runs tués : qui a le droit de prononcer une issue | Accepted |
+| [0032](0032-comptes-locaux-et-sessions.md) | Comptes locaux et sessions : une identité vérifiée, en attendant OIDC | Accepted |
+| [0033](0033-droits-par-environnement.md) | Droits par environnement : la moitié de l'autorisation qui ne dépend pas du réseau | Accepted |
+| [0034](0034-schema-du-fichier-de-projet.md) | Schéma de `.ansibleproxy.yml` : substitution fermée, noms réservés, et ce que l'allowlist protège vraiment | Accepted |
 
 ## Convention
 
