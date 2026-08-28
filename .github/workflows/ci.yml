@@ -126,3 +126,42 @@ jobs:
 
       - name: go test -tags=integration
         run: go test -race -tags=integration ./...
+
+  web:
+    name: Interface — lint, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Un job à part et non une étape des autres : le front n'a aucune dépendance
+    # sur Go, et les mêler ferait attendre un build Angular à qui ne touche que
+    # le control plane. Le `paths-filter` viendra quand le temps de CI le
+    # justifiera ; à ce stade, un job qui tourne pour rien coûte moins cher qu'un
+    # filtre qui laisse passer une régression.
+    defaults:
+      run:
+        working-directory: web/ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # La version vient de `.nvmrc` : une seule source de vérité, comme le
+          # job Go la lit depuis `go.mod`.
+          node-version-file: web/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+
+      # `ci` et non `install` : il installe EXACTEMENT le lockfile et échoue s'il
+      # a dérivé, là où `install` le réécrirait en silence.
+      - name: Installation
+        run: npm ci
+
+      - name: Lint
+        run: npx ng lint
+
+      - name: Tests
+        run: npx ng test --watch=false
+
+      - name: Build de production
+        run: npx ng build

@@ -1,0 +1,51 @@
+@use '@angular/material' as mat;
+
+// Polices AUTO-HÉBERGÉES, jamais un CDN. warden est un control plane : il se
+// déploie en réseau restreint, et une interface qui exige `fonts.googleapis.com`
+// pour s'afficher n'y rend rien. C'est aussi ce qui permet une CSP sans
+// `font-src` tiers.
+@use '@fontsource-variable/inter/index.css' as inter-font;
+@use '@fontsource-variable/jetbrains-mono/index.css' as mono-font;
+
+@use './styles/tokens';
+
+html {
+  height: 100%;
+
+  @include mat.theme(
+    (
+      color: (
+        primary: mat.$violet-palette,
+        tertiary: mat.$blue-palette,
+      ),
+      typography: (
+        plain-family: 'Inter Variable',
+        brand-family: 'Inter Variable',
+      ),
+      // −2 et non le défaut. Le volume d'events d'un run n'est PAS mesuré et le
+      // suiveur lit par lots de 500 : une table en densité par défaut rendrait
+      // un vrai run illisible. Le compact est le cas nominal, pas une option.
+      density: -2,
+    )
+  );
+}
+
+body {
+  // Le sombre suit le système par défaut ; `data-theme` sur <html> tranche.
+  color-scheme: light dark;
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  font-family: var(--w-sans);
+  margin: 0;
+  height: 100%;
+}
+
+// Tout identifiant se lit en mono avec des chiffres tabulaires : les durées et
+// les numéros de tâche se PARCOURENT en colonne, et des chiffres proportionnels
+// rendent la colonne irrégulière, ce qui défait le parcours.
+.w-mono {
+  font-family: var(--w-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
