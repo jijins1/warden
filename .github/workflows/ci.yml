@@ -165,3 +165,118 @@ jobs:
 
       - name: Build de production
         run: npx ng build
+
+  web-image:
+    name: Interface — image et en-têtes servis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Un job SÉPARÉ de `web`, et pas une étape de plus : celui-ci n'exerce pas
+    # le code mais l'ARTEFACT — le Dockerfile, la configuration nginx et ce que
+    # le serveur répond réellement. Deux natures de panne, deux verdicts.
+    #
+    # Il existe parce que la phase 7 a rendu deux défauts qu'aucune relecture
+    # n'avait vus : des en-têtes de sécurité qui disparaissaient sur certains
+    # chemins, et un `Cache-Control` émis deux fois. Les deux se voyaient en
+    # trente secondes de `curl`, et en aucun temps de lecture.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construction de l'image
+        run: docker build -f build/ui.Dockerfile -t warden-ui:ci .
+
+      - name: Démarrage
+        run: |
+          docker run -d --name ui -p 18080:8080 warden-ui:ci
+          for _ in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:18080/ && exit 0
+            sleep 1
+          done
+          echo "::error::l'interface n'a pas répondu en 30 s"
+          docker logs ui
+          exit 1
+
+      # LE test du repli SPA. `/runs/01J…` n'a aucun fichier derrière : sans
+      # `try_files`, nginx répond 404 et recharger un lien profond casse — donc
+      # la fonction première de l'interface, et la raison d'être de
+      # `GET /runs/{run_ref}`.
+      - name: Un lien profond rechargé sert l'application
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18080/runs/01JBQ7X4M2K9WPZ3)
+          if [ "$code" != "200" ]; then
+            echo "::error::lien profond = HTTP $code, attendu 200 (repli SPA rompu)"
+            exit 1
+          fi
+
+      # `add_header` cesse d'être hérité dès qu'un bloc enfant en déclare UN
+      # seul. Poser un `Cache-Control` dans une `location` fait donc tomber
+      # silencieusement tous les autres en-têtes. C'est exactement ce qui est
+      # arrivé, sur `/index.html` uniquement — d'où la vérification sur CHAQUE
+      # chemin plutôt que sur la racine.
+      - name: Les en-têtes de sécurité sont sur tous les chemins
+        run: |
+          echec=0
+          for chemin in / /runs/01JBQ7X4M2 /index.html /config.json; do
+            entetes=$(curl -sI "http://localhost:18080$chemin")
+            for attendu in \
+              'X-Content-Type-Options' \
+              'X-Frame-Options' \
+              'Referrer-Policy' \
+              'Cross-Origin-Opener-Policy' \
+              'Content-Security-Policy'
+            do
+              if ! printf '%s' "$entetes" | grep -qi "^$attendu:"; then
+                echo "::error::$attendu absent de $chemin"
+                echec=1
+              fi
+            done
+          done
+          exit $echec
+
+      # Deux valeurs pour une même directive laissent le cache choisir. C'est
+      # arrivé sur les assets, où `expires` et un `add_header` en émettaient
+      # chacun un.
+      - name: Un seul Cache-Control par réponse
+        run: |
+          asset=$(curl -s http://localhost:18080/ | grep -oE 'main-[A-Za-z0-9]+\.js' | head -1)
+          echec=0
+          for chemin in / /index.html /config.json "/$asset"; do
+            n=$(curl -sI "http://localhost:18080$chemin" | grep -ci '^Cache-Control:')
+            if [ "$n" != "1" ]; then
+              echo "::error::$chemin porte $n en-têtes Cache-Control, attendu 1"
+              echec=1
+            fi
+          done
+          exit $echec
+
+      # `script-src` sans exception est la propriété qui compte : c'est là que
+      # l'XSS atterrit. Le build désactive l'inlining du CSS critique pour
+      # l'obtenir, et cette optimisation se réactiverait sans bruit.
+      - name: script-src ne tolère aucun inline
+        run: |
+          csp=$(curl -sI http://localhost:18080/ | grep -i '^Content-Security-Policy:')
+          if printf '%s' "$csp" | grep -qE "script-src[^;]*unsafe-inline"; then
+            echo "::error::script-src tolère 'unsafe-inline'"
+            echo "$csp"
+            exit 1
+          fi
+          if printf '%s' "$csp" | grep -qE "script-src[^;]*unsafe-eval"; then
+            echo "::error::script-src tolère 'unsafe-eval'"
+            exit 1
+          fi
+
+      # warden est un control plane : il se déploie en réseau restreint. Une
+      # interface qui exige un CDN pour s'afficher n'y rend rien, et le
+      # schematic Material remet ces liens à chaque `ng add`.
+      - name: Aucune dépendance réseau tierce
+        run: |
+          if docker run --rm --entrypoint sh warden-ui:ci -c \
+             "grep -rlE 'fonts\.(googleapis|gstatic)\.com' /usr/share/nginx/html || true" \
+             | grep -q .; then
+            echo "::error::le bundle référence un CDN de polices"
+            exit 1
+          fi
+
+      - name: Arrêt
+        if: always()
+        run: docker rm -f ui || true
