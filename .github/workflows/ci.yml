@@ -277,6 +277,13 @@ jobs:
             exit 1
           fi
 
+      - name: Push de l'image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag warden-ui:ci gitea.ruokki.ovh/ruokki/warden-ui:dev
+          echo "${{ secrets.GITEA_TOKEN }}" | docker login -u ruokki --password-stdin gitea.ruokki.ovh
+          docker push gitea.ruokki.ovh/ruokki/warden-ui:dev
+
       - name: Arrêt
         if: always()
         run: docker rm -f ui || true
