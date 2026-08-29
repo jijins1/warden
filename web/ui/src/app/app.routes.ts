@@ -29,6 +29,18 @@ export const routes: Routes = [
         loadComponent: () => import('./features/runs/run-detail').then((m) => m.RunDetail),
       },
       {
+        // Deux chemins, un composant : sans machine on saisit un nom, avec on
+        // voit ses runs. Séparer en deux écrans dupliquerait le formulaire.
+        path: 'hosts',
+        title: 'Runs by machine — warden',
+        loadComponent: () => import('./features/hosts/host-runs').then((m) => m.HostRuns),
+      },
+      {
+        path: 'hosts/:host',
+        title: 'Runs by machine — warden',
+        loadComponent: () => import('./features/hosts/host-runs').then((m) => m.HostRuns),
+      },
+      {
         path: 'account',
         title: 'Account — warden',
         loadComponent: () => import('./features/account/account').then((m) => m.Account),

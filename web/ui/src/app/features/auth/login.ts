@@ -31,6 +31,17 @@ export class Login {
   protected readonly enCours = signal(false);
   protected readonly erreur = signal<string | null>(null);
 
+  /**
+   * Pourquoi on se retrouve ici.
+   *
+   * Après un changement de mot de passe, la déconnexion est VOULUE et non un
+   * incident : le dire évite de faire chercher une panne à quelqu'un qui vient
+   * d'agir correctement.
+   */
+  protected readonly motDePasseChange = signal(
+    new URLSearchParams(location.search).get('raison') === 'password-changed',
+  );
+
   /** Où revenir après connexion, posé par `authGuard`. */
   protected readonly retour = signal(
     new URLSearchParams(location.search).get('retour') ?? '/',

@@ -67,6 +67,33 @@ export class AuthService {
     return moi;
   }
 
+  /**
+   * Change le mot de passe, et DÉCONNECTE.
+   *
+   * Le serveur révoque toutes les sessions du compte dans la même transaction —
+   * y compris celle qui fait la demande. Ce n'est pas un effet de bord à
+   * corriger : changer son mot de passe parce qu'on le croit compromis doit
+   * couper les sessions ouvertes ailleurs, sans quoi le changement ne protège de
+   * rien. L'état local tombe donc avec, plutôt que de laisser l'interface
+   * découvrir des 401 à la requête suivante.
+   */
+  async changerMotDePasse(actuel: string, nouveau: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.#http.post(
+          `${this.#base}/auth/password`,
+          { current_password: actuel, new_password: nouveau },
+          { responseType: 'text' },
+        ),
+      );
+    } finally {
+      // Dans le `finally` : sur un 401 comme sur un succès, la session courante
+      // peut être morte. Ne rien faire en cas d'échec laisserait une interface
+      // qui se croit connectée alors qu'elle ne l'est plus.
+      this.#utilisateur.set(null);
+    }
+  }
+
   /** Révoque la session. Le serveur expire aussi le cookie. */
   async deconnexion(): Promise<void> {
     try {

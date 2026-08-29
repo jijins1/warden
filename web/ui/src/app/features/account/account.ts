@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { DatePipe } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
 import { AuthService } from '../../core/auth/auth.service';
+import { ChangePassword } from './change-password';
 
 /**
  * Ce que le SERVEUR dit de l'appelant.
@@ -12,7 +13,7 @@ import { AuthService } from '../../core/auth/auth.service';
  */
 @Component({
   selector: 'w-account',
-  imports: [DatePipe, MatIconModule],
+  imports: [DatePipe, MatIconModule, ChangePassword],
   templateUrl: './account.html',
   styleUrl: './account.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

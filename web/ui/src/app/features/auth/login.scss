@@ -47,3 +47,18 @@ h1 {
     height: 18px;
   }
 }
+
+.avis {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-2);
+  margin: 0 0 var(--w-gap-2);
+  padding: var(--w-gap-2) var(--w-gap-3);
+  border: 1px solid var(--w-ok-br);
+  border-radius: var(--w-radius-md);
+  background: var(--w-ok-bg);
+  color: var(--w-ok);
+  font-size: 13px;
+
+  mat-icon { flex: none; font-size: 18px; width: 18px; height: 18px; }
+}

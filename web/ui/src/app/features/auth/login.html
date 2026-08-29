@@ -3,6 +3,13 @@
     <h1>warden</h1>
     <p class="sous-titre">Sign in to read your runs.</p>
 
+    @if (motDePasseChange()) {
+      <p class="avis" role="status">
+        <mat-icon>check_circle</mat-icon>
+        <span>Password changed. Sign in again with the new one.</span>
+      </p>
+    }
+
     <mat-form-field appearance="outline">
       <mat-label>Subject</mat-label>
       <input matInput formControlName="subject" autocomplete="username" />

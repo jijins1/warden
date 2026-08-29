@@ -1,3 +1,8 @@
+@use '../../../styles/table' as t;
+
+@include t.table-de-runs(108px minmax(160px, 1fr) 108px minmax(190px, auto) 82px 84px 66px);
+@include t.encarts;
+
 .entete {
   margin-bottom: var(--w-gap-4);
 }
@@ -53,64 +58,6 @@ button.actif { background: var(--w-primary-bg); }
 .espace { flex: 1; }
 .compte { font-size: 11.5px; color: var(--mat-sys-on-surface-variant); }
 
-.table {
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: var(--w-radius-lg);
-  overflow: hidden;
-  background: var(--mat-sys-surface-container-low);
-}
-
-.ligne {
-  display: grid;
-  grid-template-columns: 108px minmax(160px, 1fr) 108px minmax(190px, auto) 82px 84px 66px;
-  align-items: center;
-  gap: var(--w-gap-3);
-  padding: 0 var(--w-gap-3);
-  min-height: var(--w-row);
-  border-bottom: 1px solid var(--mat-sys-outline-variant);
-  text-decoration: none;
-  color: inherit;
-  font-size: 12.5px;
-
-  &:last-child { border-bottom: none; }
-}
-
-a.ligne:hover { background: var(--mat-sys-surface-container-high); }
-
-.entete-table {
-  min-height: 32px;
-  background: var(--mat-sys-surface-container);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--mat-sys-on-surface-variant);
-}
-
-.droite { text-align: right; }
-.attenue { color: var(--mat-sys-on-surface-variant); }
-// Zéro s'efface pour qu'un non-zéro accroche l'œil : `changed` est la réponse à
-// la seule question qui compte après un run.
-.zero { color: var(--mat-sys-outline); font-weight: 400; }
-.ref { overflow: hidden; text-overflow: ellipsis; }
-
-.playbook {
-  display: flex;
-  align-items: center;
-  gap: var(--w-gap-2);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.secrets {
-  flex: none;
-  font-size: 15px;
-  width: 15px;
-  height: 15px;
-  color: var(--w-changed);
-}
-
 .pagination {
   display: flex;
   justify-content: center;
@@ -122,27 +69,3 @@ a.ligne:hover { background: var(--mat-sys-surface-container-high); }
   color: var(--mat-sys-outline);
 }
 
-.erreur {
-  display: flex;
-  align-items: center;
-  gap: var(--w-gap-2);
-  padding: var(--w-gap-2) var(--w-gap-3);
-  border: 1px solid var(--w-failed-br);
-  border-radius: var(--w-radius-md);
-  background: var(--w-failed-bg);
-  color: var(--w-failed);
-  font-size: 13px;
-
-  mat-icon { font-size: 18px; width: 18px; height: 18px; }
-}
-
-.vide {
-  padding: var(--w-gap-5);
-  border: 1px dashed var(--mat-sys-outline-variant);
-  border-radius: var(--w-radius-lg);
-  text-align: center;
-  color: var(--mat-sys-on-surface-variant);
-  font-size: 13px;
-
-  code { font-family: var(--w-mono); font-size: 12px; }
-}

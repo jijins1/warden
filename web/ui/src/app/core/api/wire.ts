@@ -88,6 +88,21 @@ export interface RunListResult {
   NextCursor: string;
 }
 
+/**
+ * `GET /hosts/{host}/runs` — un TABLEAU nu, pas une page.
+ *
+ * Ni curseur ni total : le serveur plafonne à 500 lignes et laisse resserrer par
+ * `since`/`until`. La vue traverse les runs, donc elle est filtrée en Go et non
+ * en SQL — mais elle reste restreinte à l'appelant, comme la liste.
+ */
+export type RunsParMachine = RunListItem[];
+
+/** `POST /auth/password` — api/auth_handler.go. */
+export interface ChangementMotDePasse {
+  current_password: string;
+  new_password: string;
+}
+
 /** `GET /auth/whoami` — api/auth_handler.go. */
 export interface Whoami {
   subject: string;
