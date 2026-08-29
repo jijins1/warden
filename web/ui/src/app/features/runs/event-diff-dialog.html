@@ -1,0 +1,40 @@
+<h2 mat-dialog-title>
+  Diff — event <span class="w-mono">{{ donnees.seq }}</span>
+</h2>
+
+<mat-dialog-content>
+  <p class="contexte">
+    @if (donnees.tache) { <strong>{{ donnees.tache }}</strong> }
+    @if (donnees.hote) { on <span class="w-mono">{{ donnees.hote }}</span> }
+  </p>
+
+  <!-- ADR-0017 : la substitution masque les valeurs injectées, et le run signale
+       quand elle a échoué. Le rappel est ici parce que c'est le seul écran du
+       produit qui affiche du contenu de machine. -->
+  <p class="garde">
+    <mat-icon>visibility_off</mat-icon>
+    <span>Module output. Redacted server-side, but treat it as sensitive.</span>
+  </p>
+
+  @if (chargement()) {
+    <mat-progress-bar mode="indeterminate" />
+  }
+
+  @if (erreur(); as message) {
+    <p class="erreur" role="alert">{{ message }}</p>
+  }
+
+  @if (vide()) {
+    <p class="rien">This task produced no diff.</p>
+  }
+
+  @if (texte(); as t) {
+    <!-- Interpolation, jamais `innerHTML` : le contenu vient d'une machine
+         auditée et n'est pas de confiance. -->
+    <pre class="charge"><code>{{ t }}</code></pre>
+  }
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button mat-button mat-dialog-close>Close</button>
+</mat-dialog-actions>

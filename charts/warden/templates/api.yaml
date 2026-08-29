@@ -33,6 +33,17 @@ spec:
                 secretKeyRef:
                   name: {{ include "warden.databaseSecret" . }}
                   key: {{ .Values.database.key }}
+            # L'allowlist d'origines navigateur (ADR-0035).
+            #
+            # Dérivée de `ingress.ui.host` par le MÊME helper que le
+            # `connect-src` de la CSP : c'est la décision centrale de cet ADR —
+            # une seule liste, consommée par le CORS et par `CheckOrigin` du
+            # WebSocket, pour qu'on ne puisse pas durcir l'un en oubliant
+            # l'autre. Vide, aucun navigateur n'est servi et la CLI continue.
+            {{- with include "warden.uiOrigin" . }}
+            - name: WARDEN_UI_ORIGINS
+              value: {{ . | quote }}
+            {{- end }}
             - name: WARDEN_API_ADDR
               value: ":{{ include "warden.port.api" . }}"
             - name: WARDEN_DISPATCH_ADDR

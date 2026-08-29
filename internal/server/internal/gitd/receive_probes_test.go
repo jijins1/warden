@@ -119,6 +119,26 @@ func writeHook(t *testing.T, body string) string {
 //
 // It returns two sets on purpose: what is durably in the store, and what is
 // sitting in an incoming-* directory. Probe A2 turns on the difference.
+// apparus rend les entrées présentes dans `apres` et absentes d'`avant`.
+//
+// Les disparitions sont IGNORÉES délibérément : elles ne peuvent pas témoigner
+// qu'un objet a survécu, et git en produit de lui-même — un `gc --auto` se
+// détache en arrière-plan par défaut et peut empaqueter des objets épars entre
+// deux relevés.
+func apparus(avant, apres []string) []string {
+	connus := make(map[string]struct{}, len(avant))
+	for _, f := range avant {
+		connus[f] = struct{}{}
+	}
+	var neufs []string
+	for _, f := range apres {
+		if _, deja := connus[f]; !deja {
+			neufs = append(neufs, f)
+		}
+	}
+	return neufs
+}
+
 func objectFiles(t *testing.T, bare string) (store, incoming []string) {
 	t.Helper()
 	objects := filepath.Join(bare, "objects")
@@ -153,6 +173,11 @@ func oneCommitRepo(t *testing.T) (root, bare, src, sha string) {
 	root = t.TempDir()
 	bare = filepath.Join(root, "depot.git")
 	mustGit(t, root, "init", "--bare", "--initial-branch=main", bare)
+	// `gc.auto=0` : par défaut `gc.autoDetach` vaut true, donc un `gc --auto`
+	// déclenché par le premier push continue EN ARRIÈRE-PLAN et peut modifier
+	// `objects/` entre deux relevés d'une sonde. On mesure l'effet du push, pas
+	// une course contre la maintenance.
+	mustGit(t, bare, "config", "gc.auto", "0")
 
 	src = t.TempDir()
 	mustGit(t, src, "init", "--initial-branch=main", ".")
@@ -280,11 +305,22 @@ func TestProbeA2RefusalLeavesNothing(t *testing.T) {
 
 	after, incoming := objectFiles(t, bare)
 
-	if len(after) != len(before) {
-		t.Errorf("FINDING A2: %d object file(s) SURVIVED a refused push (%d before, %d after)",
-			len(after)-len(before), len(before), len(after))
+	// La propriété du §5.3 porte sur ce qui APPARAÎT, pas sur la taille du
+	// magasin. Comparer deux nombres confondait « un objet du push refusé a
+	// survécu » avec « le compte a changé » — et rendait donc un échec sur une
+	// DIMINUTION, que la maintenance de git peut produire à tout moment. Le
+	// message allait jusqu'à annoncer « -1 object file(s) SURVIVED », ce qui ne
+	// veut rien dire.
+	//
+	// La bonne lecture est la différence ensembliste : seuls les fichiers
+	// présents après et absents avant témoignent d'une persistance.
+	survivants := apparus(before, after)
+	if len(survivants) != 0 {
+		t.Errorf("FINDING A2: %d object file(s) SURVIVED a refused push: %v",
+			len(survivants), survivants)
 	} else {
-		t.Logf("READING A2: object store unchanged across a refused push (%d files)", len(before))
+		t.Logf("READING A2: no object from the refused push survived (%d before, %d after)",
+			len(before), len(after))
 	}
 	if len(incoming) != 0 {
 		t.Logf("READING A2: %d file(s) left behind in incoming-*: %v", len(incoming), incoming)

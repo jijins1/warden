@@ -1,0 +1,107 @@
+.bloc {
+  margin-top: var(--w-gap-4);
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-lg);
+  overflow: hidden;
+  background: var(--mat-sys-surface-container-low);
+}
+
+.tete {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-3);
+  padding: var(--w-gap-2) var(--w-gap-3);
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface-container);
+}
+
+h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.segments {
+  display: inline-flex;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-md);
+  overflow: hidden;
+
+  button {
+    padding: 3px 10px;
+    border: none;
+    border-right: 1px solid var(--mat-sys-outline-variant);
+    background: var(--mat-sys-surface-container-low);
+    color: var(--mat-sys-on-surface-variant);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+
+    &:last-child { border-right: none; }
+    &.actif {
+      background: var(--w-primary-bg);
+      color: var(--mat-sys-on-surface);
+      font-weight: 600;
+    }
+  }
+}
+
+.espace { flex: 1; }
+
+.invite,
+.indispo,
+.identique {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-3);
+  margin: 0;
+  padding: var(--w-gap-3);
+  font-size: 13px;
+  line-height: 1.55;
+
+  mat-icon { flex: none; font-size: 18px; width: 18px; height: 18px; }
+}
+
+.invite { color: var(--mat-sys-on-surface-variant); }
+.indispo { color: var(--mat-sys-on-surface-variant); background: var(--mat-sys-surface-container); }
+.identique { color: var(--w-ok); }
+
+.diff {
+  margin: 0;
+  padding: var(--w-gap-2) 0;
+  max-height: 60vh;
+  overflow: auto;
+  font-family: var(--w-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 4;
+}
+
+.l {
+  display: block;
+  padding-inline: var(--w-gap-3);
+  white-space: pre;
+}
+
+// Le fond porte le sens, pas seulement la teinte du texte : un diff se parcourt
+// en diagonale, et une nuance de gris sur du gris ne se voit pas à cette vitesse.
+.l.ajout {
+  background: var(--w-ok-bg);
+  color: var(--w-ok);
+}
+
+.l.retrait {
+  background: var(--w-failed-bg);
+  color: var(--w-failed);
+}
+
+.l.section {
+  background: var(--mat-sys-surface-container-high);
+  color: var(--w-primary);
+}
+
+.l.entete { color: var(--mat-sys-outline); }
+.l.contexte { color: var(--mat-sys-on-surface-variant); }

@@ -47,6 +47,7 @@ d'implémentation prises en cours de route.
 | [0032](0032-comptes-locaux-et-sessions.md) | Comptes locaux et sessions : une identité vérifiée, en attendant OIDC | Accepted |
 | [0033](0033-droits-par-environnement.md) | Droits par environnement : la moitié de l'autorisation qui ne dépend pas du réseau | Accepted |
 | [0034](0034-schema-du-fichier-de-projet.md) | Schéma de `.ansibleproxy.yml` : substitution fermée, noms réservés, et ce que l'allowlist protège vraiment | Accepted |
+| [0035](0035-surface-navigateur.md) | Surface navigateur : une origine déclarée, un cookie, et UNE seule allowlist | Accepted |
 
 ## Convention
 

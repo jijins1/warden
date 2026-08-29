@@ -1,0 +1,45 @@
+<div class="cadre">
+  <form class="carte" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+    <h1>warden</h1>
+    <p class="sous-titre">Sign in to read your runs.</p>
+
+    @if (motDePasseChange()) {
+      <p class="avis" role="status">
+        <mat-icon>check_circle</mat-icon>
+        <span>Password changed. Sign in again with the new one.</span>
+      </p>
+    }
+
+    <mat-form-field appearance="outline">
+      <mat-label>Subject</mat-label>
+      <input matInput formControlName="subject" autocomplete="username" />
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Password</mat-label>
+      <input
+        matInput
+        type="password"
+        formControlName="password"
+        autocomplete="current-password" />
+    </mat-form-field>
+
+    @if (erreur(); as message) {
+      <p class="erreur" role="alert">
+        <mat-icon>error_outline</mat-icon>
+        <span>{{ message }}</span>
+      </p>
+    }
+
+    <button
+      mat-flat-button
+      type="submit"
+      [disabled]="formulaire.invalid || enCours()">
+      {{ enCours() ? 'Signing in…' : 'Sign in' }}
+    </button>
+
+    @if (enCours()) {
+      <mat-progress-bar mode="indeterminate" />
+    }
+  </form>
+</div>

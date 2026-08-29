@@ -207,7 +207,7 @@ func appel(t *testing.T, h *httptest.Server, methode, chemin string, entetes map
 	if err != nil {
 		t.Fatalf("%s %s: lecture du corps: %v", methode, chemin, err)
 	}
-	return reponse{StatusCode: resp.StatusCode, Header: resp.Header, Corps: brut}
+	return reponse{StatusCode: resp.StatusCode, Header: resp.Header, Corps: brut, Cookies: resp.Cookies()}
 }
 
 // reponse est ce qu'un appel de test observe.
@@ -222,6 +222,22 @@ type reponse struct {
 	StatusCode int
 	Header     http.Header
 	Corps      []byte
+
+	// Cookies sont ceux que la réponse POSE. Lus ici parce que `Set-Cookie` se
+	// parse plutôt qu'il ne se lit : `Header.Get` n'en rendrait que le premier,
+	// et sans décoder ses attributs — or ce sont eux qui portent la propriété
+	// (HttpOnly, SameSite, expiration) que la surface navigateur doit tenir.
+	Cookies []*http.Cookie
+}
+
+// CookieNomme rend le cookie de ce nom, ou nil.
+func (r reponse) CookieNomme(nom string) *http.Cookie {
+	for _, c := range r.Cookies {
+		if c.Name == nom {
+			return c
+		}
+	}
+	return nil
 }
 
 // Decoder lit le corps déjà en mémoire.

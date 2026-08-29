@@ -91,6 +91,14 @@ type Run struct {
 	ChangedCount    int
 	SecretsUnmasked bool
 
+	// StartedAt et EndedAt datent le run. EndedAt est nul tant qu'il court.
+	//
+	// Sur `Run` et pas seulement sur `RunListItem` : un lien profond rechargé
+	// n'a QUE cet appel pour peindre son en-tête, et un détail de run sans date
+	// ni durée n'est pas un détail de run.
+	StartedAt time.Time
+	EndedAt   *time.Time
+
 	// ArtifactPrunedAt est non nul quand le code du run a été purgé (ADR-0013).
 	// L'interface d'audit doit traiter ce cas en première classe plutôt que de
 	// renvoyer un 404 le jour de la première purge : le run a bien existé, c'est
@@ -124,14 +132,25 @@ type RunFilter struct {
 
 // RunListItem est un run dans la liste d'audit (sous-ensemble de Run).
 type RunListItem struct {
-	ID              int64
-	RunRef          string
-	UserID          int64
-	Repo            string
-	Environment     string
-	Inventory       string
-	Playbook        string
-	State           string
+	ID          int64
+	RunRef      string
+	UserID      int64
+	Repo        string
+	Environment string
+	Inventory   string
+	Playbook    string
+	State       string
+
+	// TerminationCause qualifie un run `interrupted`, et est vide sur tout autre
+	// état.
+	//
+	// Dans la LISTE et pas seulement dans le détail, parce que « interrompu »
+	// sans la cause est presque inutile : un Ctrl-C est un signal fort, un
+	// client_disconnect_timeout est accidentel. Une liste qui n'affiche que
+	// l'état oblige à ouvrir chaque run pour savoir lequel mérite un regard,
+	// c'est-à-dire à jeter l'information qui compte.
+	TerminationCause TerminationCause
+
 	StartedAt       time.Time
 	EndedAt         *time.Time
 	ChangedCount    int

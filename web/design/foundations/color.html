@@ -1,0 +1,182 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>warden — Colour</title>
+<style>
+  :root {
+    color-scheme: dark;
+    /* Surfaces — near-black slate. An audit tool is read for hours. */
+    --bg: #0B0D10;
+    --surface: #12151A;
+    --surface-2: #181C23;
+    --surface-3: #1F242C;
+    --border: #262C36;
+    --border-strong: #333B47;
+
+    /* Text */
+    --text: #E6EAF0;
+    --text-dim: #9BA6B4;
+    --text-faint: #6B7683;
+
+    /* Brand. Deliberately NOT green/amber/red/blue: those four are spoken
+       for by state, and a brand colour that collides with a state colour
+       makes decoration look like meaning. */
+    --primary: #7C8CFF;
+    --primary-dim: #5A6AD9;
+    --primary-bg: #171A33;
+
+    /* Event states — internal/events/event.go:19 */
+    --ok: #3FB950;          --ok-bg: #0E2A15;
+    --changed: #D9A21B;     --changed-bg: #2E2408;
+    --failed: #F85149;      --failed-bg: #3A1315;
+    --unreachable: #DB61D9; --unreachable-bg: #331033;
+    --skipped: #5C93B8;     --skipped-bg: #0F2029;
+    --unknown: #7D8590;     --unknown-bg: #1C2027;
+
+    /* Run states — internal/server/internal/core/run.go:13 */
+    --running: #58A6FF;     --running-bg: #0C2438;
+    --interrupted: #8B9BB4; --interrupted-bg: #1A1F28;
+
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  .light {
+    color-scheme: light;
+    --bg: #FBFCFD; --surface: #FFFFFF; --surface-2: #F4F6F8; --surface-3: #EAEEF2;
+    --border: #D8DEE6; --border-strong: #BFC8D4;
+    --text: #10141A; --text-dim: #4E5967; --text-faint: #79838F;
+    --primary: #4C5BD4; --primary-dim: #3A47B0; --primary-bg: #EEF0FE;
+    --ok: #1A7F37;          --ok-bg: #E8F5EC;
+    --changed: #9A6700;     --changed-bg: #FCF3DA;
+    --failed: #CF222E;      --failed-bg: #FCEBEC;
+    --unreachable: #A128A0; --unreachable-bg: #FAEBFA;
+    --skipped: #386B8A;     --skipped-bg: #EAF2F7;
+    --unknown: #5C6570;     --unknown-bg: #EEF1F4;
+    --running: #0969DA;     --running-bg: #E7F1FD;
+    --interrupted: #5A6779; --interrupted-bg: #EFF2F5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 14px; line-height: 1.5;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint);
+    margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .lede { color: var(--text-dim); margin: 0 0 8px; max-width: 68ch; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .pane { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .pane-label {
+    font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px;
+  }
+
+  .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .sw { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; background: var(--surface); }
+  .sw-chip { height: 40px; }
+  .sw-meta { padding: 7px 9px; }
+  .sw-name { font-size: 11px; font-weight: 600; }
+  .sw-hex { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+
+  .rows { display: flex; flex-direction: column; gap: 6px; }
+  .row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .row-name { font-family: var(--mono); font-size: 12px; flex: 1; }
+  .row-hex { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+  .note {
+    margin-top: 28px; padding: 14px 16px; background: var(--surface);
+    border: 1px solid var(--border); border-left: 2px solid var(--primary);
+    border-radius: 0 8px 8px 0; color: var(--text-dim); font-size: 13px; max-width: 90ch;
+  }
+  .note strong { color: var(--text); font-weight: 600; }
+  code { font-family: var(--mono); font-size: 12px; color: var(--primary); }
+</style>
+</head>
+<body>
+  <h1>Colour</h1>
+  <p class="lede">
+    Dark is the default: this is an operations tool, read for long stretches. Every
+    token below is a CSS custom property, mapped one-to-one onto Angular Material 3
+    system colours — the palette is implementable, not decorative.
+  </p>
+
+  <h2>Surfaces &amp; text</h2>
+  <div class="panes">
+    <div class="pane">
+      <div class="pane-label">Dark — default</div>
+      <div class="swatches">
+        <div class="sw"><div class="sw-chip" style="background:#0B0D10"></div><div class="sw-meta"><div class="sw-name">bg</div><div class="sw-hex">#0B0D10</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#12151A"></div><div class="sw-meta"><div class="sw-name">surface</div><div class="sw-hex">#12151A</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#1F242C"></div><div class="sw-meta"><div class="sw-name">surface-3</div><div class="sw-hex">#1F242C</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#E6EAF0"></div><div class="sw-meta"><div class="sw-name">text</div><div class="sw-hex">#E6EAF0</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#9BA6B4"></div><div class="sw-meta"><div class="sw-name">text-dim</div><div class="sw-hex">#9BA6B4</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#7C8CFF"></div><div class="sw-meta"><div class="sw-name">primary</div><div class="sw-hex">#7C8CFF</div></div></div>
+      </div>
+    </div>
+    <div class="pane light" style="background:#FBFCFD; border-color:#D8DEE6; color:#10141A">
+      <div class="pane-label">Light</div>
+      <div class="swatches">
+        <div class="sw"><div class="sw-chip" style="background:#FBFCFD"></div><div class="sw-meta"><div class="sw-name">bg</div><div class="sw-hex">#FBFCFD</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#FFFFFF"></div><div class="sw-meta"><div class="sw-name">surface</div><div class="sw-hex">#FFFFFF</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#EAEEF2"></div><div class="sw-meta"><div class="sw-name">surface-3</div><div class="sw-hex">#EAEEF2</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#10141A"></div><div class="sw-meta"><div class="sw-name">text</div><div class="sw-hex">#10141A</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#4E5967"></div><div class="sw-meta"><div class="sw-name">text-dim</div><div class="sw-hex">#4E5967</div></div></div>
+        <div class="sw"><div class="sw-chip" style="background:#4C5BD4"></div><div class="sw-meta"><div class="sw-name">primary</div><div class="sw-hex">#4C5BD4</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Semantic — state colours</h2>
+  <div class="panes">
+    <div class="pane">
+      <div class="pane-label">Event states — events/event.go:19</div>
+      <div class="rows">
+        <div class="row"><span class="dot" style="background:#3FB950"></span><span class="row-name">ok</span><span class="row-hex">#3FB950</span></div>
+        <div class="row"><span class="dot" style="background:#D9A21B"></span><span class="row-name">changed</span><span class="row-hex">#D9A21B</span></div>
+        <div class="row"><span class="dot" style="background:#F85149"></span><span class="row-name">failed</span><span class="row-hex">#F85149</span></div>
+        <div class="row"><span class="dot" style="background:#DB61D9"></span><span class="row-name">unreachable</span><span class="row-hex">#DB61D9</span></div>
+        <div class="row"><span class="dot" style="background:#5C93B8"></span><span class="row-name">skipped</span><span class="row-hex">#5C93B8</span></div>
+        <div class="row"><span class="dot" style="background:#7D8590"></span><span class="row-name">unknown</span><span class="row-hex">#7D8590</span></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-label">Run states — core/run.go:13</div>
+      <div class="rows">
+        <div class="row"><span class="dot" style="background:#58A6FF"></span><span class="row-name">running</span><span class="row-hex">#58A6FF</span></div>
+        <div class="row"><span class="dot" style="background:#3FB950"></span><span class="row-name">succeeded</span><span class="row-hex">#3FB950</span></div>
+        <div class="row"><span class="dot" style="background:#F85149"></span><span class="row-name">failed</span><span class="row-hex">#F85149</span></div>
+        <div class="row"><span class="dot" style="background:#8B9BB4"></span><span class="row-name">interrupted</span><span class="row-hex">#8B9BB4</span></div>
+      </div>
+      <div style="margin-top:14px; font-size:12px; color:var(--text-dim); line-height:1.6">
+        Four states, no more. There is no <code>pending</code>: a run is
+        <code>running</code> from the moment it is recorded.
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>Three rules this palette exists to enforce.</strong><br><br>
+    <strong>1. <code>unreachable</code> is not <code>failed</code>.</strong> Magenta, not
+    red — the machine was never reached, which is a network or inventory problem, not a
+    playbook one. Collapsing them sends the reader to the wrong file.<br><br>
+    <strong>2. <code>changed</code> is loud.</strong> Amber, at full weight — it means
+    something on a real machine was modified. It is the answer to the only question that
+    matters after a run, and <code>GET /runs?changed_min=</code> exists precisely to
+    filter on it. Muting it to an "info" grey would bury the signal.<br><br>
+    <strong>3. <code>interrupted</code> is slate, not red.</strong> ADR-0031: a dying
+    runner does not pronounce a verdict. Colouring it as a failure would say
+    <em>your playbook failed</em> about a playbook that said nothing.
+  </div>
+</body>
+</html>

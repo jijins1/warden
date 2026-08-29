@@ -1,0 +1,45 @@
+.contexte {
+  margin: 0 0 var(--w-gap-2);
+  font-size: 13px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.garde {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-2);
+  margin: 0 0 var(--w-gap-3);
+  padding: var(--w-gap-2) var(--w-gap-3);
+  border: 1px solid var(--w-changed-br);
+  border-radius: var(--w-radius-md);
+  background: var(--w-changed-bg);
+  color: var(--w-changed);
+  font-size: 12.5px;
+
+  mat-icon { flex: none; font-size: 17px; width: 17px; height: 17px; }
+}
+
+.charge {
+  margin: 0;
+  padding: var(--w-gap-3);
+  max-height: 55vh;
+  overflow: auto;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-md);
+  background: var(--mat-sys-surface-container);
+  font-family: var(--w-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rien,
+.erreur {
+  margin: 0;
+  padding: var(--w-gap-3);
+  font-size: 13px;
+}
+
+.rien { color: var(--mat-sys-on-surface-variant); }
+.erreur { color: var(--w-failed); }

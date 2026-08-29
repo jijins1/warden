@@ -1,0 +1,83 @@
+<div class="barre">
+  <span class="segments">
+    @for (f of filtres; track f) {
+      <button type="button" [class.actif]="filtre() === f" (click)="filtre.set(f)">
+        {{ f }}
+      </button>
+    }
+  </span>
+
+  <span class="espace"></span>
+
+  <span class="seq w-mono">{{ total() }} events</span>
+
+  @switch (flux().etat()) {
+    @case ('live') {
+      <span class="lien direct"><span class="led"></span>live</span>
+    }
+    @case ('connecting') {
+      <span class="lien"><span class="led"></span>connecting</span>
+    }
+    @case ('reconnecting') {
+      <span class="lien alerte"><span class="led"></span>reconnecting</span>
+    }
+    @case ('ended') {
+      <span class="lien fini">ended</span>
+    }
+    @case ('error') {
+      <span class="lien echec">stream error</span>
+    }
+  }
+</div>
+
+@if (flux().erreur(); as message) {
+  <p class="erreur" role="alert">
+    <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+  </p>
+}
+
+<!-- Défilement VIRTUEL, non négociable : le volume d'events par run n'est pas
+     mesuré, et le suiveur serveur lit par lots de 500. Rendre chaque ligne
+     rendrait un vrai run inutilisable. -->
+<cdk-virtual-scroll-viewport itemSize="28" class="flux" (scrolledIndexChange)="auDefilement()">
+  <ng-container *cdkVirtualFor="let ligne of lignes(); trackBy: suivi">
+    @if (ligne.kind === 'resume') {
+      <!-- La reprise dit sa position ET que rien n'a manqué. Le serveur relit la
+           table depuis l'offset : le rattrapage et le direct sont le même
+           chemin, donc l'affirmation est exacte. -->
+      <div class="reprise">
+        <span class="trait"></span>
+        <span class="texte w-mono">reconnected — resumed from offset {{ ligne.seq }}, nothing lost</span>
+        <span class="trait"></span>
+      </div>
+    } @else {
+      <button
+        type="button"
+        class="ev"
+        [class.chg]="ligne.event.state === 'changed'"
+        [class.ech]="ligne.event.state === 'failed' || ligne.event.state === 'unreachable'"
+        (click)="ouvrirDiff(ligne.event)">
+        <span class="s w-mono">{{ ligne.event.seq }}</span>
+        <span class="et"><w-state-chip [state]="ligne.event.state" /></span>
+        <span class="tache" [matTooltip]="ligne.event.task_name ?? ''">
+          {{ ligne.event.task_name || '—' }}
+        </span>
+        <span class="hote w-mono">{{ ligne.event.host || '' }}</span>
+        <span class="role w-mono">{{ ligne.event.role || '' }}</span>
+        <span class="heure w-mono">{{ ligne.event.occurred_at | date: 'HH:mm:ss' }}</span>
+      </button>
+    }
+  </ng-container>
+</cdk-virtual-scroll-viewport>
+
+@if (!suivre()) {
+  <button class="rattraper" type="button" (click)="retourEnBas()">
+    <mat-icon>arrow_downward</mat-icon><span>Follow</span>
+  </button>
+}
+
+@if (flux().fin(); as fin) {
+  <p class="fin-run">
+    Run <strong>{{ fin.status }}</strong>@if (fin.reason) {, {{ fin.reason }}}.
+  </p>
+}

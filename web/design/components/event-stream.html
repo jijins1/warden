@@ -1,0 +1,187 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>warden — Run detail &amp; live stream</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0B0D10; --surface:#12151A; --surface-2:#181C23; --surface-3:#1F242C;
+    --border:#262C36; --border-strong:#333B47;
+    --text:#E6EAF0; --text-dim:#9BA6B4; --text-faint:#6B7683;
+    --primary:#7C8CFF; --primary-bg:#171A33;
+    --ok:#3FB950; --ok-bg:#0E2A15; --ok-br:#1C5029;
+    --changed:#D9A21B; --changed-bg:#2E2408; --changed-br:#5E4A22;
+    --failed:#F85149; --failed-bg:#3A1315; --failed-br:#6B2427;
+    --unreachable:#DB61D9; --unreachable-bg:#331033; --unreachable-br:#5F2A5E;
+    --skipped:#5C93B8; --skipped-bg:#0F2029; --skipped-br:#26485C;
+    --running:#58A6FF; --running-bg:#0C2438; --running-br:#1B4570;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:28px; background:var(--bg); color:var(--text);
+         font-family:var(--sans); font-size:14px; line-height:1.5; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:-0.01em; }
+  .lede { color:var(--text-dim); margin:0 0 20px; max-width:72ch; font-size:13px; }
+
+  /* ---- Run header ---- */
+  .header { background:var(--surface); border:1px solid var(--border);
+            border-radius:9px; padding:16px 18px; margin-bottom:12px; }
+  .h-top { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+  .h-play { font-size:16px; font-weight:600; }
+  .h-on { color:var(--text-faint); font-size:14px; font-weight:400; }
+  .env { display:inline-block; font-family:var(--mono); font-size:10.5px;
+         padding:1.5px 7px; border-radius:4px; background:#241D0B;
+         border:1px solid var(--changed-br); color:var(--changed); }
+  .spacer { flex:1; }
+  .chip { display:inline-flex; align-items:center; gap:5px; padding:2px 8px 2px 6px;
+          border-radius:5px; font-size:11.5px; font-weight:600; line-height:1.4;
+          border:1px solid transparent; white-space:nowrap; }
+  .chip svg { width:11px; height:11px; flex:none; }
+  .c-running { color:var(--running); background:var(--running-bg); border-color:var(--running-br); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .c-running svg { animation:pulse 1.4s ease-in-out infinite; }
+
+  .facts { display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; }
+  .fact-k { font-size:10px; font-weight:600; text-transform:uppercase;
+            letter-spacing:0.07em; color:var(--text-faint); margin-bottom:3px; }
+  .fact-v { font-family:var(--mono); font-size:12.5px; display:flex;
+            align-items:center; gap:6px; }
+  .copy { width:11px; height:11px; opacity:.4; flex:none; }
+
+  /* ---- Stream toolbar ---- */
+  .bar { display:flex; align-items:center; gap:8px; margin-bottom:0;
+         background:var(--surface-2); border:1px solid var(--border);
+         border-bottom:none; border-radius:9px 9px 0 0; padding:8px 12px; }
+  .seg { display:inline-flex; background:var(--surface); border:1px solid var(--border);
+         border-radius:7px; overflow:hidden; }
+  .seg span { padding:3px 10px; font-size:11.5px; color:var(--text-dim);
+              border-right:1px solid var(--border); }
+  .seg span:last-child { border-right:none; }
+  .seg span.on { background:var(--primary-bg); color:var(--text); font-weight:600; }
+  .live { display:inline-flex; align-items:center; gap:6px; font-size:11.5px;
+          font-family:var(--mono); color:var(--ok); }
+  .live .led { width:7px; height:7px; border-radius:50%; background:var(--ok);
+               animation:pulse 1.6s ease-in-out infinite; }
+  .live.warn { color:var(--changed); } .live.warn .led { background:var(--changed); }
+  .offset { font-family:var(--mono); font-size:11px; color:var(--text-faint); }
+
+  /* ---- Event rows ---- */
+  .stream { background:var(--surface); border:1px solid var(--border);
+            border-radius:0 0 9px 9px; overflow:hidden; }
+  .ev { display:grid; grid-template-columns:52px 96px 1fr 112px 96px 62px;
+        align-items:center; gap:12px; height:28px; padding:0 12px;
+        border-bottom:1px solid #1B1F27; font-size:12px; }
+  .ev:last-child { border-bottom:none; }
+  .ev:hover { background:var(--surface-2); }
+  .seq { font-family:var(--mono); font-size:11px; color:var(--text-faint);
+         text-align:right; font-variant-numeric:tabular-nums; }
+  .st { display:flex; }
+  .task { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .host { font-family:var(--mono); font-size:11.5px; color:var(--text-dim);
+          overflow:hidden; text-overflow:ellipsis; }
+  .role { font-family:var(--mono); font-size:11px; color:var(--text-faint);
+          overflow:hidden; text-overflow:ellipsis; }
+  .dur { font-family:var(--mono); font-size:11px; color:var(--text-faint);
+         text-align:right; font-variant-numeric:tabular-nums; }
+  .ev.chg { box-shadow:inset 2px 0 0 var(--changed); }
+  .ev.fail { box-shadow:inset 2px 0 0 var(--failed); background:#170D0E; }
+
+  .m-ok { color:var(--ok); background:var(--ok-bg); border-color:var(--ok-br); }
+  .m-chg { color:var(--changed); background:var(--changed-bg); border-color:var(--changed-br); }
+  .m-fail { color:var(--failed); background:var(--failed-bg); border-color:var(--failed-br); }
+  .m-unr { color:var(--unreachable); background:var(--unreachable-bg); border-color:var(--unreachable-br); }
+  .m-skip { color:var(--skipped); background:var(--skipped-bg); border-color:var(--skipped-br); }
+
+  .gap { display:flex; align-items:center; gap:10px; padding:5px 12px;
+         background:#0E1116; border-bottom:1px solid #1B1F27;
+         font-family:var(--mono); font-size:10.5px; color:var(--text-faint); }
+  .gap .line { flex:1; height:1px; background:var(--border); }
+
+  .note { margin-top:22px; padding:14px 16px; background:var(--surface);
+          border:1px solid var(--border); border-left:2px solid var(--primary);
+          border-radius:0 8px 8px 0; color:var(--text-dim); font-size:13px; max-width:92ch; }
+  .note strong { color:var(--text); font-weight:600; }
+  code { font-family:var(--mono); font-size:12px; color:var(--primary); }
+</style>
+</head>
+<body>
+  <h1>Run detail &amp; live stream</h1>
+  <p class="lede">
+    The technical centre of the product. Rows are 28px and virtualised: the event volume
+    of a run is not measured, and the follower reads in batches of 500.
+  </p>
+
+  <div class="header">
+    <div class="h-top">
+      <span class="h-play">playbooks/site.yml</span>
+      <span class="h-on">on</span>
+      <span class="env">prod</span>
+      <span class="spacer"></span>
+      <span class="chip c-running"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>Running</span>
+    </div>
+    <div class="facts">
+      <div>
+        <div class="fact-k">Run</div>
+        <div class="fact-v">01JBQ7X4M2K9WPZ3
+          <svg class="copy" viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="6.4" height="6.4" rx="1.2" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8.4 3.2V2.2a1 1 0 00-1-1H2.6a1 1 0 00-1 1v4.8a1 1 0 001 1h1" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        </div>
+      </div>
+      <div>
+        <div class="fact-k">Audit commit</div>
+        <div class="fact-v">a18b134f
+          <svg class="copy" viewBox="0 0 12 12"><rect x="3.2" y="3.2" width="6.4" height="6.4" rx="1.2" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8.4 3.2V2.2a1 1 0 00-1-1H2.6a1 1 0 00-1 1v4.8a1 1 0 001 1h1" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        </div>
+      </div>
+      <div><div class="fact-k">Inventory</div><div class="fact-v">inventories/prod</div></div>
+      <div><div class="fact-k">Started</div><div class="fact-v">14:41:07 · 18.2s</div></div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <span class="seg"><span class="on">All</span><span>Changed</span><span>Failed</span><span>Unreachable</span></span>
+    <span class="spacer"></span>
+    <span class="offset">seq 418</span>
+    <span class="live"><span class="led"></span>live</span>
+  </div>
+
+  <div class="stream">
+    <div class="ev"><span class="seq">411</span><span class="st"><span class="chip m-ok"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4L9.6 3.9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ok</span></span><span class="task">Gather package facts</span><span class="host">db-prod-02</span><span class="role">common</span><span class="dur">418ms</span></div>
+
+    <div class="ev chg"><span class="seq">412</span><span class="st"><span class="chip m-chg"><svg viewBox="0 0 12 12"><path d="M6 1.6l4.4 4.4L6 10.4 1.6 6z" fill="currentColor"/></svg>changed</span></span><span class="task">Install nginx 1.27.2</span><span class="host">db-prod-02</span><span class="role">nginx</span><span class="dur">3.1s</span></div>
+
+    <div class="ev"><span class="seq">413</span><span class="st"><span class="chip m-skip"><svg viewBox="0 0 12 12"><path d="M3 3l3.4 3-3.4 3M7 3l3.4 3L7 9" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>skipped</span></span><span class="task">Install debug tooling</span><span class="host">db-prod-02</span><span class="role">nginx</span><span class="dur">2ms</span></div>
+
+    <div class="ev chg"><span class="seq">414</span><span class="st"><span class="chip m-chg"><svg viewBox="0 0 12 12"><path d="M6 1.6l4.4 4.4L6 10.4 1.6 6z" fill="currentColor"/></svg>changed</span></span><span class="task">Template /etc/nginx/nginx.conf</span><span class="host">db-prod-02</span><span class="role">nginx</span><span class="dur">241ms</span></div>
+
+    <div class="ev"><span class="seq">415</span><span class="st"><span class="chip m-unr"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3 9l6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>unreachable</span></span><span class="task">Gather package facts</span><span class="host">db-prod-07</span><span class="role">common</span><span class="dur">30.0s</span></div>
+
+    <div class="ev fail"><span class="seq">416</span><span class="st"><span class="chip m-fail"><svg viewBox="0 0 12 12"><path d="M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>failed</span></span><span class="task">Reload nginx</span><span class="host">web-prod-01</span><span class="role">nginx</span><span class="dur">1.4s</span></div>
+
+    <div class="gap"><span>reconnected — resumed from offset 417</span><span class="line"></span><span>0 events lost</span></div>
+
+    <div class="ev"><span class="seq">417</span><span class="st"><span class="chip m-ok"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4L9.6 3.9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ok</span></span><span class="task">Verify service is listening</span><span class="host">web-prod-01</span><span class="role">nginx</span><span class="dur">96ms</span></div>
+
+    <div class="ev chg"><span class="seq">418</span><span class="st"><span class="chip m-chg"><svg viewBox="0 0 12 12"><path d="M6 1.6l4.4 4.4L6 10.4 1.6 6z" fill="currentColor"/></svg>changed</span></span><span class="task">Rotate logs</span><span class="host">web-prod-02</span><span class="role">common</span><span class="dur">88ms</span></div>
+  </div>
+
+  <div class="note">
+    <strong>The reconnect marker is a feature, not a diagnostic.</strong> A WebSocket
+    pins to one API replica; a rolling update or a closed laptop cuts it. The client
+    reconnects with <code>from_offset = last seq + 1</code> and the server replays from
+    the table — <code>Follow</code> has no "catch-up" path distinct from the live one, it
+    only ever reads the table, and <code>NOTIFY</code> merely says when to re-read. The
+    marker states the resumption <em>and the fact that nothing was lost</em>, because
+    silently losing events is the one failure an audit tool must never hide.<br><br>
+    <strong>Left edge, not row fill.</strong> <code>changed</code> and
+    <code>failed</code> mark a 2px inset bar so a dense column stays scannable without
+    the page turning into a colour field. Only <code>failed</code> additionally tints its
+    row — it is the one state that should stop the eye.<br><br>
+    <strong>No diffs here.</strong> The stream deliberately omits <code>--diff</code>
+    payloads: they live in a separate table with its own access control because they
+    contain rendered secrets. Viewing one is a distinct, separately authorised action.
+  </div>
+</body>
+</html>

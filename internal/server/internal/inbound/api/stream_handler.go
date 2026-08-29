@@ -15,14 +15,6 @@ import (
 	wire "github.com/jijins1/warden/internal/wire/ws"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
 // streamHandler manages a single WebSocket client streaming run events.
 type streamHandler struct {
 	// runRef sert à RELIRE l'issue du run à la fermeture du flux : l'annoncer
@@ -61,7 +53,7 @@ func (a *Server) HandleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ws, err := upgrader.Upgrade(w, r, nil)
+	ws, err := a.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("WebSocket upgrade failed", "run_id", runID, "error", err)
 		return

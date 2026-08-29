@@ -209,7 +209,7 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
        coalesce(audit_sha, ''), coalesce(base_sha, ''),
        coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       artifact_pruned_at, kind, enroll_target
+       started_at, ended_at, artifact_pruned_at, kind, enroll_target
   FROM run
  WHERE run_ref = $1`
 
@@ -220,7 +220,7 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.ArtifactPrunedAt, &genre, &cible,
+		&r.StartedAt, &r.EndedAt, &r.ArtifactPrunedAt, &genre, &cible,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, ErrNotFound)

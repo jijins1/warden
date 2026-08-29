@@ -1,0 +1,16 @@
+.badge {
+  display: inline-block;
+  padding: 1.5px 7px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-sm);
+  background: var(--mat-sys-surface-container-high);
+  color: var(--mat-sys-on-surface-variant);
+  font-family: var(--w-mono);
+  font-size: 10.5px;
+}
+
+.badge.prod {
+  border-color: var(--w-changed-br);
+  background: var(--w-changed-bg);
+  color: var(--w-changed);
+}

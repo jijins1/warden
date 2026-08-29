@@ -1,0 +1,54 @@
+@if (auth.utilisateur(); as moi) {
+  <section class="page">
+    <h1>Account</h1>
+
+    <dl class="faits">
+      <div>
+        <dt>Subject</dt>
+        <dd class="w-mono">{{ moi.subject }}</dd>
+      </div>
+      @if (moi.name) {
+        <div>
+          <dt>Name</dt>
+          <dd>{{ moi.name }}</dd>
+        </div>
+      }
+      <div>
+        <dt>Administrator</dt>
+        <dd>{{ moi.admin ? 'yes' : 'no' }}</dd>
+      </div>
+      <div>
+        <dt>Session expires</dt>
+        <dd class="w-mono">
+          @if (moi.expires_at) {
+            {{ moi.expires_at | date: 'medium' }}
+          } @else {
+            —
+          }
+        </dd>
+      </div>
+    </dl>
+
+    @if (identiteAffirmee()) {
+      <p class="avis" role="status">
+        <mat-icon>warning_amber</mat-icon>
+        <span>
+          This identity is <strong>asserted, not verified</strong>: the server
+          accepted a development header rather than a session. Anyone can claim
+          any provisioned subject while that opt-in is set.
+        </span>
+      </p>
+    }
+
+    <w-change-password />
+
+    @if (moi.admin) {
+      <p class="note">
+        Administration covers the server-side policy. It does
+        <strong>not</strong> grant sight of other people's runs — those are two
+        separate capabilities, and being an administrator does not widen what you
+        can read.
+      </p>
+    }
+  </section>
+}

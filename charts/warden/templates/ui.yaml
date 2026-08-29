@@ -1,0 +1,72 @@
+{{- if .Values.ui.enabled }}
+{{- $fullname := include "warden.fullname" . -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "ui" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels:
+      {{- include "warden.selectorLabels" (dict "component" "ui") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "warden.selectorLabels" (dict "component" "ui") | nindent 8 }}
+      annotations:
+        # Le hachage de la ConfigMap : sans lui, changer l'adresse de l'API ou la
+        # CSP laisserait tourner les pods sur l'ancienne, et le déploiement
+        # paraîtrait appliqué sans l'être.
+        checksum/config: {{ include (print $.Template.BasePath "/ui-config.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        {{- include "warden.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: ui
+          image: {{ include "warden.uiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "warden.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: {{ include "warden.port.ui" . }} }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf }
+            - { name: config, mountPath: /etc/nginx/warden-security-headers.conf, subPath: warden-security-headers.conf }
+            - { name: config, mountPath: /usr/share/nginx/html/config.json, subPath: config.json }
+            # nginx écrit ses caches et son PID : le système de fichiers est en
+            # lecture seule, il faut donc lui donner ces chemins en mémoire.
+            - { name: cache, mountPath: /var/cache/nginx }
+            - { name: run,   mountPath: /tmp }
+          readinessProbe:
+            httpGet: { path: /index.html, port: http }
+            initialDelaySeconds: 2
+          livenessProbe:
+            httpGet: { path: /index.html, port: http }
+            initialDelaySeconds: 10
+          {{- with .Values.ui.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-ui
+        - { name: cache, emptyDir: {} }
+        - { name: run,   emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "ui" "root" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "warden.selectorLabels" (dict "component" "ui") | nindent 4 }}
+  ports: [{ name: http, port: {{ include "warden.port.ui" . }}, targetPort: http }]
+{{- end }}

@@ -1,0 +1,75 @@
+// Jetons de la surface warden.
+//
+// La source est `web/design/foundations/color.html`. Ils vivent en variables CSS
+// et non en variables Sass, parce qu'ils doivent basculer clair/sombre À
+// L'EXÉCUTION : une variable Sass est résolue à la compilation et imposerait
+// deux feuilles de style, donc un rechargement pour changer de thème.
+//
+// Les couleurs d'ÉTAT ne passent PAS par `mat.theme()`. Le thème Material porte
+// la marque — surfaces, primaire, élévation — là où un état est une donnée du
+// domaine : `changed` n'est pas une teinte d'accent, c'est le fait qu'une
+// machine a été modifiée. Les mêler ferait qu'un changement de charte
+// repeindrait la signification.
+
+:root {
+  // Marque. Délibérément hors des quatre teintes d'état : une couleur de marque
+  // qui entre en collision avec une couleur d'état fait passer la décoration
+  // pour du sens.
+  --w-primary: #4c5bd4;
+  --w-primary-dim: #3a47b0;
+  --w-primary-bg: #eef0fe;
+
+  // États d'event — internal/events/event.go:19
+  --w-ok: #1a7f37;          --w-ok-bg: #e8f5ec;          --w-ok-br: #b4dcc1;
+  --w-changed: #9a6700;     --w-changed-bg: #fcf3da;     --w-changed-br: #e6cf8f;
+  --w-failed: #cf222e;      --w-failed-bg: #fcebec;      --w-failed-br: #f0b6ba;
+  --w-unreachable: #a128a0; --w-unreachable-bg: #faebfa; --w-unreachable-br: #e6b3e5;
+  --w-skipped: #386b8a;     --w-skipped-bg: #eaf2f7;     --w-skipped-br: #b9d2e0;
+  --w-unknown: #5c6570;     --w-unknown-bg: #eef1f4;     --w-unknown-br: #c8d0d8;
+
+  // États de run — internal/server/internal/core/run.go:13
+  --w-running: #0969da;     --w-running-bg: #e7f1fd;     --w-running-br: #aecbf2;
+  // `interrupted` est ARDOISE et jamais rouge : l'ADR-0031 pose qu'un runner
+  // mourant ne prononce pas de verdict. Le peindre en échec dirait « ton
+  // playbook a échoué » d'un playbook qui n'a rien dit.
+  --w-interrupted: #5a6779; --w-interrupted-bg: #eff2f5; --w-interrupted-br: #c3ccd6;
+
+  // Familles. Le mono n'est pas décoratif : il porte tout ce qui se copie, se
+  // compare caractère à caractère ou se colle dans un shell.
+  --w-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --w-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  // Rayons et pas d'espacement. Les SEULS utilisés.
+  --w-radius-sm: 4px;
+  --w-radius-md: 7px;
+  --w-radius-lg: 10px;
+  --w-gap-1: 4px;
+  --w-gap-2: 8px;
+  --w-gap-3: 12px;
+  --w-gap-4: 20px;
+  --w-gap-5: 32px;
+
+  // Hauteurs de ligne. La dense sert le flux d'events : le volume par run n'est
+  // pas mesuré et le suiveur lit par lots de 500.
+  --w-row-dense: 28px;
+  --w-row: 40px;
+}
+
+// Le sombre est le DÉFAUT du produit — un outil d'exploitation se lit longtemps.
+// Exprimé en surcharge plutôt qu'en base pour que `prefers-color-scheme` et un
+// choix explicite passent par le même chemin.
+:root[data-theme='dark'] {
+  --w-primary: #7c8cff;
+  --w-primary-dim: #5a6ad9;
+  --w-primary-bg: #171a33;
+
+  --w-ok: #3fb950;          --w-ok-bg: #0e2a15;          --w-ok-br: #1c5029;
+  --w-changed: #d9a21b;     --w-changed-bg: #2e2408;     --w-changed-br: #5e4a22;
+  --w-failed: #f85149;      --w-failed-bg: #3a1315;      --w-failed-br: #6b2427;
+  --w-unreachable: #db61d9; --w-unreachable-bg: #331033; --w-unreachable-br: #5f2a5e;
+  --w-skipped: #5c93b8;     --w-skipped-bg: #0f2029;     --w-skipped-br: #26485c;
+  --w-unknown: #7d8590;     --w-unknown-bg: #1c2027;     --w-unknown-br: #39414f;
+
+  --w-running: #58a6ff;     --w-running-bg: #0c2438;     --w-running-br: #1b4570;
+  --w-interrupted: #8b9bb4; --w-interrupted-bg: #1a1f28; --w-interrupted-br: #39414f;
+}

@@ -90,9 +90,10 @@ IMAGE_TAG ?= dev
 IMAGE_BASE := $(REGISTRY)/$(REGISTRY_OWNER)
 
 .PHONY: images
-images: ## Construit les deux images en local, sans rien pousser
+images: ## Construit les trois images en local, sans rien pousser
 	docker build -f build/wardend.Dockerfile -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) .
 	docker build -f build/runner.Dockerfile  -t $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) .
+	docker build -f build/ui.Dockerfile      -t $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG) .
 
 # Le pilotage d'`ansible-runner` DANS l'image qui sera livrée.
 #
@@ -130,6 +131,7 @@ test-runner-image: images ## Vérifie le pilotage d'ansible-runner dans l'image 
 images-push: images ## Pousse les images (exige un `docker login $(REGISTRY)` préalable)
 	docker push $(IMAGE_BASE)/wardend:$(IMAGE_TAG)
 	docker push $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG)
+	docker push $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG)
 
 # ---------------------------------------------------------------------------
 # Base de développement.

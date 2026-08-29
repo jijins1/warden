@@ -74,6 +74,11 @@ func (a *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		slog.String("sujet", ouverture.User.Subject),
 		slog.Int64("compte", ouverture.User.ID))
 
+	// Le cookie EN PLUS du corps, jamais à la place : la CLI lit `token` et ne
+	// doit rien voir de ce changement. Posé avant d'écrire le corps, parce qu'un
+	// en-tête après le premier octet ne part pas (ADR-0035).
+	a.poserCookieSession(w, ouverture.Token.Reveal(), ouverture.ExpiresAt)
+
 	ecrireJSON(w, loginResponse{
 		// `Reveal` est explicite ici, et c'est le seul endroit de tout le serveur
 		// où il l'est pour un jeton de session.
@@ -103,6 +108,10 @@ func (a *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 
 	session := ContextSession(r.Context())
 	if session == nil {
+		// Rien à révoquer, mais on efface quand même : c'est idempotent, et un
+		// cookie laissé en place ferait renvoyer au navigateur un jeton mort à
+		// chaque requête — donc des 401 sans cause visible.
+		a.effacerCookieSession(w)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -114,6 +123,7 @@ func (a *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("session révoquée", slog.Int64("compte", utilisateurID(r)))
+	a.effacerCookieSession(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 
