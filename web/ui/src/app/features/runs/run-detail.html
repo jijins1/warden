@@ -95,7 +95,11 @@
     </dl>
 
     @if (flux(); as f) {
-      <w-event-stream [flux]="f" />
+      <w-event-stream [flux]="f" [runRef]="r.run_ref" />
+    }
+
+    @if (!r.artifact_pruned) {
+      <w-run-diff [runRef]="r.run_ref" />
     }
   }
 </section>

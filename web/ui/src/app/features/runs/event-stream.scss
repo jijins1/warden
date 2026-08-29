@@ -81,6 +81,18 @@
 }
 
 .ev {
+  // La ligne est un `button` : elle ouvre le diff, donc elle doit être
+  // atteignable au clavier et annoncée comme actionnable. Le style natif est
+  // neutralisé, le comportement gardé.
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
   display: grid;
   grid-template-columns: 52px 116px minmax(120px, 1fr) 112px 96px 62px;
   align-items: center;
@@ -89,6 +101,12 @@
   padding: 0 var(--w-gap-3);
   border-bottom: 1px solid color-mix(in srgb, var(--mat-sys-outline-variant) 45%, transparent);
   font-size: 12px;
+
+  &:hover { background: var(--mat-sys-surface-container-high); }
+  &:focus-visible {
+    outline: 2px solid var(--w-primary);
+    outline-offset: -2px;
+  }
 }
 
 // Une barre de 2px au bord gauche, pas un fond : sur une colonne dense, remplir

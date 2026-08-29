@@ -16,6 +16,7 @@ import { RunsService } from '../../core/api/runs.service';
 import { APP_CONFIG } from '../../core/config/app-config';
 import { RunStream, versWebSocket } from '../../core/api/run-stream';
 import { EventStream } from './event-stream';
+import { RunDiff } from './run-diff';
 import { RunDetail as RunDetailDTO } from '../../core/api/wire';
 import { ApiError } from '../../core/http/api-error';
 import { StateChip } from '../../shared/state-chip/state-chip';
@@ -38,6 +39,7 @@ import { DureePipe } from '../../shared/pipes/duree.pipe';
     StateChip,
     EnvBadge,
     EventStream,
+    RunDiff,
     MatButtonModule,
     MatIconModule,
     MatProgressBarModule,

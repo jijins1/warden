@@ -1,6 +1,6 @@
 import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { catchError, throwError } from 'rxjs';
-import { ApiError, causePour } from './api-error';
+import { ApiError, MotifIndisponible, causePour } from './api-error';
 
 /** Méthodes qui ne changent rien. Tout le reste est mutant. */
 const SURES = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -49,10 +49,12 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) =>
   );
 
 function normaliser(err: HttpErrorResponse): ApiError {
+  const motif = err.headers?.get('X-Warden-Reason') ?? undefined;
   return {
     status: err.status,
     message: messageDe(err),
     cause: causePour(err.status),
+    reason: (motif as MotifIndisponible | undefined) || undefined,
   };
 }
 

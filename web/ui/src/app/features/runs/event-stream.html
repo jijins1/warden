@@ -51,10 +51,12 @@
         <span class="trait"></span>
       </div>
     } @else {
-      <div
+      <button
+        type="button"
         class="ev"
         [class.chg]="ligne.event.state === 'changed'"
-        [class.ech]="ligne.event.state === 'failed' || ligne.event.state === 'unreachable'">
+        [class.ech]="ligne.event.state === 'failed' || ligne.event.state === 'unreachable'"
+        (click)="ouvrirDiff(ligne.event)">
         <span class="s w-mono">{{ ligne.event.seq }}</span>
         <span class="et"><w-state-chip [state]="ligne.event.state" /></span>
         <span class="tache" [matTooltip]="ligne.event.task_name ?? ''">
@@ -63,7 +65,7 @@
         <span class="hote w-mono">{{ ligne.event.host || '' }}</span>
         <span class="role w-mono">{{ ligne.event.role || '' }}</span>
         <span class="heure w-mono">{{ ligne.event.occurred_at | date: 'HH:mm:ss' }}</span>
-      </div>
+      </button>
     }
   </ng-container>
 </cdk-virtual-scroll-viewport>

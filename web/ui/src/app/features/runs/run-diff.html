@@ -1,0 +1,58 @@
+<section class="bloc">
+  <header class="tete">
+    <h2>Audit diff</h2>
+    <span class="segments">
+      <button type="button" [class.actif]="vs() === 'mainline'" (click)="choisir('mainline')">
+        vs branch
+      </button>
+      <button type="button" [class.actif]="vs() === 'previous'" (click)="choisir('previous')">
+        vs previous run
+      </button>
+    </span>
+    <span class="espace"></span>
+    @if (demande()) {
+      <button mat-button [disabled]="chargement()" (click)="charger()">
+        <mat-icon>refresh</mat-icon> Reload
+      </button>
+    }
+  </header>
+
+  @if (!demande()) {
+    <!-- Rien n'est calculé d'office : chaque diff coûte un aller au rôle `git`,
+         et la plupart des consultations d'un run n'en demandent aucun. -->
+    <p class="invite">
+      <span>
+        <strong>vs branch</strong> answers “what had he changed locally?”.
+        <strong>vs previous run</strong> answers “what changed since it worked?”.
+      </span>
+      <button mat-flat-button (click)="charger()">Compute</button>
+    </p>
+  }
+
+  @if (chargement()) {
+    <mat-progress-bar mode="indeterminate" />
+  }
+
+  @if (indisponible(); as message) {
+    <p class="indispo">
+      <mat-icon>inventory_2</mat-icon><span>{{ message }}</span>
+    </p>
+  }
+
+  @if (demande() && !chargement() && !indisponible()) {
+    @if (identiques()) {
+      <!-- Une réponse vide DIT quelque chose : les deux états coïncident. Ce
+           n'est pas une donnée manquante. -->
+      <p class="identique">
+        <mat-icon>check</mat-icon>
+        <span>Identical — nothing differs between the two trees.</span>
+      </p>
+    } @else {
+      <!-- Le contenu vient du dépôt audité et n'est pas de confiance. Il est
+           rendu par interpolation, ligne à ligne : jamais d'`innerHTML`, sans
+           quoi un dépôt pourrait injecter du balisage dans la page d'audit. -->
+      <pre class="diff"><code>@for (ligne of lignes(); track $index) {<span
+        class="l" [class]="ligne.genre">{{ ligne.texte }}</span>}</code></pre>
+    }
+  }
+</section>
