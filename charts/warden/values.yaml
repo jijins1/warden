@@ -43,9 +43,25 @@ image:
   wardend: wardend
   # L'image du pod runner, REMISE au pod et jamais utilisée par le serveur.
   runner: warden-runner
+  # L'interface web : un nginx qui sert des fichiers statiques (ADR-0035).
+  ui: warden-ui
   # Vide, `.Chart.AppVersion` s'applique.
   tag: ""
   pullPolicy: IfNotPresent
+
+ui:
+  # L'interface web. Désactivable : un déploiement piloté uniquement à la CLI
+  # reste parfaitement valide, et ne rien servir est plus sûr que servir une
+  # origine dont personne ne se sert.
+  enabled: true
+
+  # N réplicas sans réserve, contrairement à l'API : nginx ne sert que des
+  # fichiers, il ne tient aucun état et n'a aucun canal épinglé.
+  replicas: 2
+
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 64Mi }
 
 api:
   # UN réplica par défaut, et ce n'est pas un plafond mais un aveu : N > 1 n'a
@@ -204,6 +220,19 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.middlewares: traefik-middleware-redirect-https@kubernetescrd
+
+  # TROIS hôtes : l'API, l'écriture git, et l'interface.
+  #
+  # CONTRAINTE DE L'ADR-0035, et elle n'est pas négociable : `ui.host` et
+  # `api.host` doivent partager le même DOMAINE ENREGISTRABLE
+  # (`warden-ui.example.com` et `warden.example.com` → `example.com`). Ils sont
+  # alors « same-site » bien que d'origines distinctes, et le cookie de session
+  # `SameSite=Strict` part. Sur deux domaines enregistrables différents il ne
+  # partirait pas du tout : personne ne resterait connecté, et rien dans les logs
+  # ne dirait pourquoi.
+  ui:
+    host: ""
+    tlsSecret: ""
 
   # DEUX hôtes et non un, parce que la CLI parle à deux surfaces qui n'ont ni le
   # même protocole ni la même politique. Les mettre derrière un même hôte à des

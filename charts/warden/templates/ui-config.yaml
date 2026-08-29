@@ -1,0 +1,79 @@
+{{- if .Values.ui.enabled }}
+{{- $fullname := include "warden.fullname" . -}}
+{{- $apiOrigin := include "warden.apiOrigin" . -}}
+{{- $ws := $apiOrigin | replace "https://" "wss://" | replace "http://" "ws://" -}}
+# La configuration de l'interface web (ADR-0035).
+#
+# Origine DISTINCTE de l'API, ce qui est la décision d'exploitation de
+# l'ADR-0035. Elle a un prix, payé côté serveur — CORS avec credentials,
+# anti-CSRF, `CheckOrigin` durci — et une CONTRAINTE : `ingress.ui.host` et
+# `ingress.api.host` doivent partager le même DOMAINE ENREGISTRABLE, faute de
+# quoi le cookie `SameSite=Strict` ne partira pas et personne ne restera
+# connecté.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "ui" "root" .) | nindent 4 }}
+data:
+  # Lu par l'application AVANT son démarrage. Un artefact, plusieurs
+  # environnements : compiler l'adresse dans le bundle imposerait un build par
+  # environnement, donc de ne plus déployer ce qui a été testé.
+  config.json: |
+    {"apiUrl": {{ $apiOrigin | default "" | quote }}}
+
+  # Les en-têtes dans UN fragment inclus par chaque `location`, et pas au niveau
+  # `server` : `add_header` cesse d'être hérité dès qu'un bloc enfant en déclare
+  # un seul, donc ajouter un `Cache-Control` quelque part ferait silencieusement
+  # tomber tous les autres. C'est arrivé, et ça n'a été vu qu'en interrogeant
+  # l'image.
+  warden-security-headers.conf: |
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    # `connect-src` nomme l'API en https ET en wss : le flux d'events est un
+    # WebSocket, et la CSP traite les deux schémas séparément. En oublier un
+    # fait échouer le direct sans rien dire d'utile en console.
+    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' {{ $apiOrigin }} {{ $ws }}; form-action 'none'; frame-ancestors 'none'; base-uri 'self'" always;
+
+  default.conf: |
+    server {
+        listen {{ include "warden.port.ui" . }};
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+        server_tokens off;
+
+        include /etc/nginx/warden-security-headers.conf;
+
+        # Le repli SPA : c'est lui qui fait qu'un lien profond rechargé marche.
+        location / {
+            include /etc/nginx/warden-security-headers.conf;
+            try_files $uri $uri/ /index.html;
+        }
+
+        # UN seul `Cache-Control` : `expires` en émettrait un second, et deux
+        # valeurs pour une même directive laissent le cache choisir.
+        location ~* \.(js|css|woff2|ttf|svg|png|ico)$ {
+            include /etc/nginx/warden-security-headers.conf;
+            add_header Cache-Control "public, immutable, max-age=31536000" always;
+        }
+
+        location = /index.html {
+            include /etc/nginx/warden-security-headers.conf;
+            add_header Cache-Control "no-store" always;
+        }
+
+        location = /config.json {
+            include /etc/nginx/warden-security-headers.conf;
+            add_header Cache-Control "no-store" always;
+        }
+
+        gzip on;
+        gzip_types text/css application/javascript application/json image/svg+xml;
+        gzip_min_length 1024;
+    }
+{{- end }}

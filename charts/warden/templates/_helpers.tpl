@@ -100,6 +100,35 @@ puissent pas diverger.
 {{- define "warden.port.gitRead" -}}8083{{- end -}}
 {{- define "warden.port.dispatch" -}}8084{{- end -}}
 {{- define "warden.port.ingest" -}}8085{{- end -}}
+{{- define "warden.port.ui" -}}8080{{- end -}}
+
+{{/*
+Image de l'interface web. Distincte de `warden.image` : ce n'est pas le binaire
+du control plane mais un nginx qui sert des fichiers statiques, et les deux ne
+suivent pas le même cycle de publication.
+*/}}
+{{- define "warden.uiImage" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
+{{ .Values.image.registry }}/{{ .Values.image.ui }}:{{ $tag }}
+{{- end -}}
+
+{{/*
+L'origine navigateur DÉDUITE de l'ingress de l'UI.
+Elle sert à la fois de `WARDEN_UI_ORIGINS` côté API et de `connect-src` côté CSP
+— une seule dérivation, pour qu'on ne puisse pas durcir l'un et oublier l'autre
+(ADR-0035).
+*/}}
+{{- define "warden.uiOrigin" -}}
+{{- if .Values.ingress.ui.host -}}
+https://{{ .Values.ingress.ui.host }}
+{{- end -}}
+{{- end -}}
+
+{{- define "warden.apiOrigin" -}}
+{{- if .Values.ingress.api.host -}}
+https://{{ .Values.ingress.api.host }}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Le `securityContext` du pod, et celui du conteneur.

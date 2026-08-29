@@ -77,3 +77,37 @@ spec:
       secretName: {{ . }}
   {{- end }}
 {{- end }}
+{{- if and .Values.ingress.enabled .Values.ui.enabled .Values.ingress.ui.host }}
+{{- $fullname := include "warden.fullname" . -}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "ui" "root" .) | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.ui.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-ui
+                port: { number: {{ include "warden.port.ui" . }} }
+  {{- with .Values.ingress.ui.tlsSecret }}
+  tls:
+    - hosts: [{{ $.Values.ingress.ui.host | quote }}]
+      secretName: {{ . }}
+  {{- end }}
+{{- end }}
