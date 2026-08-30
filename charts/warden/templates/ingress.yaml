@@ -78,7 +78,7 @@ spec:
   {{- end }}
 {{- end }}
 {{- if and .Values.ingress.enabled .Values.ui.enabled .Values.ingress.ui.host }}
-{{- $fullname := include "warden.fullname" . -}}
+{{- $fullname := include "warden.fullname" . }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

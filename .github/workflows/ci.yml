@@ -281,6 +281,56 @@ jobs:
         if: always()
         run: docker rm -f ui || true
 
+  chart:
+    name: Chart — ressources rendues
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # Ce job existe pour UNE panne précise et déjà survenue : un `-}}` de trop
+    # avant un `---` colle le séparateur à la ligne précédente, les deux
+    # documents FUSIONNENT, et la ressource du premier disparaît — écrasée par
+    # les clés du second. Rien n'échoue : `helm template` réussit, `helm lint`
+    # réussit, et le manifeste produit est du YAML valide. Seule la ressource
+    # manque.
+    #
+    # Elle manquait ici sur l'Ingress du rôle `git`, dès qu'un hôte d'interface
+    # était posé — donc sur toute installation servant une UI. Sans Ingress git,
+    # aucun `warden push` n'aboutit, et le transport d'audit du produit est mort.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Les ressources attendues sont rendues
+        run: |
+          rendu() { helm template warden charts/warden -n warden "$@"; }
+
+          # Chaque cas nomme les Ingress attendues, parce que c'est le nombre de
+          # DOCUMENTS qui se perd, et qu'un rendu amputé reste valide.
+          verifier() {
+            titre="$1"; attendu="$2"; shift 2
+            obtenu=$(rendu "$@" \
+              | python3 -c "import yaml,sys; print(' '.join(sorted(
+                  d['metadata']['name'] for d in yaml.safe_load_all(sys.stdin)
+                  if d and d['kind'] == 'Ingress')))")
+            if [ "$obtenu" != "$attendu" ]; then
+              echo "::error::$titre — Ingress rendues « $obtenu », attendu « $attendu »"
+              return 1
+            fi
+            echo "ok — $titre : $obtenu"
+          }
+
+          echec=0
+          verifier "défauts" \
+            "warden-api warden-git" || echec=1
+          verifier "avec une interface" \
+            "warden-api warden-git warden-ui" \
+            --set ingress.ui.host=ui.exemple.test || echec=1
+          verifier "interface désactivée" \
+            "warden-api warden-git" \
+            --set ui.enabled=false --set ingress.ui.host=ui.exemple.test || echec=1
+          exit $echec
+
   publish:
     name: Publication des images
     runs-on: ubuntu-latest
@@ -290,7 +340,7 @@ jobs:
     # par le déploiement dès qu'elle existe : la publier avant les vérifications
     # ferait de `:dev` un artefact dont personne n'a rien dit.
     if: github.ref == 'refs/heads/main'
-    needs: [build, lint, test, integration, web, web-image]
+    needs: [build, lint, test, integration, web, web-image, chart]
 
     # `packages: write` uniquement ici. Le workflow est en `contents: read`, et
     # ce job est le seul qui publie quoi que ce soit.
