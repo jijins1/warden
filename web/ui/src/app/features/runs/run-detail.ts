@@ -2,9 +2,11 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  effect,
   inject,
   input,
   signal,
+  untracked,
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
@@ -64,7 +66,25 @@ export class RunDetail {
   protected readonly erreur = signal<string | null>(null);
 
   constructor() {
-    void this.#charger();
+    // UN EFFET, et surtout PAS un appel depuis le constructeur.
+    //
+    // Une entrée `input.required()` n'est posée qu'APRÈS la construction : la
+    // lire ici lève NG0950, l'exception tombe dans le `catch` ci-dessous, et
+    // l'écran affiche un bandeau d'erreur sur un run parfaitement lisible.
+    //
+    // L'effet répare aussi un second défaut, latent : le routeur RÉUTILISE ce
+    // composant d'un run à l'autre. Sans réaction au changement d'entrée, la
+    // page garderait le run précédent.
+    effect(() => {
+      const ref = this.runRef();
+      // `untracked` : sans lui, écrire `flux` depuis un effet qui le LIT
+      // rouvrirait le flux en boucle.
+      untracked(() => {
+        this.flux()?.arreter();
+        this.flux.set(null);
+        void this.#charger(ref);
+      });
+    });
 
     // Le flux est FERMÉ avec la vue. Sans cela, quitter la page laisserait la
     // socket ouverte et son réessai tourner en fond : un onglet longtemps
@@ -72,11 +92,11 @@ export class RunDetail {
     inject(DestroyRef).onDestroy(() => this.flux()?.arreter());
   }
 
-  async #charger(): Promise<void> {
+  async #charger(ref: string): Promise<void> {
     this.chargement.set(true);
     this.erreur.set(null);
     try {
-      const r = await this.#runs.parReference(this.runRef());
+      const r = await this.#runs.parReference(ref);
       this.run.set(r);
 
       // Ouvert MÊME sur un run terminé : le serveur relit la table depuis
