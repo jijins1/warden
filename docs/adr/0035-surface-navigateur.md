@@ -119,41 +119,42 @@ inutile » (`core/run.go`), un Ctrl-C étant un signal fort là où un
 La colonne est `NULL` sur tout run non interrompu ; un `COALESCE` la rend vide,
 ce qui est exactement la sémantique que `Closure.Validate` impose déjà.
 
-## Amendement — l'origine unique par préfixe de chemin
+## Amendement — l'API jointe deux fois, dont une en même origine
 
-La décision ci-dessus reste le DÉFAUT de la chart. Elle a désormais une
-alternative, retenue pour le déploiement de développement : `ingress.api.path`.
+La décision ci-dessus tenait à un choix : deux origines, et le prix qui va avec.
+Ce prix est désormais évitable sans rien changer chez les clients.
 
-Posé à `/api`, l'interface prend la racine de l'hôte de l'API et l'API vit sous
-le préfixe. Une seule origine, donc :
+`ingress.ui.apiPath` — `/api` par défaut — fait router l'hôte de l'INTERFACE
+vers l'API sous ce chemin. L'API est alors jointe à deux endroits :
 
-- le CORS ne sert plus à rien — même origine, pas de préflight ;
-- `CheckOrigin` du WebSocket est trivialement satisfait ;
-- la CONTRAINTE de domaine enregistrable commun disparaît. C'est le gain qui
-  compte le plus : sa violation était SILENCIEUSE — le cookie `SameSite=Strict`
-  ne partait pas, personne ne restait connecté, et rien dans les logs ne le
-  disait.
+| par | adresse | ce que ça sert |
+|---|---|---|
+| la CLI | `https://<hôte-api>/` | inchangé — aucun client à migrer |
+| le navigateur | `https://<hôte-ui>/api` | **même origine** que la SPA |
 
-Ce n'est PAS l'option `//go:embed` rejetée plus bas. Celle-ci embarquait la SPA
-dans le binaire Go ; ici l'artefact nginx reste séparé et déployé à part — la
-raison d'exploitation qui avait fait écarter `//go:embed` est préservée. C'est
-une troisième voie que la décision d'origine n'avait pas examinée.
+Ce que la même origine retire : le CORS, le durcissement de `CheckOrigin`, et
+surtout la CONTRAINTE de domaine enregistrable commun. C'est cette dernière qui
+comptait — sa violation était **silencieuse** : le cookie `SameSite=Strict` ne
+partait pas, personne ne restait connecté, et rien dans les logs ne le disait.
 
-**Le retrait du préfixe est fait par le SERVEUR** (`WARDEN_API_BASE_PATH`), pas
-par un middleware du contrôleur d'ingress. Un `StripPrefix` Traefik aurait
-marché, mais aurait lié la chart à un contrôleur particulier ; le serveur, lui,
-sait où il est monté.
+La SPA reste à la RACINE de son hôte. Elle n'a donc pas de `<base href>` à
+réécrire, et l'artefact continue de servir sans être reconstruit par
+déploiement.
+
+**Le double montage est fait par le SERVEUR** (`WARDEN_API_BASE_PATH`), pas par
+un middleware du contrôleur d'ingress. Un `StripPrefix` Traefik aurait marché
+mais aurait lié la chart à un contrôleur ; le serveur, lui, sait où il est monté.
+Servir l'un des deux chemins sans l'autre casserait exactement la moitié des
+appelants — `build/verif/routage.py` et un test Go tiennent chacun leur moitié.
 
 **Le rôle `git` garde son hôte.** L'ADR-0027 pose que c'est la séparation par
 hôte et par port qui rend chaque surface restreignable indépendamment. Le mettre
 sous un chemin du même hôte rendrait sa restriction indissociable de celle de
 l'API — exactement ce que la séparation existe pour empêcher.
 
-**CE QUE ÇA COÛTE.** Tout client doit pointer `WARDEN_SERVER` — et le `server:`
-de chaque `.ansibleproxy.yml` — sur `https://<hôte>/api`. Les sessions sont
-indexées par adresse de serveur : chacun devra rouvrir la sienne. La CLI n'a
-demandé AUCUN changement de code, son client joignant déjà ses chemins par
-`url.URL.JoinPath`, qui préserve un chemin de base.
+Le CORS et l'allowlist d'origines RESTENT en place, et ne sont pas devenus
+inutiles : `WARDEN_UI_ORIGINS` alimente toujours le `CheckOrigin` du WebSocket,
+et un déploiement peut encore choisir les deux origines en vidant `apiPath`.
 
 ## Options rejetées
 

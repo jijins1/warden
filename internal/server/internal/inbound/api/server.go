@@ -38,28 +38,40 @@ type Config struct {
 	// même raison : personne ne doit le poser par accident.
 	UICookieInsecure bool
 
-	// BasePath monte l'API sous un PRÉFIXE de chemin plutôt qu'à la racine.
+	// BasePath sert l'API sous un préfixe EN PLUS de la racine.
 	//
-	// Il sert le déploiement à ORIGINE UNIQUE : l'interface prend la racine de
-	// l'hôte, l'API vit sous `/api`, et tout ce que l'ADR-0035 payait pour deux
-	// origines — CORS, `CheckOrigin` durci, contrainte de domaine enregistrable
-	// commun — cesse d'être nécessaire.
+	// L'interface garde son hôte et sa racine ; ce même hôte route `/api` vers
+	// l'API, qui se retrouve alors en MÊME ORIGINE que la SPA. Le CORS, le
+	// durcissement de `CheckOrigin` et la contrainte de domaine enregistrable
+	// commun de l'ADR-0035 cessent d'être nécessaires — cette dernière avait un
+	// mode de panne silencieux, ce qui en fait le vrai gain.
+	//
+	// La racine reste servie : c'est par elle que la CLI travaille, et la
+	// déplacer imposerait de rééditer chaque `WARDEN_SERVER` et chaque
+	// `.ansibleproxy.yml`.
 	//
 	// Le retrait du préfixe est fait ICI et non par un middleware du contrôleur
 	// d'ingress : le serveur sait où il est monté, et la chart n'a pas à
 	// connaître Traefik.
-	//
-	// VIDE laisse l'API à la racine, ce qui est le déploiement à deux origines.
 	BasePath string
 
 	GracefulShutdown time.Duration
 }
 
-// souslePrefixe monte `h` sous un préfixe de chemin.
+// monterAussiSous sert `h` à la racine ET sous un préfixe de chemin.
 //
-// Hors du préfixe, RIEN n'est servi : laisser l'API répondre aussi à la racine
-// masquerait l'interface, qui y vit désormais.
-func souslePrefixe(prefixe string, h http.Handler) http.Handler {
+// DEUX chemins pour la même API, et c'est le point :
+//
+//   - la CLI garde la RACINE de l'hôte de l'API. Aucun client à migrer, aucun
+//     `.ansibleproxy.yml` à rééditer, aucune session à rouvrir ;
+//
+//   - le navigateur joint la même API sous `/api` de l'hôte de l'INTERFACE. Elle
+//     est alors en MÊME ORIGINE que la SPA, ce qui retire le CORS, le
+//     durcissement de `CheckOrigin` et — surtout — la contrainte de domaine
+//     enregistrable commun de l'ADR-0035, dont la violation était silencieuse.
+//
+// Servir l'un sans l'autre casserait exactement la moitié des appelants.
+func monterAussiSous(prefixe string, h http.Handler) http.Handler {
 	nu := strings.Trim(prefixe, "/")
 	if nu == "" {
 		return h
@@ -67,8 +79,10 @@ func souslePrefixe(prefixe string, h http.Handler) http.Handler {
 	p := "/" + nu
 
 	mux := http.NewServeMux()
+	mux.Handle("/", h)
 	// `p+"/"` et non `p` : le motif de sous-arbre. Go redirige `/api` vers
-	// `/api/` de lui-même, donc les deux formes aboutissent.
+	// `/api/` de lui-même, donc les deux formes aboutissent. Le motif le plus
+	// long l'emporte, donc `/api/runs` passe bien par le retrait du préfixe.
 	mux.Handle(p+"/", http.StripPrefix(p, h))
 	return mux
 }
@@ -397,7 +411,7 @@ func (a *Server) Handler() http.Handler {
 	// Le préfixe enveloppe le CORS et non l'inverse : il est une propriété du
 	// MONTAGE, pas une route, et le retirer avant toute autre décision garde les
 	// handlers ignorants de l'endroit où ils sont servis.
-	return souslePrefixe(a.cfg.BasePath, a.CORSMiddleware(racine))
+	return monterAussiSous(a.cfg.BasePath, a.CORSMiddleware(racine))
 }
 
 // servir lance le serveur et bloque jusqu'à l'annulation du contexte.

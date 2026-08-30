@@ -252,6 +252,27 @@ ingress:
     host: ""
     tlsSecret: ""
 
+    # LE CHEMIN SOUS LEQUEL L'HÔTE DE L'INTERFACE ROUTE VERS L'API.
+    #
+    # L'API est alors jointe DEUX FOIS, et c'est voulu :
+    #
+    #   - à la racine de son propre hôte, par la CLI. Rien ne bouge de ce
+    #     côté : aucun `WARDEN_SERVER` à rééditer, aucun `.ansibleproxy.yml`,
+    #     aucune session à rouvrir ;
+    #
+    #   - sous ce chemin, sur l'hôte de l'INTERFACE, par le navigateur. L'API
+    #     est alors en MÊME ORIGINE que la SPA.
+    #
+    # CE QUE ÇA ACHÈTE : le CORS et le durcissement de `CheckOrigin` deviennent
+    # inutiles, et surtout la contrainte de l'ADR-0035 — les deux hôtes sur un
+    # même domaine enregistrable — disparaît. C'est elle qui comptait : sa
+    # violation était SILENCIEUSE, le cookie `SameSite=Strict` ne partait pas,
+    # personne ne restait connecté, et rien dans les logs ne le disait.
+    #
+    # VIDE, l'interface appelle l'API sur son hôte à elle : c'est le déploiement
+    # à deux origines, avec la contrainte ci-dessus à respecter à la main.
+    apiPath: /api
+
   # DEUX hôtes et non un, parce que la CLI parle à deux surfaces qui n'ont ni le
   # même protocole ni la même politique. Les mettre derrière un même hôte à des
   # chemins différents rendrait leur restriction indissociable.
@@ -264,24 +285,6 @@ ingress:
     host: warden-dev.ruokki.ovh
     tlsSecret: warden-api-cert-tls
 
-    # LE CHEMIN sous lequel l'API est servie, et il décide de l'ARCHITECTURE.
-    #
-    # `/` — l'API tient la racine de son hôte, et l'interface a besoin du SIEN
-    # (`ingress.ui.host`). Deux origines : le prix est le CORS, le `CheckOrigin`
-    # durci, et une contrainte dont la violation est SILENCIEUSE — les deux
-    # hôtes doivent partager le même domaine enregistrable, sans quoi le cookie
-    # `SameSite=Strict` ne part pas, personne ne reste connecté, et rien dans les
-    # logs ne dit pourquoi.
-    #
-    # `/api` — l'interface prend la racine du MÊME hôte, l'API vit sous le
-    # préfixe, et `ingress.ui.host` n'est plus utilisé. Une seule origine : plus
-    # de CORS, plus de contrainte de domaine, un certificat de moins.
-    #
-    # CE QUE ÇA COÛTE, et ce n'est pas rien : tout client doit alors pointer
-    # `WARDEN_SERVER` — et le `server:` de chaque `.ansibleproxy.yml` — sur
-    # `https://<hôte>/api`. Les sessions ouvertes sont indexées par adresse de
-    # serveur, donc chacun devra rouvrir la sienne.
-    path: /
   git:
     host: warden-git-dev.ruokki.ovh
     tlsSecret: warden-git-cert-tls

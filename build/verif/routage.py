@@ -9,7 +9,11 @@ Ce script existe pour des pannes qui ne lèvent AUCUNE erreur :
     `warden push` n'aboutit ;
 
   - le préfixe de montage peut cesser d'atteindre le serveur, qui répondrait
-    alors 404 sur toutes ses routes.
+    alors 404 sur toutes ses routes ;
+
+  - la RACINE de l'API peut disparaître au profit du seul préfixe, ce qui
+    casserait tous les clients CLI d'un coup — la moitié des appelants, sans que
+    l'interface, elle, s'en aperçoive.
 
 `helm template` et `helm lint` réussissent dans les deux cas, et le manifeste
 produit reste du YAML valide. Seule la ressource, ou la variable, manque.
@@ -22,6 +26,7 @@ import yaml
 
 API = "warden-dev.ruokki.ovh"
 GIT = "warden-git-dev.ruokki.ovh"
+UI = "warden-ui-dev.ruokki.ovh"
 
 # (titre, arguments helm, routage attendu, préfixe attendu)
 CAS = [
@@ -32,15 +37,20 @@ CAS = [
         "",
     ),
     (
-        "deux origines — l'interface a son propre hôte",
-        ["--set", "ingress.ui.host=ui.exemple.test"],
-        [f"{API} / warden-api", f"{GIT} / warden-git-push", "ui.exemple.test / warden-ui"],
+        "deux origines — l'interface appelle l'API sur l'autre hôte",
+        ["--set", "ingress.ui.host=" + UI, "--set", "ingress.ui.apiPath="],
+        [f"{API} / warden-api", f"{GIT} / warden-git-push", f"{UI} / warden-ui"],
         "",
     ),
     (
-        "origine unique — l'interface prend la racine, l'API le préfixe",
-        ["--set", "ingress.api.path=/api"],
-        [f"{API} / warden-ui", f"{API} /api warden-api", f"{GIT} / warden-git-push"],
+        "même origine — l'hôte de l'interface route aussi /api",
+        ["--set", "ingress.ui.host=" + UI],
+        [
+            f"{API} / warden-api",
+            f"{GIT} / warden-git-push",
+            f"{UI} / warden-ui",
+            f"{UI} /api warden-api",
+        ],
         "/api",
     ),
 ]

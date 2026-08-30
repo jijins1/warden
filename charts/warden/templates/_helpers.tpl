@@ -140,9 +140,7 @@ Elle sert à la fois de `WARDEN_UI_ORIGINS` côté API et de `connect-src` côt�
 (ADR-0035).
 */}}
 {{- define "warden.uiOrigin" -}}
-{{- if include "warden.origineUnique" . -}}
-https://{{ .Values.ingress.api.host }}
-{{- else if .Values.ingress.ui.host -}}
+{{- if .Values.ingress.ui.host -}}
 https://{{ .Values.ingress.ui.host }}
 {{- end -}}
 {{- end -}}
@@ -157,8 +155,8 @@ le désaccord ne se verrait qu'à l'usage — une interface qui charge mais dont
 aucun appel n'aboutit.
 */}}
 {{- define "warden.origineUnique" -}}
-{{- $p := .Values.ingress.api.path | default "/" | trimAll "/" -}}
-{{- if $p }}{{ $p }}{{ end -}}
+{{- $p := .Values.ingress.ui.apiPath | default "" | trimAll "/" -}}
+{{- if and $p .Values.ingress.ui.host }}{{ $p }}{{ end -}}
 {{- end -}}
 
 {{/*

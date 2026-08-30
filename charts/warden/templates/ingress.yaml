@@ -31,11 +31,7 @@ spec:
     - host: {{ .Values.ingress.api.host }}
       http:
         paths:
-          # Sous un PRÉFIXE en origine unique, à la racine sinon. Le préfixe
-          # n'est PAS retiré ici : le serveur sait où il est monté
-          # (`WARDEN_API_BASE_PATH`), ce qui évite de lier la chart au middleware
-          # d'un contrôleur d'ingress particulier.
-          - path: {{ .Values.ingress.api.path | default "/" }}
+          - path: /
             pathType: Prefix
             backend:
               service:
@@ -82,9 +78,7 @@ spec:
   {{- end }}
 {{- end }}
 {{- $unique := include "warden.origineUnique" . -}}
-{{- $uiHost := ternary .Values.ingress.api.host .Values.ingress.ui.host (ne $unique "") -}}
-{{- $uiTLS := ternary .Values.ingress.api.tlsSecret .Values.ingress.ui.tlsSecret (ne $unique "") -}}
-{{- if and .Values.ingress.enabled .Values.ui.enabled $uiHost }}
+{{- if and .Values.ingress.enabled .Values.ui.enabled .Values.ingress.ui.host }}
 {{- $fullname := include "warden.fullname" . }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -103,18 +97,34 @@ spec:
   ingressClassName: {{ . }}
   {{- end }}
   rules:
-    - host: {{ $uiHost }}
+    - host: {{ .Values.ingress.ui.host }}
       http:
         paths:
+          {{- with $unique }}
+          # L'API, SUR L'HÔTE DE L'INTERFACE. Elle reste servie à la racine de
+          # son propre hôte pour la CLI : ce chemin-ci n'existe que pour mettre
+          # le navigateur en MÊME ORIGINE que la SPA, ce qui retire le CORS et
+          # la contrainte de domaine enregistrable commun de l'ADR-0035.
+          #
+          # Le préfixe n'est PAS retiré ici : le serveur se monte lui-même aux
+          # deux endroits (`WARDEN_API_BASE_PATH`), ce qui évite de lier la
+          # chart au middleware d'un contrôleur d'ingress particulier.
+          - path: /{{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-api
+                port: { number: {{ include "warden.port.api" $ }} }
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: {{ $fullname }}-ui
                 port: { number: {{ include "warden.port.ui" . }} }
-  {{- with $uiTLS }}
+  {{- with .Values.ingress.ui.tlsSecret }}
   tls:
-    - hosts: [{{ $uiHost | quote }}]
+    - hosts: [{{ $.Values.ingress.ui.host | quote }}]
       secretName: {{ . }}
   {{- end }}
 {{- end }}
