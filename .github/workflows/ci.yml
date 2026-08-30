@@ -307,10 +307,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # La cible make, et pas des `docker build` recopiés : ce qui est publié
+      - uses: azure/setup-helm@v4
+
+      # UNE version par build, et elle est IMMUABLE.
+      #
+      # Un tag mouvant comme `:dev` n'est jamais retiré par un nœud qui l'a déjà
+      # en cache : avec `pullPolicy: IfNotPresent`, republier ne déploie RIEN, et
+      # le rollout repart sur l'ancien binaire sans que rien ne le signale.
+      #
+      # `run_number` croît à chaque exécution du workflow et ne revient jamais en
+      # arrière, y compris après un `re-run` — deux builds ne peuvent donc pas se
+      # disputer une version.
+      - name: Version du build
+        run: echo "VERSION=0.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      # Les cibles make, et pas des `docker build` recopiés : ce qui est publié
       # doit être ce que `make images` construit en local, sinon les deux
       # dérivent et c'est la CI qui a raison sans que personne le sache.
       #
       # `REGISTRY_OWNER` vient du dépôt : un fork publie chez lui.
       - name: Construction et publication des trois images
-        run: make images-push REGISTRY=ghcr.io REGISTRY_OWNER=${{ github.repository_owner }}
+        run: |
+          make images-push \
+            REGISTRY=ghcr.io \
+            REGISTRY_OWNER=${{ github.repository_owner }} \
+            IMAGE_TAG="$VERSION"
+
+      # Le chart porte la MÊME version, et c'est ce qui tient l'ensemble : son
+      # `appVersion` est le tag d'image par défaut, donc un chart tiré en 0.0.N
+      # déploie forcément les images 0.0.N. Plus de couple à tenir à la main.
+      - name: Publication du chart
+        run: |
+          helm registry login ghcr.io \
+            -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+          make chart-push \
+            REGISTRY=ghcr.io \
+            REGISTRY_OWNER=${{ github.repository_owner }} \
+            CHART_VERSION="$VERSION"
+
+      - name: Version publiée
+        run: echo "### Publié en \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"

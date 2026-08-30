@@ -140,6 +140,26 @@ images-push: images ## Pousse les images (exige un `docker login $(REGISTRY)` pr
 	docker push $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG)
 	docker push $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG)
 
+# LE CHART ET LES IMAGES PORTENT LA MÊME VERSION, ET C'EST TOUT L'INTÉRÊT.
+#
+# `appVersion` est le tag d'image par défaut : les publier ensemble sous une
+# version unique fait qu'un chart tiré en 0.0.N déploie forcément les images
+# 0.0.N. Il n'y a plus de couple à tenir en accord à la main.
+#
+# Et surtout, la version est IMMUABLE. Un tag mouvant comme `:dev` republié n'est
+# jamais retiré par un nœud qui l'a déjà en cache — `pullPolicy: IfNotPresent`
+# est un défaut RAISONNABLE qui devient un piège dès que le tag bouge : la CI
+# publie, le rollout redémarre, et le pod repart sur l'ancien binaire sans que
+# rien ne le signale.
+CHART_VERSION ?= 0.0.0-dev
+
+.PHONY: chart-push
+chart-push: ## Publie le chart OCI en $(CHART_VERSION) (exige `helm registry login`)
+	mkdir -p dist/
+	helm package charts/warden \
+	  --version $(CHART_VERSION) --app-version $(CHART_VERSION) --destination dist/
+	helm push dist/warden-$(CHART_VERSION).tgz oci://$(IMAGE_BASE)/charts
+
 # ---------------------------------------------------------------------------
 # Base de développement.
 #
