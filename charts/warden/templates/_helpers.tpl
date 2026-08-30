@@ -140,9 +140,32 @@ Elle sert à la fois de `WARDEN_UI_ORIGINS` côté API et de `connect-src` côt�
 (ADR-0035).
 */}}
 {{- define "warden.uiOrigin" -}}
-{{- if .Values.ingress.ui.host -}}
+{{- if include "warden.origineUnique" . -}}
+https://{{ .Values.ingress.api.host }}
+{{- else if .Values.ingress.ui.host -}}
 https://{{ .Values.ingress.ui.host }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Vrai (chaîne non vide) quand l'API est servie sous un PRÉFIXE, donc quand
+l'interface partage son origine.
+
+Une seule dérivation, consommée par l'ingress, la configuration de l'interface et
+la variable du serveur : trois endroits qui doivent dire la même chose, et dont
+le désaccord ne se verrait qu'à l'usage — une interface qui charge mais dont
+aucun appel n'aboutit.
+*/}}
+{{- define "warden.origineUnique" -}}
+{{- $p := .Values.ingress.api.path | default "/" | trimAll "/" -}}
+{{- if $p }}{{ $p }}{{ end -}}
+{{- end -}}
+
+{{/*
+Le préfixe NORMALISÉ, barre initiale comprise : `/api`. Vide à la racine.
+*/}}
+{{- define "warden.basePath" -}}
+{{- with include "warden.origineUnique" . }}/{{ . }}{{ end -}}
 {{- end -}}
 
 {{- define "warden.apiOrigin" -}}

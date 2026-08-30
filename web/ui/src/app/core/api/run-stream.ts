@@ -169,7 +169,13 @@ export class RunStream {
  * Le `s` est CONSERVÉ : rétrograder une origine chiffrée en `ws://` enverrait le
  * cookie de session en clair, et un cookie `Secure` ne partirait de toute façon
  * pas — la connexion échouerait sans dire pourquoi.
+ *
+ * `base` peut être un CHEMIN (`/api`) quand l'API partage l'origine de
+ * l'interface. Le navigateur saurait résoudre un tel chemin seul, mais la
+ * garantie ci-dessus cesserait alors d'être tenue par ce code pour être
+ * déléguée : on résout ici, explicitement, sur l'origine de la page.
  */
-export function versWebSocket(base: string): string {
-  return base.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:');
+export function versWebSocket(base: string, origine = globalThis.location?.origin ?? ''): string {
+  const absolue = /^https?:/i.test(base) ? base : origine.replace(/\/+$/, '') + base;
+  return absolue.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:');
 }

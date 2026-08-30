@@ -2,6 +2,11 @@
 {{- $fullname := include "warden.fullname" . -}}
 {{- $apiOrigin := include "warden.apiOrigin" . -}}
 {{- $ws := $apiOrigin | replace "https://" "wss://" | replace "http://" "ws://" -}}
+{{- $base := include "warden.basePath" . -}}
+{{- /* En origine unique l'API est un CHEMIN, pas une origine : `connect-src
+       'self'` suffit alors, et nommer une origine de plus l'élargirait pour
+       rien. */ -}}
+{{- $connect := ternary "" (printf "%s %s" $apiOrigin $ws) (ne $base "") -}}
 # La configuration de l'interface web (ADR-0035).
 #
 # Origine DISTINCTE de l'API, ce qui est la décision d'exploitation de
@@ -22,7 +27,7 @@ data:
   # environnements : compiler l'adresse dans le bundle imposerait un build par
   # environnement, donc de ne plus déployer ce qui a été testé.
   config.json: |
-    {"apiUrl": {{ $apiOrigin | default "" | quote }}}
+    {"apiUrl": {{ $base | default $apiOrigin | default "" | quote }}}
 
   # Les en-têtes dans UN fragment inclus par chaque `location`, et pas au niveau
   # `server` : `add_header` cesse d'être hérité dès qu'un bloc enfant en déclare
@@ -37,7 +42,7 @@ data:
     # `connect-src` nomme l'API en https ET en wss : le flux d'events est un
     # WebSocket, et la CSP traite les deux schémas séparément. En oublier un
     # fait échouer le direct sans rien dire d'utile en console.
-    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' {{ $apiOrigin }} {{ $ws }}; form-action 'none'; frame-ancestors 'none'; base-uri 'self'" always;
+    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'{{ with $connect }} {{ . }}{{ end }}; form-action 'none'; frame-ancestors 'none'; base-uri 'self'" always;
 
   default.conf: |
     server {

@@ -301,35 +301,8 @@ jobs:
 
       - uses: azure/setup-helm@v4
 
-      - name: Les ressources attendues sont rendues
-        run: |
-          rendu() { helm template warden charts/warden -n warden "$@"; }
-
-          # Chaque cas nomme les Ingress attendues, parce que c'est le nombre de
-          # DOCUMENTS qui se perd, et qu'un rendu amputé reste valide.
-          verifier() {
-            titre="$1"; attendu="$2"; shift 2
-            obtenu=$(rendu "$@" \
-              | python3 -c "import yaml,sys; print(' '.join(sorted(
-                  d['metadata']['name'] for d in yaml.safe_load_all(sys.stdin)
-                  if d and d['kind'] == 'Ingress')))")
-            if [ "$obtenu" != "$attendu" ]; then
-              echo "::error::$titre — Ingress rendues « $obtenu », attendu « $attendu »"
-              return 1
-            fi
-            echo "ok — $titre : $obtenu"
-          }
-
-          echec=0
-          verifier "défauts" \
-            "warden-api warden-git" || echec=1
-          verifier "avec une interface" \
-            "warden-api warden-git warden-ui" \
-            --set ingress.ui.host=ui.exemple.test || echec=1
-          verifier "interface désactivée" \
-            "warden-api warden-git" \
-            --set ui.enabled=false --set ingress.ui.host=ui.exemple.test || echec=1
-          exit $echec
+      - name: Le routage rendu est celui attendu
+        run: python3 build/verif/routage.py
 
   publish:
     name: Publication des images

@@ -121,6 +121,12 @@ spec:
 
             - name: WARDEN_POD_NAMESPACE
               value: {{ .Release.Namespace }}
+            # Le préfixe de montage de l'API. Vide, elle reste à la racine.
+            {{- with include "warden.basePath" . }}
+            - name: WARDEN_API_BASE_PATH
+              value: {{ . | quote }}
+            {{- end }}
+
             - name: WARDEN_RUNNER_IMAGE
               value: {{ include "warden.runnerImage" . }}
 

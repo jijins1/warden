@@ -38,7 +38,39 @@ type Config struct {
 	// même raison : personne ne doit le poser par accident.
 	UICookieInsecure bool
 
+	// BasePath monte l'API sous un PRÉFIXE de chemin plutôt qu'à la racine.
+	//
+	// Il sert le déploiement à ORIGINE UNIQUE : l'interface prend la racine de
+	// l'hôte, l'API vit sous `/api`, et tout ce que l'ADR-0035 payait pour deux
+	// origines — CORS, `CheckOrigin` durci, contrainte de domaine enregistrable
+	// commun — cesse d'être nécessaire.
+	//
+	// Le retrait du préfixe est fait ICI et non par un middleware du contrôleur
+	// d'ingress : le serveur sait où il est monté, et la chart n'a pas à
+	// connaître Traefik.
+	//
+	// VIDE laisse l'API à la racine, ce qui est le déploiement à deux origines.
+	BasePath string
+
 	GracefulShutdown time.Duration
+}
+
+// souslePrefixe monte `h` sous un préfixe de chemin.
+//
+// Hors du préfixe, RIEN n'est servi : laisser l'API répondre aussi à la racine
+// masquerait l'interface, qui y vit désormais.
+func souslePrefixe(prefixe string, h http.Handler) http.Handler {
+	nu := strings.Trim(prefixe, "/")
+	if nu == "" {
+		return h
+	}
+	p := "/" + nu
+
+	mux := http.NewServeMux()
+	// `p+"/"` et non `p` : le motif de sous-arbre. Go redirige `/api` vers
+	// `/api/` de lui-même, donc les deux formes aboutissent.
+	mux.Handle(p+"/", http.StripPrefix(p, h))
+	return mux
 }
 
 // FromEnv loads configuration from environment variables.
@@ -68,6 +100,7 @@ func FromEnv() (*Config, error) {
 		DatabaseURL:      dsn,
 		InsecureDevAuth:  insecureDevAuth,
 		UIOrigins:        uiOrigins,
+		BasePath:         os.Getenv("WARDEN_API_BASE_PATH"),
 		UICookieInsecure: os.Getenv("WARDEN_UI_COOKIE_INSECURE") == "1",
 		GracefulShutdown: 30 * time.Second,
 	}, nil
@@ -360,7 +393,11 @@ func (a *Server) Handler() http.Handler {
 
 	// Le CORS enveloppe TOUT, connexion comprise : exiger une session pour
 	// obtenir les en-têtes qui permettent d'en ouvrir une n'irait nulle part.
-	return a.CORSMiddleware(racine)
+	//
+	// Le préfixe enveloppe le CORS et non l'inverse : il est une propriété du
+	// MONTAGE, pas une route, et le retirer avant toute autre décision garde les
+	// handlers ignorants de l'endroit où ils sont servis.
+	return souslePrefixe(a.cfg.BasePath, a.CORSMiddleware(racine))
 }
 
 // servir lance le serveur et bloque jusqu'à l'annulation du contexte.

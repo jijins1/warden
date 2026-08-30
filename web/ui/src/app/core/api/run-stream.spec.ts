@@ -202,4 +202,22 @@ describe('versWebSocket', () => {
     expect(versWebSocket('https://warden.example.com')).toBe('wss://warden.example.com');
     expect(versWebSocket('http://localhost:8080')).toBe('ws://localhost:8080');
   });
+
+  // MÊME ORIGINE : `apiUrl` devient un chemin, plus une origine. Laisser le
+  // navigateur résoudre marcherait, mais la garantie du `s` ne serait plus tenue
+  // par ce code — elle serait déléguée. On la garde explicite.
+  it('résout un chemin relatif sur l’origine de la page', () => {
+    expect(versWebSocket('/api', 'https://warden.example.com')).toBe(
+      'wss://warden.example.com/api',
+    );
+    expect(versWebSocket('/api', 'http://localhost:4200')).toBe('ws://localhost:4200/api');
+  });
+
+  // Une origine absolue reste prioritaire : un déploiement à deux hôtes doit
+  // continuer de fonctionner sans changer une ligne.
+  it('ignore l’origine de la page quand la base est absolue', () => {
+    expect(versWebSocket('https://api.example.com', 'https://ui.example.com')).toBe(
+      'wss://api.example.com',
+    );
+  });
 });

@@ -263,6 +263,25 @@ ingress:
   api:
     host: warden-dev.ruokki.ovh
     tlsSecret: warden-api-cert-tls
+
+    # LE CHEMIN sous lequel l'API est servie, et il décide de l'ARCHITECTURE.
+    #
+    # `/` — l'API tient la racine de son hôte, et l'interface a besoin du SIEN
+    # (`ingress.ui.host`). Deux origines : le prix est le CORS, le `CheckOrigin`
+    # durci, et une contrainte dont la violation est SILENCIEUSE — les deux
+    # hôtes doivent partager le même domaine enregistrable, sans quoi le cookie
+    # `SameSite=Strict` ne part pas, personne ne reste connecté, et rien dans les
+    # logs ne dit pourquoi.
+    #
+    # `/api` — l'interface prend la racine du MÊME hôte, l'API vit sous le
+    # préfixe, et `ingress.ui.host` n'est plus utilisé. Une seule origine : plus
+    # de CORS, plus de contrainte de domaine, un certificat de moins.
+    #
+    # CE QUE ÇA COÛTE, et ce n'est pas rien : tout client doit alors pointer
+    # `WARDEN_SERVER` — et le `server:` de chaque `.ansibleproxy.yml` — sur
+    # `https://<hôte>/api`. Les sessions ouvertes sont indexées par adresse de
+    # serveur, donc chacun devra rouvrir la sienne.
+    path: /
   git:
     host: warden-git-dev.ruokki.ovh
     tlsSecret: warden-git-cert-tls

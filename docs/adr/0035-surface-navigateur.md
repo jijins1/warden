@@ -119,6 +119,42 @@ inutile » (`core/run.go`), un Ctrl-C étant un signal fort là où un
 La colonne est `NULL` sur tout run non interrompu ; un `COALESCE` la rend vide,
 ce qui est exactement la sémantique que `Closure.Validate` impose déjà.
 
+## Amendement — l'origine unique par préfixe de chemin
+
+La décision ci-dessus reste le DÉFAUT de la chart. Elle a désormais une
+alternative, retenue pour le déploiement de développement : `ingress.api.path`.
+
+Posé à `/api`, l'interface prend la racine de l'hôte de l'API et l'API vit sous
+le préfixe. Une seule origine, donc :
+
+- le CORS ne sert plus à rien — même origine, pas de préflight ;
+- `CheckOrigin` du WebSocket est trivialement satisfait ;
+- la CONTRAINTE de domaine enregistrable commun disparaît. C'est le gain qui
+  compte le plus : sa violation était SILENCIEUSE — le cookie `SameSite=Strict`
+  ne partait pas, personne ne restait connecté, et rien dans les logs ne le
+  disait.
+
+Ce n'est PAS l'option `//go:embed` rejetée plus bas. Celle-ci embarquait la SPA
+dans le binaire Go ; ici l'artefact nginx reste séparé et déployé à part — la
+raison d'exploitation qui avait fait écarter `//go:embed` est préservée. C'est
+une troisième voie que la décision d'origine n'avait pas examinée.
+
+**Le retrait du préfixe est fait par le SERVEUR** (`WARDEN_API_BASE_PATH`), pas
+par un middleware du contrôleur d'ingress. Un `StripPrefix` Traefik aurait
+marché, mais aurait lié la chart à un contrôleur particulier ; le serveur, lui,
+sait où il est monté.
+
+**Le rôle `git` garde son hôte.** L'ADR-0027 pose que c'est la séparation par
+hôte et par port qui rend chaque surface restreignable indépendamment. Le mettre
+sous un chemin du même hôte rendrait sa restriction indissociable de celle de
+l'API — exactement ce que la séparation existe pour empêcher.
+
+**CE QUE ÇA COÛTE.** Tout client doit pointer `WARDEN_SERVER` — et le `server:`
+de chaque `.ansibleproxy.yml` — sur `https://<hôte>/api`. Les sessions sont
+indexées par adresse de serveur : chacun devra rouvrir la sienne. La CLI n'a
+demandé AUCUN changement de code, son client joignant déjà ses chemins par
+`url.URL.JoinPath`, qui préserve un chemin de base.
+
 ## Options rejetées
 
 **Servir la SPA depuis le rôle `api` (`//go:embed`).** Même origine : ni CORS, ni
