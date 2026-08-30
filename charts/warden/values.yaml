@@ -295,6 +295,19 @@ testTargets:
   # Image par défaut de toutes les cibles. Celle-ci porte Python, sans quoi
   # Ansible ne peut exécuter aucun module dessus.
   image: warden-cible-playbook
+
+  # SON REGISTRE ET SON TAG, séparés de ceux du produit — et c'est une
+  # description, pas une préférence.
+  #
+  # Cette image n'est PAS construite par ce dépôt : elle n'a ni cible `make` ni
+  # job de CI, et `build/cible.Dockerfile` part lui-même d'une image d'enrôlement
+  # publiée ailleurs. Elle ne suit donc ni le registre ni la VERSION du produit,
+  # et l'aligner de force ferait pointer les cibles vers une image inexistante.
+  #
+  # Vides, celles du produit s'appliquent.
+  registry: ""
+  tag: ""
+
   passwordKey: password
 
   # Une entrée par cible. La CLÉ du map devient le suffixe du nom :

@@ -66,7 +66,7 @@ spec:
           # L'image AVEC Python : Ansible exécute ses modules en Python sur la
           # machine distante. Celle des tests d'enrôlement en est dépourvue, et
           # doit le rester — voir `build/cible.Dockerfile`.
-          image: {{ $root.Values.image.registry }}/{{ $cible.image | default $root.Values.testTargets.image }}:{{ $root.Values.image.tag | default $root.Chart.AppVersion }}
+          image: {{ $root.Values.testTargets.registry | default $root.Values.image.registry }}/{{ $cible.image | default $root.Values.testTargets.image }}:{{ $root.Values.testTargets.tag | default $root.Values.image.tag | default $root.Chart.AppVersion }}
           imagePullPolicy: Always
           env:
             - name: CIBLE_PASSWORD
