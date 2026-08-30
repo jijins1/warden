@@ -124,6 +124,18 @@ spec:
             - name: WARDEN_RUNNER_IMAGE
               value: {{ include "warden.runnerImage" . }}
 
+            # Les secrets de tirage, DÉRIVÉS de `image.pullSecrets` — la même
+            # valeur qui les pose sur les pods de la chart.
+            #
+            # Le pod runner n'est pas créé par Helm mais par ce processus : un
+            # `imagePullSecrets` sur les Deployments ne l'atteint pas. Une seule
+            # source, pour qu'on ne puisse pas authentifier le control plane en
+            # oubliant le runner — l'oubli ne se verrait qu'au premier run.
+            {{- with .Values.image.pullSecrets }}
+            - name: WARDEN_RUNNER_PULL_SECRETS
+              value: {{ join "," . | quote }}
+            {{- end }}
+
             # Le plafond de durée d'un run, en SECONDES (décision actée n°13).
             # Il devient `activeDeadlineSeconds` sur le pod, donc il arrête un run
             # qui pend même si le contrôleur est mort — la seule protection qui ne

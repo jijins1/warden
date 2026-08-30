@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -180,6 +181,7 @@ func runController(ctx context.Context) error {
 		Namespace:   ns,
 		DispatchURL: valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid"),
 		IngestURL:   valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid"),
+		PullSecrets: secretsDeTirage(),
 	})
 	if err != nil {
 		return err
@@ -447,6 +449,25 @@ func valeurOuDefaut(nom, defaut string) string {
 	return defaut
 }
 
+// secretsDeTirage lit EnvRunnerPullSecrets, une liste séparée par des virgules.
+//
+// Les entrées vides sont écartées plutôt que transmises : une virgule en trop
+// dans un values.yaml produirait sinon un `imagePullSecrets` nommant le Secret
+// "", et le pod échouerait au tirage pour une raison sans rapport avec l'image.
+func secretsDeTirage() []string {
+	brut := os.Getenv(EnvRunnerPullSecrets)
+	if brut == "" {
+		return nil
+	}
+	var noms []string
+	for _, part := range strings.Split(brut, ",") {
+		if n := strings.TrimSpace(part); n != "" {
+			noms = append(noms, n)
+		}
+	}
+	return noms
+}
+
 func runAPI(ctx context.Context) error {
 	dsn, err := databaseURL(EnvDatabaseURL)
 	if err != nil {
@@ -599,6 +620,7 @@ func runAPI(ctx context.Context) error {
 			orch, err := orchestrator.New(k8s, orchestrator.Config{
 				Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
 				DeadlineSeconds: deadline,
+				PullSecrets:     secretsDeTirage(),
 			})
 			if err != nil {
 				return err
@@ -774,6 +796,17 @@ const (
 	EnvIngestRunnerURL = "WARDEN_INGEST_RUNNER_URL"
 	EnvPodNamespace    = "WARDEN_POD_NAMESPACE" // namespace où vivent les pods runner
 	EnvRunnerImage     = "WARDEN_RUNNER_IMAGE"  // image du runner, en attendant la configuration projet (ADR-0014)
+
+	// EnvRunnerPullSecrets nomme les Secrets d'authentification au registre,
+	// séparés par des virgules.
+	//
+	// Elle existe parce que le pod runner n'est PAS créé par la chart : un
+	// `imagePullSecrets` posé sur les Deployments ne l'atteint pas. La chart
+	// dérive cette variable de la MÊME valeur qui alimente ses propres pods, pour
+	// qu'on ne puisse pas authentifier le control plane en oubliant le runner.
+	//
+	// Absente sur un registre public.
+	EnvRunnerPullSecrets = "WARDEN_RUNNER_PULL_SECRETS"
 
 	// EnvRunDeadlineSeconds borne la durée d'un run, en SECONDES. C'est la
 	// décision actée n°13 : `activeDeadlineSeconds` sur le pod arrête un run qui

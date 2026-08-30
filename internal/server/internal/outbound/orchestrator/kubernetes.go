@@ -98,6 +98,34 @@ type Config struct {
 	// dont l'audit ne s'écrit pas ne doit pas commencer (§6.3), et le refus doit
 	// donc arriver ici, avant que le pod existe.
 	IngestURL string
+
+	// PullSecrets nomme les Secrets d'authentification au registre d'images.
+	//
+	// ICI et non dans `core.PodSpec`, alors que l'IMAGE, elle, y est : l'image
+	// est déclarée par le projet (ADR-0014), le moyen de s'authentifier au
+	// registre relève du déploiement. Les confondre laisserait un projet nommer
+	// n'importe quel Secret du namespace.
+	//
+	// Le pod runner n'est pas créé par la chart : un `imagePullSecrets` posé sur
+	// les Deployments ne l'atteint pas, et l'oubli ne se voit qu'au premier run,
+	// sous la forme d'une image introuvable.
+	//
+	// Vide sur un registre public, où nommer un Secret inexistant ferait échouer
+	// le tirage pour une raison étrangère à l'image.
+	PullSecrets []string
+}
+
+// refsDeTirage convertit les noms configurés en références Kubernetes, et rend
+// nil sur une liste vide.
+func refsDeTirage(noms []string) []corev1.LocalObjectReference {
+	if len(noms) == 0 {
+		return nil
+	}
+	refs := make([]corev1.LocalObjectReference, 0, len(noms))
+	for _, n := range noms {
+		refs = append(refs, corev1.LocalObjectReference{Name: n})
+	}
+	return refs
 }
 
 // DefaultDeadlineSeconds borne un run à deux heures par défaut.
@@ -273,6 +301,11 @@ func (k *Kubernetes) creerPod(ctx context.Context, spec core.PodSpec, etiq map[s
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
+
+			// Nil quand aucun secret n'est configuré : une liste vide et un
+			// champ absent se valent pour l'API, mais pas pour qui relit la
+			// spec d'un pod en panne.
+			ImagePullSecrets: refsDeTirage(k.cfg.PullSecrets),
 
 			// Borne le coût d'un run qui pend, MÊME SI le contrôleur est mort.
 			// C'est la décision actée n°13, et elle vaut surtout pour le cas où

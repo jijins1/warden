@@ -446,3 +446,69 @@ func TestLePodADeQuoiEcrireDansTmp(t *testing.T) {
 		t.Error("la racine n'est plus en lecture seule (§7)")
 	}
 }
+
+// monterAvecTirage monte un orchestrateur qui connaît des secrets de tirage.
+func monterAvecTirage(t *testing.T, secrets ...string) (*orchestrator.Kubernetes, *fake.Clientset) {
+	t.Helper()
+	client := fake.NewSimpleClientset()
+	k, err := orchestrator.New(client, orchestrator.Config{
+		Namespace:   ns,
+		DispatchURL: "http://warden-dispatch.warden.svc:8084",
+		IngestURL:   "http://warden-ingest.warden.svc:8085",
+		PullSecrets: secrets,
+	})
+	if err != nil {
+		t.Fatalf("orchestrator.New : %v", err)
+	}
+	return k, client
+}
+
+// TestLesSecretsDeTirageArriventSurLePodRunner.
+//
+// Le pod runner n'est PAS créé par la chart mais ici, et un `imagePullSecrets`
+// posé sur les Deployments ne l'atteint donc pas. Sur un registre privé — ce
+// qu'un package GHCR est par défaut — l'oubli ne se voit qu'au premier run, et
+// il se présente comme une image introuvable : indistinguable d'un tag faux.
+func TestLesSecretsDeTirageArriventSurLePodRunner(t *testing.T) {
+	k, client := monterAvecTirage(t, "ghcr-pull-secret", "autre-registre")
+	spec := specValide(t)
+
+	if err := k.LaunchPod(t.Context(), spec); err != nil {
+		t.Fatalf("LaunchPod : %v", err)
+	}
+
+	pod, err := client.CoreV1().Pods(ns).Get(t.Context(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("lecture du pod : %v", err)
+	}
+
+	var noms []string
+	for _, r := range pod.Spec.ImagePullSecrets {
+		noms = append(noms, r.Name)
+	}
+	if len(noms) != 2 || noms[0] != "ghcr-pull-secret" || noms[1] != "autre-registre" {
+		t.Fatalf("imagePullSecrets = %v, attendu [ghcr-pull-secret autre-registre]", noms)
+	}
+}
+
+// TestSansSecretDeTirageLePodNEnPorteAucun.
+//
+// Sur un registre public, nommer un Secret qui n'existe pas ferait échouer le
+// tirage pour une raison qui n'a rien à voir avec l'image. Le champ doit rester
+// absent, et non porter une entrée vide.
+func TestSansSecretDeTirageLePodNEnPorteAucun(t *testing.T) {
+	k, client := monter(t)
+	spec := specValide(t)
+
+	if err := k.LaunchPod(t.Context(), spec); err != nil {
+		t.Fatalf("LaunchPod : %v", err)
+	}
+
+	pod, err := client.CoreV1().Pods(ns).Get(t.Context(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("lecture du pod : %v", err)
+	}
+	if len(pod.Spec.ImagePullSecrets) != 0 {
+		t.Fatalf("imagePullSecrets = %v, attendu vide", pod.Spec.ImagePullSecrets)
+	}
+}
