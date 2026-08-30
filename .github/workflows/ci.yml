@@ -185,20 +185,6 @@ jobs:
       - name: Construction de l'image
         run: docker build -f build/ui.Dockerfile -t warden-ui:ci .
 
-      - name: Login to GHCR
-        if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push vers GHCR
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker tag warden-ui:ci ghcr.io/${{ github.repository }}/warden-ui:dev
-          docker push ghcr.io/${{ github.repository }}/warden-ui:dev
-
       - name: Démarrage
         run: |
           docker run -d --name ui -p 18080:8080 warden-ui:ci

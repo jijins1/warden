@@ -38,7 +38,7 @@ namespace:
   create: true
 
 image:
-  registry: ghcr.io/jijins1
+  registry: gitea.ruokki.ovh/ruokki
   # Le control plane : un seul binaire pour les trois rôles (ADR-0006).
   wardend: wardend
   # L'image du pod runner, REMISE au pod et jamais utilisée par le serveur.
