@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -67,6 +68,11 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// JOURNALISÉ, parce que ce 500 n'a longtemps rien laissé derrière lui :
+		// le corps ne dit rien à l'appelant — délibérément — mais l'exploitant
+		// n'avait rien non plus, et la seule façon de diagnostiquer était de
+		// rejouer la requête à la main.
+		slog.ErrorContext(r.Context(), "listing runs failed", "err", err)
 		http.Error(w, "listing runs failed", http.StatusInternalServerError)
 		return
 	}

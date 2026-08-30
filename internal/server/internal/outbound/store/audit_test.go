@@ -414,3 +414,101 @@ func TestCreateRunRefuseDepotVide(t *testing.T) {
 		t.Error("run créé sans dépôt")
 	}
 }
+
+// TestListRunsSupporteUnRunSansPlaybookNiInventaire.
+//
+// UN run d'enrôlement n'a ni playbook ni inventaire : ces colonnes sont NULL.
+// Scanner un NULL dans une chaîne nue échoue, et l'échec ne porte pas sur la
+// ligne — il fait tomber TOUTE la liste, donc l'écran d'accueil du produit.
+//
+// C'est arrivé en déploiement : 13 runs sur 29 étaient dans ce cas, `GET /runs`
+// rendait un 500, et le handler n'en journalisait rien. Les fixtures des autres
+// tests renseignent toujours ces deux colonnes, ce qui rendait le défaut
+// invisible ici.
+func TestListRunsSupporteUnRunSansPlaybookNiInventaire(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	user := mustUser(t, ctx, s, "test")
+	id := mustCreateRun(t, ctx, s, runRef(t, "004"), user.ID, "prod", "inv", "play.yml")
+
+	// Le run d'enrôlement tel que la base le porte : `kind = 'enrollment'`, une
+	// cible, et NI playbook NI inventaire. Les deux contraintes de la migration
+	// 00009 tiennent — c'est une ligne légitime, pas une donnée abîmée.
+	conn := connect(t, dsn)
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, `
+		UPDATE run
+		   SET kind = 'enrollment', enroll_target = '{"host":"cible-test"}'::jsonb,
+		       playbook = NULL, inventory = NULL,
+		       audit_sha = NULL, base_sha = NULL,
+		       mainline_ref = NULL, mainline_sha = NULL
+		 WHERE id = $1`, id); err != nil {
+		t.Fatalf("passage en run d'enrôlement : %v", err)
+	}
+
+	result, err := s.ListRuns(ctx, store.RunFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListRuns doit supporter un run sans playbook ni inventaire : %v", err)
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("%d runs, attendu 1", len(result.Runs))
+	}
+	if result.Runs[0].Playbook != "" || result.Runs[0].Inventory != "" {
+		t.Errorf("playbook=%q inventory=%q, attendus vides",
+			result.Runs[0].Playbook, result.Runs[0].Inventory)
+	}
+}
+
+// Le même défaut, sur l'autre chemin de lecture.
+//
+// `RunsByHost` remplit le MÊME RunListItem que `ListRuns`, et un run
+// d'enrôlement touche par définition une machine — il apparaît donc dans cet
+// historique. Corriger un seul des deux chemins aurait laissé l'écran « runs par
+// machine » tomber exactement de la même façon.
+func TestRunsByHostSupporteUnRunDEnrolement(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	user := mustUser(t, ctx, s, "test")
+	id := mustCreateRun(t, ctx, s, runRef(t, "005"), user.ID, "prod", "inv", "play.yml")
+	if err := s.MarkRunning(ctx, id, "pod-test"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+
+	conn := connect(t, dsn)
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, `
+		UPDATE run
+		   SET kind = 'enrollment', enroll_target = '{"host":"cible-test"}'::jsonb,
+		       playbook = NULL, inventory = NULL,
+		       audit_sha = NULL, base_sha = NULL,
+		       mainline_ref = NULL, mainline_sha = NULL
+		 WHERE id = $1`, id); err != nil {
+		t.Fatalf("passage en run d'enrôlement : %v", err)
+	}
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO event (run_id, run_day, seq, occurred_at, host, state, payload)
+		VALUES ($1, (SELECT run_day FROM run WHERE id = $1), 1, now(), 'cible-test', 'ok', '{}'::jsonb)`,
+		id); err != nil {
+		t.Fatalf("event : %v", err)
+	}
+
+	runs, err := s.RunsByHost(ctx, "cible-test", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("RunsByHost doit supporter un run d'enrôlement : %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("%d runs, attendu 1", len(runs))
+	}
+}

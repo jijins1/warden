@@ -70,7 +70,13 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, 
 
 	// Build query
 	query := `
-		SELECT id, run_ref, user_id, repo, environment, inventory, playbook,
+		SELECT id, run_ref, user_id, repo, environment,
+		       -- COALESCE et pas seulement sur la cause : un run d'ENRÔLEMENT
+		       -- n'a ni inventaire ni playbook, et la migration 00009 l'autorise
+		       -- expressément. Sans ces deux-ci, la première ligne de ce genre
+		       -- fait échouer le scan — donc la liste ENTIÈRE, donc l'écran
+		       -- d'accueil du produit, pour un run parfaitement valide.
+		       COALESCE(inventory, ''), COALESCE(playbook, ''),
 		       state, COALESCE(termination_cause, ''), started_at, ended_at, changed_count,
 		       secrets_unmasked
 		FROM run
@@ -178,8 +184,13 @@ func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.T
 	}
 
 	query := `
-		SELECT DISTINCT r.id, r.run_ref, r.user_id, r.repo, r.environment, r.inventory,
-		       r.playbook, r.state, COALESCE(r.termination_cause, ''), r.started_at, r.ended_at,
+		SELECT DISTINCT r.id, r.run_ref, r.user_id, r.repo, r.environment,
+		       -- Même raison qu'au-dessus : un run d'ENRÔLEMENT n'a ni
+		       -- inventaire ni playbook, et il touche une machine — donc il
+		       -- apparaît ici. Sans ces COALESCE, consulter l'historique d'une
+		       -- machine enrôlée échouerait entièrement.
+		       COALESCE(r.inventory, ''), COALESCE(r.playbook, ''),
+		       r.state, COALESCE(r.termination_cause, ''), r.started_at, r.ended_at,
 		       r.changed_count, r.secrets_unmasked
 		FROM event e
 		JOIN run r ON e.run_id = r.id
