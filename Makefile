@@ -79,12 +79,19 @@ test-e2e: images ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée
 # des binaires établit.
 # ---------------------------------------------------------------------------
 
-# Le chemin d'un paquet Gitea est `<hôte>/<propriétaire>/<image>`, et le
-# propriétaire doit EXISTER — un utilisateur ou une organisation. Un propriétaire
-# inventé ne produit pas une erreur d'autorisation mais un 404 à l'envoi du
-# premier blob, ce qui se lit comme une panne de registre.
-REGISTRY ?= gitea.ruokki.ovh
-REGISTRY_OWNER ?= ruokki
+# Le chemin d'un paquet est `<hôte>/<propriétaire>/<image>`, et le propriétaire
+# doit EXISTER — un utilisateur ou une organisation. Un propriétaire inventé ne
+# produit pas une erreur d'autorisation mais un 404 à l'envoi du premier blob, ce
+# qui se lit comme une panne de registre.
+#
+# GHCR et non un registre tiers : `origin` est GitHub, donc la CI y publie avec
+# le `GITHUB_TOKEN` du run, qui expire avec lui. Publier ailleurs demanderait de
+# déposer un identifiant de longue durée dans les secrets du dépôt.
+#
+# `REGISTRY_OWNER` reste surchargeable, et la CI le renseigne depuis
+# `github.repository_owner` : un fork publie ainsi chez lui, pas ici.
+REGISTRY ?= ghcr.io
+REGISTRY_OWNER ?= jijins1
 IMAGE_TAG ?= dev
 
 IMAGE_BASE := $(REGISTRY)/$(REGISTRY_OWNER)

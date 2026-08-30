@@ -38,7 +38,14 @@ namespace:
   create: true
 
 image:
-  registry: gitea.ruokki.ovh/ruokki
+  # Le registre des TROIS images, et elles n'en ont qu'un.
+  #
+  # Le code, la CI et les images vivent sur la même plateforme : `origin` est
+  # GitHub, donc `GITHUB_TOKEN` suffit à publier et aucun identifiant de longue
+  # durée n'a à être stocké. Publier ailleurs demanderait d'en déposer un dans
+  # les secrets du dépôt, ce qui ajoute un secret à faire tourner sans rien
+  # acheter.
+  registry: ghcr.io/jijins1
   # Le control plane : un seul binaire pour les trois rôles (ADR-0006).
   wardend: wardend
   # L'image du pod runner, REMISE au pod et jamais utilisée par le serveur.
@@ -48,6 +55,17 @@ image:
   # Vide, `.Chart.AppVersion` s'applique.
   tag: ""
   pullPolicy: IfNotPresent
+
+  # Les Secrets de tirage, À POSER AVANT l'installation quand le registre est
+  # privé — ce qu'un package GHCR est par défaut :
+  #
+  #   kubectl create secret docker-registry ghcr-pull-secret -n <ns> \
+  #     --docker-server=ghcr.io --docker-username=<compte> \
+  #     --docker-password=<jeton avec read:packages>
+  #
+  # Vide sur un registre public, où l'ajouter ne ferait qu'exposer un jeton de
+  # plus au cluster.
+  pullSecrets: []
 
 ui:
   # L'interface web. Désactivable : un déploiement piloté uniquement à la CLI

@@ -69,6 +69,27 @@ tiennent pas à la main.
 {{- end -}}
 
 {{/*
+Les Secrets de tirage d'images.
+
+Un package GHCR est PRIVÉ par défaut, et un cluster qui n'a pas de quoi
+s'authentifier ne le dit pas clairement : le pod reste en `ImagePullBackOff`,
+dont le message parle d'une image « not found » — indistinguable d'un tag qui
+n'existe pas.
+
+Le Secret n'est PAS créé par la chart : c'est un identifiant de registre, et un
+identifiant dans un dépôt git est un identifiant publié. Même raison que
+`internalSecret`.
+*/}}
+{{- define "warden.imagePullSecrets" -}}
+{{- with .Values.image.pullSecrets }}
+imagePullSecrets:
+  {{- range . }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Le Secret de connexion à la base.
 
 CNPG publie `<cluster>-app`, dont la clé `uri` est directement la chaîne attendue

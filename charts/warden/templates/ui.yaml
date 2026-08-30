@@ -25,6 +25,7 @@ spec:
     spec:
       securityContext:
         {{- include "warden.podSecurityContext" . | nindent 8 }}
+      {{- include "warden.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: ui
           image: {{ include "warden.uiImage" . }}

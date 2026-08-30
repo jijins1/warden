@@ -60,6 +60,7 @@ spec:
       # PAS de jeton de service : ces cibles n'ont aucune raison de parler à
       # l'API Kubernetes, et un playbook d'essai qui tournerait dessus non plus.
       automountServiceAccountToken: false
+      {{- include "warden.imagePullSecrets" $root | nindent 6 }}
       containers:
         - name: sshd
           # L'image AVEC Python : Ansible exécute ses modules en Python sur la

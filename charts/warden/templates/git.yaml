@@ -59,6 +59,7 @@ spec:
         # protection active depuis 2.35.2 — et le symptôme est un HTTP 500 sur
         # chaque push, dont la cause n'apparaît que dans les journaux du pod.
         fsGroup: 65532
+      {{- include "warden.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: git
           image: {{ include "warden.image" . }}

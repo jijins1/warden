@@ -280,3 +280,37 @@ jobs:
       - name: Arrêt
         if: always()
         run: docker rm -f ui || true
+
+  publish:
+    name: Publication des images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Sur `main` SEULEMENT, et après TOUT le reste. Une image publiée est tirée
+    # par le déploiement dès qu'elle existe : la publier avant les vérifications
+    # ferait de `:dev` un artefact dont personne n'a rien dit.
+    if: github.ref == 'refs/heads/main'
+    needs: [build, lint, test, integration, web, web-image]
+
+    # `packages: write` uniquement ici. Le workflow est en `contents: read`, et
+    # ce job est le seul qui publie quoi que ce soit.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # La cible make, et pas des `docker build` recopiés : ce qui est publié
+      # doit être ce que `make images` construit en local, sinon les deux
+      # dérivent et c'est la CI qui a raison sans que personne le sache.
+      #
+      # `REGISTRY_OWNER` vient du dépôt : un fork publie chez lui.
+      - name: Construction et publication des trois images
+        run: make images-push REGISTRY=ghcr.io REGISTRY_OWNER=${{ github.repository_owner }}

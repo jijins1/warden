@@ -35,6 +35,7 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- include "warden.podSecurityContext" . | nindent 8 }}
+      {{- include "warden.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: migrate
           image: {{ include "warden.image" . }}
