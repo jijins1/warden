@@ -20,7 +20,28 @@ import { EventDiffDialog } from './event-diff-dialog';
 import { EventFrame } from '../../core/api/wire-ws';
 
 /** Filtres d'affichage. Purement locaux : le flux, lui, reçoit tout. */
-type Filtre = 'all' | 'changed' | 'failed' | 'unreachable';
+type Filtre = 'all' | 'results' | 'changed' | 'failed' | 'unreachable';
+
+/**
+ * La sortie texte d'un event, quand il en porte une.
+ *
+ * Le payload vient d'un module Ansible, donc de la MACHINE GÉRÉE : sa forme
+ * n'est pas garantie. Tout ce qui n'est pas une chaîne utile rend vide, plutôt
+ * que d'afficher « [object Object] » ou de lever au milieu d'un rendu.
+ *
+ * Ce texte est déjà EXPURGÉ : le rapporteur du runner masque le payload entier
+ * avant qu'il quitte le pod (ADR-0017), et abandonne le payload plutôt que de
+ * l'émettre si la rédaction est invérifiable. L'afficher n'élargit donc pas la
+ * surface d'audit — contrairement au payload `--diff`, qui a son propre
+ * contrôle d'accès et reste chargé à part.
+ */
+export function sortieDe(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  const brut = (payload as Record<string, unknown>)['stdout'];
+  return typeof brut === 'string' ? brut.trimEnd() : '';
+}
 
 @Component({
   selector: 'w-event-stream',
@@ -37,7 +58,7 @@ export class EventStream {
   readonly #dialogue = inject(MatDialog);
 
   protected readonly filtre = signal<Filtre>('all');
-  protected readonly filtres: Filtre[] = ['all', 'changed', 'failed', 'unreachable'];
+  protected readonly filtres: Filtre[] = ['all', 'results', 'changed', 'failed', 'unreachable'];
 
   /**
    * Suivre le bas du flux, sauf si l'utilisateur est remonté.
@@ -57,6 +78,14 @@ export class EventStream {
     }
     // Les marques de reprise SURVIVENT au filtre : elles disent que rien n'a été
     // perdu, et cette affirmation ne dépend pas de ce qu'on regarde.
+    if (f === 'results') {
+      // `unknown` est l'état des events de CYCLE DE VIE d'Ansible —
+      // `playbook_on_start`, `_on_task_start`, `verbose`. Ils n'ont ni machine
+      // ni résultat, et ils sont les plus nombreux : sur un run mesuré, 164 de
+      // ces lignes noyaient les 76 qui portent un résultat. Ce filtre les
+      // écarte sans obliger à se restreindre à un seul état.
+      return toutes.filter((l) => l.kind === 'resume' || l.event.state !== 'unknown');
+    }
     return toutes.filter((l) => l.kind === 'resume' || l.event.state === (f as EventState));
   });
 
@@ -93,7 +122,13 @@ export class EventStream {
   protected ouvrirDiff(e: EventFrame): void {
     this.#dialogue.open(EventDiffDialog, {
       width: 'min(880px, 92vw)',
-      data: { runRef: this.runRef(), seq: e.seq, tache: e.task_name, hote: e.host },
+      data: {
+        runRef: this.runRef(),
+        seq: e.seq,
+        tache: e.task_name,
+        hote: e.host,
+        sortie: sortieDe(e.payload),
+      },
     });
   }
 

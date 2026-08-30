@@ -1,5 +1,5 @@
 <h2 mat-dialog-title>
-  Diff — event <span class="w-mono">{{ donnees.seq }}</span>
+  Event <span class="w-mono">{{ donnees.seq }}</span>
 </h2>
 
 <mat-dialog-content>
@@ -15,6 +15,19 @@
     <mat-icon>visibility_off</mat-icon>
     <span>Module output. Redacted server-side, but treat it as sensitive.</span>
   </p>
+
+  <!-- LA SORTIE D'ABORD, et sans attendre : elle arrive avec l'event par le
+       flux, là où le diff demande un aller au serveur. C'est aussi elle qu'on
+       vient lire quand une tâche a échoué — le diff dit ce qui a changé, la
+       sortie dit pourquoi. -->
+  @if (donnees.sortie) {
+    <h3 class="titre-bloc">Output</h3>
+    <!-- Interpolation, jamais `innerHTML` : le contenu vient d'une machine
+         auditée et n'est pas de confiance. -->
+    <pre class="charge"><code>{{ donnees.sortie }}</code></pre>
+  }
+
+  <h3 class="titre-bloc">Diff</h3>
 
   @if (chargement()) {
     <mat-progress-bar mode="indeterminate" />

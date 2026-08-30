@@ -11,6 +11,18 @@ export interface DonneesDiffEvent {
   readonly seq: number;
   readonly tache?: string;
   readonly hote?: string;
+
+  /**
+   * La sortie texte de l'event, DÉJÀ transmise par le flux.
+   *
+   * Elle ne coûte donc aucun aller au serveur, contrairement au diff : celui-ci
+   * vit dans une table à contrôle d'accès distinct et se charge à la demande.
+   *
+   * Elle est expurgée à la source (ADR-0017) — le rapporteur masque le payload
+   * entier avant qu'il quitte le pod, et l'abandonne si la rédaction est
+   * invérifiable. L'afficher n'élargit pas la surface d'audit.
+   */
+  readonly sortie?: string;
 }
 
 /**

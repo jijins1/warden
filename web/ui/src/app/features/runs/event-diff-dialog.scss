@@ -43,3 +43,15 @@
 
 .rien { color: var(--mat-sys-on-surface-variant); }
 .erreur { color: var(--w-failed); }
+
+/* Les deux blocs du dialogue : la sortie, puis le diff. Un intertitre parce
+   qu'ils viennent de deux endroits — l'un du flux, l'autre d'un endpoint à
+   contrôle d'accès distinct — et que les confondre serait trompeur. */
+.titre-bloc {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
