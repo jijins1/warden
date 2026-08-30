@@ -280,8 +280,9 @@ jobs:
       - name: Push de l'image
         if: github.ref == 'refs/heads/main'
         run: |
-          docker tag warden-ui:ci gitea.ruokki.ovh/ruokki/warden-ui:dev
-          docker push gitea.ruokki.ovh/ruokki/warden-ui:dev 2>&1 || true
+          docker tag warden-ui:ci ghcr.io/${{ github.repository }}/warden-ui:dev
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+          docker push ghcr.io/${{ github.repository }}/warden-ui:dev
 
       - name: Arrêt
         if: always()
