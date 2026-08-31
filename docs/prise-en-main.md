@@ -28,7 +28,28 @@ le reste est refusé.
 
 ---
 
-## 1. Configuration de la CLI
+## 1. Installer la CLI
+
+```sh
+make install
+```
+
+Construit `warden` et le pose dans `~/.local/bin` — le répertoire que la
+convention XDG réserve aux binaires d'un utilisateur, et que les distributions
+récentes mettent dans le `PATH` sans rien demander. Si ce n'est pas le cas chez
+vous, la cible le dit et donne la ligne à ajouter ; elle ne modifie aucun
+fichier de configuration à votre place.
+
+Ailleurs qu'à cet endroit : `make install PREFIX=/usr/local`, avec les droits
+correspondants. Et `make uninstall` pour retirer ce que `make install` a posé.
+
+> Pas `go install` : il dépose dans `$(go env GOPATH)/bin`, qui est rarement
+> dans le `PATH`. L'échec est alors trompeur — l'installation réussit, puis la
+> commande reste introuvable.
+
+---
+
+## 2. Configuration de la CLI
 
 Deux adresses, parce que la CLI parle à deux surfaces qui n'ont ni le même
 protocole ni la même politique. **Il n'y a pas de drapeau `--server`.**
@@ -46,7 +67,7 @@ administrer des clés et des machines ne pousse aucun commit.
 `WARDEN_SERVER` peut elle aussi venir du fichier de projet (§6 bis), auquel cas
 la variable d'environnement la surcharge.
 
-## 2. Ouvrir une session
+## 3. Ouvrir une session
 
 ```sh
 warden login --subject alice     # le mot de passe est demandé au terminal
@@ -80,7 +101,7 @@ presque toujours faible parce qu'il faut le dicter.
 > `wardend` (le binaire serveur) n'a que `add | passwd | list`. Désactiver un
 > compte se fait depuis la CLI : `warden user disable --subject <compte>`.
 
-## 3. Accorder le droit sur l'environnement — par GitOps
+## 4. Accorder le droit sur l'environnement — par GitOps
 
 **Aucune commande n'écrit les droits.** La source est le document de
 déploiement, réconcilié par le rôle `controller` :
@@ -112,7 +133,7 @@ lire » se ressemblent trop.
 warden grant list                # vue d'audit : les révoqués sont affichés aussi
 ```
 
-## 4. La clé d'accès de l'environnement
+## 5. La clé d'accès de l'environnement
 
 ```sh
 warden key generate --env prod   # la partie privée ne quitte JAMAIS le cluster
@@ -126,7 +147,7 @@ Ou importer une paire existante : `warden key import --env prod --key-file <chem
 Une clé par environnement, partagée par ses machines : les logs de l'hôte diront
 `ansible`, pas `alice`. La non-répudiation s'arrête à la frontière du produit.
 
-## 5. Les machines
+## 6. Les machines
 
 Deux modes, qui convergent sur le même état final.
 
@@ -175,7 +196,7 @@ premier contact fait confiance à ce qui répond.
 > `host forget` retire la ligne d'inventaire. Il ne retire **pas** la clé
 > publique de l'`authorized_keys` de la machine.
 
-## 6. Configurer le dépôt — ⚠ pas de commande
+## 7. Configurer le dépôt — ⚠ pas de commande
 
 Un dépôt doit être connu du serveur avant qu'on puisse y lancer un run. **La CLI
 n'a pas de commande pour ça** ; l'endpoint existe, il faut l'appeler à la main.
@@ -199,7 +220,7 @@ curl -X PUT "$WARDEN_SERVER/admin/repos/mon-depot" \
 détient — un dépôt qui déclarerait lui-même la sienne choisirait ce que le
 serveur vérifie.
 
-## 7. Lancer un playbook
+## 8. Lancer un playbook
 
 Depuis un clone local du dépôt :
 

@@ -161,6 +161,47 @@ chart-push: ## Publie le chart OCI en $(CHART_VERSION) (exige `helm registry log
 	helm push dist/warden-$(CHART_VERSION).tgz oci://$(IMAGE_BASE)/charts
 
 # ---------------------------------------------------------------------------
+# La CLI, sur le poste de l'utilisateur.
+# ---------------------------------------------------------------------------
+
+# `~/.local/bin` et non `$(go env GOPATH)/bin`, qui serait pourtant ce que
+# `go install` ferait : ce répertoire est celui que la convention XDG réserve
+# aux binaires d'un utilisateur, et les distributions récentes le mettent dans
+# le PATH sans rien demander. GOPATH/bin, lui, y est rarement — et l'échec est
+# alors trompeur : l'installation réussit, puis `warden` reste introuvable.
+#
+# Surchargeable : `make install PREFIX=/usr/local` pour une installation
+# système, qui demandera les droits correspondants.
+PREFIX ?= $(HOME)/.local
+BINDIR := $(PREFIX)/bin
+
+.PHONY: install
+install: ## Installe la CLI `warden` pour l'utilisateur courant (~/.local/bin)
+	@mkdir -p "$(BINDIR)"
+	go build -trimpath -o "$(BINDIR)/warden" ./cmd/warden
+	@echo "installé : $(BINDIR)/warden"
+	@case ":$$PATH:" in \
+	  *":$(BINDIR):"*) ;; \
+	  *) echo; \
+	     echo "ATTENTION — $(BINDIR) n'est pas dans votre PATH."; \
+	     echo "La commande restera introuvable tant qu'il n'y sera pas :"; \
+	     echo; \
+	     echo "    export PATH=\"$(BINDIR):\$$PATH\""; \
+	     echo; \
+	     echo "À ajouter au fichier d'initialisation de votre shell pour que ce"; \
+	     echo "soit durable (~/.zshrc, ~/.bashrc)." ;; \
+	esac
+	@echo
+	@echo "Pour joindre un serveur, poser son adresse puis ouvrir une session :"
+	@echo "    export WARDEN_SERVER=https://<hôte>"
+	@echo "    warden login --subject <compte>"
+
+.PHONY: uninstall
+uninstall: ## Retire la CLI installée par `make install`
+	rm -f "$(BINDIR)/warden"
+	@echo "retiré : $(BINDIR)/warden"
+
+# ---------------------------------------------------------------------------
 # Base de développement.
 #
 # Séparée des tests : ceux-ci démarrent leur propre PostgreSQL jetable par
