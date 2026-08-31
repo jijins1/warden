@@ -55,3 +55,35 @@
   text-transform: uppercase;
   opacity: 0.7;
 }
+
+/* L'action : module, commande, code de retour. Une liste de définition parce
+   que ce sont des paires nom/valeur, et qu'un lecteur d'écran les annonce
+   comme telles. */
+.action {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+
+  dt {
+    font-weight: 600;
+    opacity: 0.7;
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* Un code de retour non nul est la première chose qu'on cherche sur un run
+     rouge : il ne doit pas se lire comme les autres valeurs. */
+  .ech {
+    color: var(--w-echec, #b3261e);
+    font-weight: 600;
+  }
+}
+
+.charge.err {
+  color: var(--w-echec, #b3261e);
+}

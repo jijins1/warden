@@ -16,15 +16,51 @@
     <span>Module output. Redacted server-side, but treat it as sensitive.</span>
   </p>
 
-  <!-- LA SORTIE D'ABORD, et sans attendre : elle arrive avec l'event par le
-       flux, là où le diff demande un aller au serveur. C'est aussi elle qu'on
-       vient lire quand une tâche a échoué — le diff dit ce qui a changé, la
-       sortie dit pourquoi. -->
-  @if (donnees.sortie) {
-    <h3 class="titre-bloc">Output</h3>
-    <!-- Interpolation, jamais `innerHTML` : le contenu vient d'une machine
-         auditée et n'est pas de confiance. -->
-    <pre class="charge"><code>{{ donnees.sortie }}</code></pre>
+  <!-- CE QUE LA TÂCHE A FAIT, et sans attendre : tout arrive avec l'event par
+       le flux, là où le diff demande un aller au serveur. C'est aussi ce qu'on
+       vient lire quand une tâche a échoué — le diff dit ce qui a changé, ceci
+       dit ce qui a été lancé et ce que la machine a répondu. -->
+  @if (donnees.detail; as d) {
+    @if (d.module || d.commande || d.code !== null) {
+      <dl class="action">
+        @if (d.module) {
+          <dt>Module</dt>
+          <dd class="w-mono">{{ d.module }}</dd>
+        }
+        @if (d.commande) {
+          <dt>Command</dt>
+          <dd class="w-mono">{{ d.commande }}</dd>
+        }
+        @if (d.code !== null) {
+          <dt>Exit code</dt>
+          <dd class="w-mono" [class.ech]="d.code !== 0">{{ d.code }}</dd>
+        }
+      </dl>
+    }
+
+    <!-- `no_log` est une décision prise DANS le playbook, par le seul endroit
+         qui sache pourquoi cette tâche est sensible. La contredire ici serait
+         rendre visible ce que son auteur a demandé de taire. -->
+    @if (d.censure) {
+      <p class="rien">This task is marked <code>no_log</code>. Its output is withheld.</p>
+    }
+
+    @if (d.message) {
+      <h3 class="titre-bloc">Message</h3>
+      <pre class="charge"><code>{{ d.message }}</code></pre>
+    }
+
+    @if (d.sortie) {
+      <h3 class="titre-bloc">Output</h3>
+      <!-- Interpolation, jamais `innerHTML` : le contenu vient d'une machine
+           auditée et n'est pas de confiance. -->
+      <pre class="charge"><code>{{ d.sortie }}</code></pre>
+    }
+
+    @if (d.erreur) {
+      <h3 class="titre-bloc">Stderr</h3>
+      <pre class="charge err"><code>{{ d.erreur }}</code></pre>
+    }
   }
 
   <h3 class="titre-bloc">Diff</h3>

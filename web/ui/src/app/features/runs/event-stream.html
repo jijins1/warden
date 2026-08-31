@@ -62,6 +62,11 @@
         <span class="tache" [matTooltip]="ligne.event.task_name ?? ''">
           {{ ligne.event.task_name || '—' }}
         </span>
+        <!-- LE MODULE, parce que le nom de tâche dit l'intention et pas
+             l'action : « configurer le pare-feu » ne distingue pas une lecture
+             d'une écriture. Le préfixe de collection est retiré, il se répète
+             sur chaque ligne. -->
+        <span class="module w-mono">{{ moduleDe(ligne.event) }}</span>
         <span class="hote w-mono">{{ ligne.event.host || '' }}</span>
         <span class="role w-mono">{{ ligne.event.role || '' }}</span>
         <span class="heure w-mono">{{ ligne.event.occurred_at | date: 'HH:mm:ss' }}</span>

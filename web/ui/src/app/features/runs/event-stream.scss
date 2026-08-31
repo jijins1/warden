@@ -94,7 +94,10 @@
   cursor: pointer;
 
   display: grid;
-  grid-template-columns: 52px 116px minmax(120px, 1fr) 112px 96px 62px;
+  // SEPT colonnes : seq, état, tâche, MODULE, machine, rôle, heure.
+  // Le module s'insère après la tâche parce qu'il la qualifie — « configurer le
+  // pare-feu » ne dit pas si l'on lit ou si l'on écrit, `command` le dit.
+  grid-template-columns: 52px 116px minmax(120px, 1fr) 104px 112px 96px 62px;
   align-items: center;
   gap: var(--w-gap-3);
   height: var(--w-row-dense);

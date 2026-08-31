@@ -5,6 +5,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { DiffsService } from '../../core/api/diffs.service';
 import { ApiError } from '../../core/http/api-error';
+import { DetailEvent } from './event-stream';
 
 export interface DonneesDiffEvent {
   readonly runRef: string;
@@ -13,7 +14,7 @@ export interface DonneesDiffEvent {
   readonly hote?: string;
 
   /**
-   * La sortie texte de l'event, DÉJÀ transmise par le flux.
+   * Ce que la tâche a fait, DÉJÀ transmis par le flux.
    *
    * Elle ne coûte donc aucun aller au serveur, contrairement au diff : celui-ci
    * vit dans une table à contrôle d'accès distinct et se charge à la demande.
@@ -22,7 +23,7 @@ export interface DonneesDiffEvent {
    * entier avant qu'il quitte le pod, et l'abandonne si la rédaction est
    * invérifiable. L'afficher n'élargit pas la surface d'audit.
    */
-  readonly sortie?: string;
+  readonly detail?: DetailEvent;
 }
 
 /**
