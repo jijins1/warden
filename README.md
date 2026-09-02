@@ -301,6 +301,32 @@ wrong machine is the pinned host key, not the shape of this field ([ADR-0036]).
 
 ---
 
+## Finding a command
+
+The help is **drawered**: three levels, each answering the question of its level.
+
+```sh
+warden --help                # every command, one line each
+warden help host             # what `host` does, and its verbs
+warden help host declare     # one verb: usage, flags, examples
+warden host declare --help   # the same page, from the invocation
+```
+
+`--help` is recognised anywhere on the line. Help you asked for goes to stdout
+and exits **0** — it is a command that succeeded. An incomplete, unknown or
+malformed command goes to stderr, exits **1**, and shows only what concerns it:
+
+```
+$ warden hots
+warden: "hots" n'est pas une commande de « warden ». Vouliez-vous dire "host" ?
+```
+
+Flag documentation is rendered from the real `flag.FlagSet`, and two tests
+assert the correspondence both ways — a flag added without a help entry fails the
+suite rather than staying invisible.
+
+---
+
 ## Architecture
 
 ### Three trust domains, three binaries

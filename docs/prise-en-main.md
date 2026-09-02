@@ -3,7 +3,8 @@
 Le chemin complet, de rien du tout à un playbook qui tourne sur une machine.
 
 Écrit en suivant les commandes sur le déploiement de référence, pas de mémoire :
-chaque étape a été exécutée. Ce qui n'a pas de commande est signalé comme tel.
+chaque étape a été exécutée. Ce qui n'a pas de commande est signalé comme tel ;
+à ce jour, seule la pose du premier administrateur en est là.
 
 ---
 
@@ -295,6 +296,11 @@ le mauvais point de comparaison pour tous les runs du dépôt, et c'est ce momen
 qui existe pour l'attraper. `--mainline-ref` la corrige, `--yes` saute la
 question dans un script.
 
+`mainline_ref` n'est pas décoratif : c'est la branche protégée contre laquelle le
+`pre-receive` contrôle la fraîcheur du commit d'audit, et c'est le serveur qui la
+détient — un dépôt qui déclarerait lui-même la sienne choisirait ce que le
+serveur vérifie.
+
 > **Si votre `origin` est en SSH**, la déduction échoue en le disant : le serveur
 > ne sait cloner qu'en http(s). Donnez la forme http du même dépôt avec
 > `--remote-url`.
@@ -318,11 +324,6 @@ quand il est donné.
 > relit `.ansibleproxy.yml` depuis l'arbre du commit et **refuse les clés qu'il
 > ne connaît pas** : contre un serveur plus ancien, cette ligne fait échouer
 > *tous* les runs du dépôt.
-
-`mainline_ref` n'est pas décoratif : c'est la branche protégée contre laquelle le
-`pre-receive` contrôle la fraîcheur du commit d'audit, et c'est le serveur qui la
-détient — un dépôt qui déclarerait lui-même la sienne choisirait ce que le
-serveur vérifie.
 
 ## 8. Lancer un playbook
 
@@ -421,6 +422,34 @@ warden repo declare
 
 # 5. le run
 warden submit --repo mon-depot --playbook play.yml --env staging --inventory hosts
+```
+
+
+---
+
+## Trouver une commande
+
+L'aide est **à tiroir** : trois niveaux, chacun répondant à la question de son
+niveau.
+
+```sh
+warden --help                    # les commandes, une ligne chacune
+warden help host                 # ce que « host » fait, et ses verbes
+warden help host declare         # un verbe : usage, drapeaux, exemples
+warden host declare --help       # la même page, depuis l'invocation
+```
+
+`--help` est reconnu **n'importe où** dans la ligne : `warden enroll --env prod
+--help` répond par la page d'`enroll`, et non par une erreur de drapeau.
+
+Une aide demandée sort sur la sortie standard et rend **0** — c'est une commande
+qui a réussi. Une commande incomplète, inconnue ou mal formée sort sur l'erreur
+standard et rend **1**, en ne montrant que ce qui la concerne :
+
+```
+$ warden hots
+warden: "hots" n'est pas une commande de « warden ». Vouliez-vous dire "host" ?
+« warden --help » les liste toutes.
 ```
 
 ---

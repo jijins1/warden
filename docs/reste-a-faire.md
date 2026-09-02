@@ -97,6 +97,10 @@ ouverts, et c'est désormais le seul manque de ce lot.
 - [x] ~~**Aucune commande pour déclarer un dépôt.**~~ Résolu (2026-09-02) :
   `warden repo declare` déduit le descripteur du dépôt courant, l'affiche et le
   fait confirmer. Le `curl` de la prise en main a disparu.
+- [x] ~~**L'aide est un mur de cent lignes.**~~ Résolu (2026-09-02) : l'arbre de
+  `internal/cli/internal/command` a remplacé `texteUsage`, et deux tests
+  vérifient que les drapeaux documentés existent et que les drapeaux réels sont
+  documentés.
 
 - [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est un manque de
   FONCTIONNALITÉ.** `warden submit` n'accepte que `--repo`, `--playbook`,
