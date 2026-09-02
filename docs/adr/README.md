@@ -49,6 +49,7 @@ d'implémentation prises en cours de route.
 | [0034](0034-schema-du-fichier-de-projet.md) | Schéma de `.ansibleproxy.yml` : substitution fermée, noms réservés, et ce que l'allowlist protège vraiment | Accepted |
 | [0035](0035-surface-navigateur.md) | Surface navigateur : une origine déclarée, un cookie, et UNE seule allowlist | Accepted |
 | [0036](0036-adresse-ou-nom-resoluble.md) | L'adresse d'une machine accepte un nom, et le risque change de main | Accepted |
+| [0037](0037-enrolement-depuis-linventaire-ansible.md) | Enrôler depuis l'inventaire Ansible, et ne pas devenir Ansible | Accepted |
 
 ## Convention
 

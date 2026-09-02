@@ -10,6 +10,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/jijins1/warden/internal/cli/internal/ansible"
 	"github.com/jijins1/warden/internal/cli/internal/client"
 )
 
@@ -60,6 +61,58 @@ func DeclarerHotes(ctx context.Context, api *client.Client, chemin, environnemen
 		"Leur authorized_keys doit déjà contenir la clé de l'environnement\n"+
 		"(`warden key show --env <nom>` l'affiche).\n")
 	return nil
+}
+
+// DeclarerDepuisInventaire enregistre les machines de l'inventaire du dépôt qui
+// ne sont pas encore connues du serveur.
+//
+// Le mode reste `declared` — warden n'a rien posé, il enregistre. Ce que cette
+// commande supprime n'est pas l'étape de pose de clé, c'est la RESSAISIE : la
+// flotte est déjà décrite par l'inventaire Ansible, et la décrire une seconde
+// fois pour warden crée une vérité de plus à tenir à jour.
+func DeclarerDepuisInventaire(ctx context.Context, api *client.Client, o OptionsInventaire, sortie io.Writer) error {
+	plan, err := PreparerLot(ctx, api, o, sortie)
+	if err != nil {
+		return err
+	}
+	if len(plan.Manquantes) == 0 || o.DryRun {
+		return nil
+	}
+
+	inv := client.Inventory{Hosts: make([]client.Host, 0, len(plan.Manquantes))}
+	for _, m := range plan.Manquantes {
+		inv.Hosts = append(inv.Hosts, VersHost(m, plan.Environnement))
+	}
+	if err := verifier(inv, plan.Environnement); err != nil {
+		return err
+	}
+
+	hotes, err := api.DeclareHosts(ctx, plan.Environnement, inv)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(sortie, "\n%d machine(s) enrôlée(s)\n\n", len(hotes))
+	afficherHotes(sortie, hotes)
+	_, _ = fmt.Fprintf(sortie, "\nRappel : warden n'a rien posé sur ces machines. "+
+		"Leur authorized_keys doit déjà contenir la clé de l'environnement\n"+
+		"(`warden key show --env <nom>` l'affiche).\n")
+	return nil
+}
+
+// VersHost traduit une machine d'inventaire en descripteur d'enrôlement.
+//
+// L'empreinte n'y figure pas, et ne peut pas y figurer : un inventaire Ansible
+// ne porte pas de clé d'hôte. Une machine déclarée par ce chemin n'est donc pas
+// épinglée — ce que `warden host list` affiche en toutes lettres.
+func VersHost(m ansible.Machine, environnement string) client.Host {
+	return client.Host{
+		Name:        m.Nom,
+		Environment: environnement,
+		Address:     m.Adresse,
+		Port:        m.Port,
+		Login:       m.Login,
+	}
 }
 
 // lireInventaire lit le document, en YAML ou en JSON.

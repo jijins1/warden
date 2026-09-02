@@ -149,7 +149,73 @@ Une clé par environnement, partagée par ses machines : les logs de l'hôte dir
 
 ## 6. Les machines
 
-Deux modes, qui convergent sur le même état final.
+Deux modes, qui convergent sur le même état final — et deux façons de les
+désigner : une machine à la fois, ou **toute la flotte depuis votre inventaire
+Ansible**.
+
+### Toute la flotte, depuis l'inventaire du dépôt
+
+C'est le chemin à préférer quand le dépôt a déjà un inventaire. Depuis le dépôt :
+
+```sh
+warden enroll --all --env prod --dry-run   # voir avant de faire
+warden enroll --all --env prod
+```
+
+warden lit le chemin déclaré par `inventory` dans `.ansibleproxy.yml`, résout
+`{{ env }}`, en tire les machines, les compare à `warden host list`, et **ne
+traite que celles qui manquent**. Il affiche le plan, demande une fois
+confirmation, puis enrôle machine par machine avec **un seul mot de passe**.
+
+```
+inventaire  inventories/prod
+environnement  prod
+4 machine(s) dans l'inventaire, 1 déjà connue(s) du serveur
+
+1 machine(s) déjà enrôlée(s) dont l'inventaire dit autre chose.
+Elles ne sont PAS touchées :
+
+MACHINE  INVENTAIRE ≠ SERVEUR
+kodi     adresse 192.168.16.2 ≠ 192.168.16.9
+
+3 machine(s) à traiter :
+
+MACHINE  ADRESSE        COMPTE  PORT  GROUPES
+ionos    192.168.18.10  root    2222  distant
+muzi     192.168.16.3   ruokki  22    cluster
+tiny     tiny  (nom)    ruokki  22    cluster
+```
+
+Ce que warden lit de l'inventaire, et **rien d'autre** :
+
+| clé | rôle |
+|---|---|
+| `ansible_host` | l'adresse. **Absente**, c'est le NOM qui sert d'adresse |
+| `ansible_user` | le compte que warden ouvre |
+| `ansible_port` | facultatif |
+
+Les `vars:` écrits dans le document sont hérités, du groupe vers la machine.
+**`group_vars/` et `host_vars/` ne sont pas lus** : reproduire à peu près la
+précédence d'Ansible enrôlerait des machines sous le mauvais compte sans que rien
+ne le dise. Une valeur Jinja est refusée pour la même raison. Si une machine n'a
+pas d'`ansible_user`, le lot s'arrête **avant la première connexion** en la
+nommant.
+
+> **« (nom) »** signale une machine sans `ansible_host` : c'est son nom qui sert
+> d'adresse, et il sera résolu **depuis le cluster** — pas depuis votre poste, et
+> sans lire votre `ssh_config`.
+
+Drapeaux utiles : `--group <nom>` restreint le lot, `--password-per-host` quand
+les comptes ne partagent pas leur mot de passe, `--stop-on-error` pour s'arrêter
+au premier échec au lieu de continuer, `--yes` pour ne pas confirmer le plan.
+
+Si les clés sont **déjà posées** sur vos machines, la même lecture sert au mode
+déclaratif :
+
+```sh
+warden host declare --from-inventory --env prod --dry-run
+warden host declare --from-inventory --env prod
+```
 
 ### Mode assisté — warden pose la clé lui-même
 
@@ -178,7 +244,8 @@ dit et renvoie vers `warden host declare`.
 # machines.yaml
 hosts:
   - host: db-01              # le nom TEL QUE l'inventaire Ansible le nomme
-    address: 10.20.0.42      # une ADRESSE : c'est là qu'on se connecte
+    address: 10.20.0.42      # où l'on se connecte : une adresse, ou un nom
+                             # que LE POD sait résoudre
     login: ansible
     port: 22                 # facultatif
     host_key: "ssh-ed25519 AAAA..."   # facultatif, mais c'est lui qui épingle
@@ -191,7 +258,10 @@ warden host forget --env prod --host db-01
 ```
 
 `host_key` est facultatif et devrait ne pas l'être en production : sans lui, le
-premier contact fait confiance à ce qui répond.
+premier contact fait confiance à ce qui répond. C'est aussi la limite du chemin
+`--from-inventory` : un inventaire Ansible ne porte pas de clé d'hôte, donc les
+machines déclarées par ce chemin ne sont pas épinglées — `warden host list`
+l'affiche en toutes lettres.
 
 > `host forget` retire la ligne d'inventaire. Il ne retire **pas** la clé
 > publique de l'`authorized_keys` de la machine.

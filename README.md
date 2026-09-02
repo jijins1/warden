@@ -230,6 +230,27 @@ server re-reads this file from the commit tree and rejects unknown fields.
 A run needs an SSH key on the target. warden offers two ways, converging on the
 same inventory entry:
 
+**From your Ansible inventory** — the path to prefer when the repository already
+has one. warden reads the inventory declared by `.ansibleproxy.yml`, compares it
+to what it already knows, and only handles what is missing:
+
+```sh
+warden enroll --all --env prod --dry-run    # see before you do
+warden enroll --all --env prod              # one password, one machine at a time
+warden host declare --from-inventory --env prod   # when the keys are already in place
+```
+
+Only `ansible_host`, `ansible_user` and `ansible_port` are read, along with the
+`vars:` written in the document itself. **`group_vars/` and `host_vars/` are
+not** — reproducing Ansible's variable precedence approximately would enrol
+machines under the wrong account with nothing to say so. A Jinja value is
+refused for the same reason. A host with no `ansible_host` is enrolled under its
+**name**, resolved from the cluster ([ADR-0037]).
+
+Machines already enrolled whose inventory says something else are reported and
+left alone: whether the host moved or someone mistyped a line is a question for
+you, not for the tool.
+
 **Declarative** — you put the public key on your machines yourself, then tell
 warden about them:
 
@@ -462,6 +483,7 @@ months later. The ones that explain the most:
 - [ADR-0020] — access credentials, and what v1 knowingly does not do
 - [ADR-0030] — machine enrolment, and the egress we opened
 - [ADR-0036] — an address or a resolvable name, and where the risk moved
+- [ADR-0037] — enrolling from the Ansible inventory, without becoming Ansible
 - [ADR-0031] — reconciling killed runs, and who may pronounce an outcome
 - [ADR-0032] — local accounts and sessions, and what a login endpoint refuses to say
 - [ADR-0033] — environment grants: the half of authorization that does not need the network
@@ -481,3 +503,4 @@ The product specification lives in [`specs/initial.md`](specs/initial.md).
 [ADR-0032]: docs/adr/0032-comptes-locaux-et-sessions.md
 [ADR-0033]: docs/adr/0033-droits-par-environnement.md
 [ADR-0036]: docs/adr/0036-adresse-ou-nom-resoluble.md
+[ADR-0037]: docs/adr/0037-enrolement-depuis-linventaire-ansible.md

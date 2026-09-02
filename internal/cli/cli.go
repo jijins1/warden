@@ -148,6 +148,10 @@ Administrer les clés d'accès :
 
 Administrer les machines enrôlées :
   warden host declare -f <fichier.yaml> [--env <nom>]
+  warden host declare --from-inventory [--env <nom>] [--group <nom>] [--dry-run]
+                                               lit l'inventaire ANSIBLE du dépôt
+                                               courant et déclare celles qui
+                                               manquent au serveur
   warden host list    [--env <nom>]
   warden host forget  --env <nom> --host <machine>
 
@@ -157,6 +161,36 @@ Enrôler une machine (warden pose la clé lui-même) :
                                                terminal ; --password-file et
                                                --password-stdin existent pour
                                                les usages non interactifs
+
+  warden enroll --all [--env <nom>] [--group <nom>]
+                                               même chose pour TOUTES les
+                                               machines de l'inventaire qui ne
+                                               sont pas encore enrôlées, une par
+                                               une, avec un seul mot de passe
+      --dry-run              montre le plan et s'arrête là
+      --yes                  ne demande pas confirmation du plan
+      --password-per-host    un mot de passe par machine, pour une flotte dont
+                             les comptes ne partagent pas le leur
+      --accept-new-hostkeys  ne soumet PAS les empreintes. C'est la seule revue
+                             du premier contact ; elles restent au récapitulatif
+      --stop-on-error        arrête au premier échec au lieu de continuer
+
+Depuis l'inventaire Ansible du dépôt (--from-inventory, --all) :
+  Les machines viennent du chemin déclaré par « inventory » dans le fichier de
+  projet, résolu pour l'environnement visé. Sont lus, par machine ou par groupe :
+
+    ansible_host   l'adresse. ABSENTE, c'est le NOM de la machine qui sert
+                   d'adresse, et il sera résolu DEPUIS LE CLUSTER — pas depuis
+                   votre poste, et sans lire votre ssh_config
+    ansible_user   le compte que warden ouvre
+    ansible_port   facultatif
+
+  Les fichiers group_vars/ et host_vars/ ne sont PAS lus : reproduire la
+  précédence d'Ansible à peu près enrôlerait des machines sous le mauvais compte.
+  Une valeur Jinja est refusée en le disant, pour la même raison.
+
+  Seules les machines ABSENTES du serveur sont traitées. Celles qui y sont déjà
+  mais dont l'inventaire dit autre chose sont signalées, et pas touchées.
 
 Format d'un fichier de déclaration :
   hosts:
@@ -442,8 +476,22 @@ func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 	fichier := fs.String("f", "", "fichier de déclaration (YAML ou JSON)")
 	env := fs.String("env", "", "environnement")
 	hote := fs.String("host", "", "machine")
+	depuisInv := fs.Bool("from-inventory", false, "lire l'inventaire Ansible du dépôt courant")
+	groupe := fs.String("group", "", "restreindre --from-inventory à un groupe")
+	dryRun := fs.Bool("dry-run", false, "montrer le plan et s'arrêter là")
 	if err := fs.Parse(args[1:]); err != nil {
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	// `--from-inventory` s'exécute DANS un dépôt et lit son fichier de projet,
+	// là où les autres verbes n'ont que l'environnement. Le cas est traité avant
+	// la construction du client, qui n'est pas la même des deux côtés.
+	if *depuisInv {
+		if *fichier != "" {
+			return errors.New("-f et --from-inventory désignent deux sources de " +
+				"machines : donnez l'une ou l'autre")
+		}
+		return declarerDepuisInventaire(ctx, args[0], *env, *groupe, *dryRun, sortie)
 	}
 
 	api, err := apiSeule()
@@ -521,6 +569,30 @@ func commandeDepot(ctx context.Context, args []string, sortie io.Writer) error {
 	}
 }
 
+// declarerDepuisInventaire enregistre les machines de l'inventaire du dépôt.
+func declarerDepuisInventaire(ctx context.Context, verbe, env, groupe string, dryRun bool, sortie io.Writer) error {
+	if verbe != "declare" {
+		return fmt.Errorf("--from-inventory ne s'applique qu'à `warden host declare`, pas à %q", verbe)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	return admin.DeclarerDepuisInventaire(ctx, api, admin.OptionsInventaire{
+		RepoDir: cwd, Environment: env, Groupe: groupe, DryRun: dryRun,
+	}, sortie)
+}
+
 // suiveurPour construit le client de flux, porteur de la même session que le
 // client HTTP : les deux traversent le même middleware d'authentification.
 func suiveurPour(adresse string) (*stream.Client, error) {
@@ -545,8 +617,25 @@ func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error
 	// c'est le geste attendu de cette commande.
 	mdp := prompt.Declarer(fs, "password", "le mot de passe du compte")
 
+	toutes := fs.Bool("all", false, "enrôler toutes les machines de l'inventaire qui ne le sont pas")
+	groupe := fs.String("group", "", "restreindre --all à un groupe de l'inventaire")
+	dryRun := fs.Bool("dry-run", false, "montrer le plan et s'arrêter là")
+	oui := fs.Bool("yes", false, "ne pas demander confirmation du plan")
+	parMachine := fs.Bool("password-per-host", false, "un mot de passe par machine")
+	accepter := fs.Bool("accept-new-hostkeys", false, "ne pas soumettre les empreintes")
+	arreter := fs.Bool("stop-on-error", false, "arrêter le lot au premier échec")
+
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	if *toutes {
+		return enrolerLeLot(ctx, lotDemande{
+			Env: *env, Groupe: *groupe, DryRun: *dryRun, Oui: *oui,
+			ParMachine: *parMachine, Accepter: *accepter, Arreter: *arreter,
+			MotDePasse: mdp,
+			Seule:      *hote != "" || *adresse != "" || *login != "",
+		}, sortie)
 	}
 
 	api, err := apiSeule()
@@ -566,6 +655,66 @@ func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error
 		// réponse ne sera pas un oui franc et la déclaration sera abandonnée.
 		Confirmer: admin.ConfirmerAuTerminal(os.Stdin, sortie),
 	}, sortie)
+}
+
+// lotDemande porte ce que les drapeaux de `--all` expriment.
+type lotDemande struct {
+	Env, Groupe              string
+	DryRun, Oui, ParMachine  bool
+	Accepter, Arreter, Seule bool
+	MotDePasse               *prompt.Source
+}
+
+// enrolerLeLot enrôle toutes les machines manquantes de l'inventaire.
+//
+// Elle s'exécute DANS un dépôt, comme `warden repo declare` : c'est l'inventaire
+// du projet qui dit quelles machines existent.
+func enrolerLeLot(ctx context.Context, d lotDemande, sortie io.Writer) error {
+	if d.Seule {
+		// Mélanger les deux formes ne veut rien dire, et l'accepter en ignorant
+		// l'une des deux ferait enrôler autre chose que ce qui était demandé.
+		return errors.New("--all enrôle les machines de l'inventaire : " +
+			"--host, --address et --login ne s'y appliquent pas")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+	suiveur, err := suiveurPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	o := admin.OptionsLot{
+		OptionsInventaire: admin.OptionsInventaire{
+			RepoDir: cwd, Environment: d.Env, Groupe: d.Groupe, DryRun: d.DryRun,
+		},
+		MotDePasse:            d.MotDePasse,
+		ParMachine:            d.ParMachine,
+		AccepterNouvelles:     d.Accepter,
+		ArreterAuPremierEchec: d.Arreter,
+		Confirmer:             admin.ConfirmerLotAuTerminal(os.Stdin, sortie),
+		ConfirmerEmpreinte:    admin.ConfirmerAuTerminal(os.Stdin, sortie),
+	}
+	if d.Oui {
+		o.Confirmer = nil
+	}
+	if d.Accepter {
+		// L'absence de question se lit comme une absence, pas comme un « oui »
+		// prononcé par le produit à la place de quelqu'un.
+		o.ConfirmerEmpreinte = nil
+	}
+	return admin.EnrolerLot(ctx, api, suiveur, o, sortie)
 }
 
 // --- la session ---
