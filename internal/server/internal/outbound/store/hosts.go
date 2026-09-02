@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -28,7 +27,7 @@ func (s *Store) SaveHost(ctx context.Context, h core.ManagedHost) error {
 	const q = `
 INSERT INTO managed_host (name, environment, address, port, login, host_key,
                           enrollment_mode, enrolled_by)
-VALUES ($1, $2, $3::inet, $4, $5, NULLIF($6, ''), $7, NULLIF($8, 0)::bigint)
+VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, NULLIF($8, 0)::bigint)
 ON CONFLICT (environment, name) DO UPDATE
    SET address         = EXCLUDED.address,
        port            = EXCLUDED.port,
@@ -37,7 +36,7 @@ ON CONFLICT (environment, name) DO UPDATE
        enrollment_mode = EXCLUDED.enrollment_mode,
        enrolled_by     = EXCLUDED.enrolled_by`
 
-	_, err := s.pool.Exec(ctx, q, h.Name, h.Environment, h.Address.String(),
+	_, err := s.pool.Exec(ctx, q, h.Name, h.Environment, h.Address,
 		h.Port, h.Login, h.HostKey, string(h.Mode), h.EnrolledBy)
 	if err != nil {
 		return fmt.Errorf("enregistrement de la machine %s/%s: %w", h.Environment, h.Name, err)
@@ -48,7 +47,7 @@ ON CONFLICT (environment, name) DO UPDATE
 // HostByName rend une machine de l'inventaire.
 func (s *Store) HostByName(ctx context.Context, environment, name string) (core.ManagedHost, error) {
 	const q = `
-SELECT name, environment, host(address), port, login, coalesce(host_key, ''),
+SELECT name, environment, address, port, login, coalesce(host_key, ''),
        enrollment_mode, enrolled_at, coalesce(enrolled_by, 0)
   FROM managed_host
  WHERE environment = $1 AND name = $2`
@@ -70,7 +69,7 @@ SELECT name, environment, host(address), port, login, coalesce(host_key, ''),
 // sur la liste des colonnes.
 func (s *Store) ListHosts(ctx context.Context, environment string) ([]core.ManagedHost, error) {
 	const q = `
-SELECT name, environment, host(address), port, login, coalesce(host_key, ''),
+SELECT name, environment, address, port, login, coalesce(host_key, ''),
        enrollment_mode, enrolled_at, coalesce(enrolled_by, 0)
   FROM managed_host
  WHERE $1 = '' OR environment = $1
@@ -116,28 +115,20 @@ func (s *Store) ForgetHost(ctx context.Context, environment, name string) error 
 
 // scanHost lit une ligne de `managed_host`.
 //
-// `host(address)` et non `address` : le type `inet` de PostgreSQL rend
-// `10.0.0.1/32` là où `netip.ParseAddr` attend `10.0.0.1`. La conversion est
-// faite par la base, qui connaît son type, plutôt que par un découpage de chaîne
-// ici — lequel casserait sur la première adresse IPv6.
+// `address` est lue TELLE QUELLE depuis la migration 00012 (ADR-0036). Elle
+// était auparavant un `inet`, qui rendait `10.0.0.1/32` et imposait un
+// `host(address)` en SQL puis un `netip.ParseAddr` ici. La colonne étant
+// devenue `text` — pour accueillir un nom autant qu'une adresse —, les deux
+// conversions ont disparu ensemble, et c'est la valeur écrite qui est relue.
 func scanHost(l interface{ Scan(...any) error }) (core.ManagedHost, error) {
 	var h core.ManagedHost
-	var adresse, mode string
+	var mode string
 
-	if err := l.Scan(&h.Name, &h.Environment, &adresse, &h.Port, &h.Login,
+	if err := l.Scan(&h.Name, &h.Environment, &h.Address, &h.Port, &h.Login,
 		&h.HostKey, &mode, &h.EnrolledAt, &h.EnrolledBy); err != nil {
 		return core.ManagedHost{}, err
 	}
 
-	addr, err := netip.ParseAddr(adresse)
-	if err != nil {
-		// La colonne est un `inet` : ce cas ne devrait pas exister. S'il
-		// existe, le dire vaut mieux que rendre une machine sans adresse, que
-		// l'enrôlement essaierait de joindre nulle part.
-		return core.ManagedHost{}, fmt.Errorf("adresse %q illisible pour %s/%s: %w",
-			adresse, h.Environment, h.Name, err)
-	}
-	h.Address = addr
 	h.Mode = core.EnrollmentMode(mode)
 	return h, nil
 }

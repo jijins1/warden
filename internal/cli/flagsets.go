@@ -1,0 +1,224 @@
+package cli
+
+import (
+	"flag"
+	"io"
+
+	"github.com/jijins1/warden/internal/cli/internal/command"
+	"github.com/jijins1/warden/internal/cli/internal/prompt"
+)
+
+// Les FlagSets sont construits ICI, et pas dans les commandes qui les utilisent.
+//
+// La raison est l'aide. Le troisième tiroir — `warden host declare --help` — rend
+// les drapeaux depuis le `flag.FlagSet` RÉEL, ce qui est la seule façon de
+// garantir qu'une page d'aide ne décrit pas un drapeau qui n'existe pas, ni ne
+// tait un drapeau qui existe. Il faut donc pouvoir construire le FlagSet d'une
+// commande sans l'exécuter.
+//
+// L'invariant de l'ancien découpage tient toujours : UN FlagSet par groupe,
+// partagé par ses verbes. Ce qui a changé est que l'arbre d'aide nomme, verbe par
+// verbe, LESQUELS de ces drapeaux le concernent — `warden host forget --help`
+// montre --env et --host, pas -f. Un test vérifie la correspondance dans les deux
+// sens, de sorte qu'un drapeau ajouté sans être documenté échoue à la
+// compilation des tests plutôt qu'en silence.
+
+// neuf construit un FlagSet muet : les messages d'erreur sont les nôtres.
+func neuf(nom string) *flag.FlagSet {
+	fs := flag.NewFlagSet(nom, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
+}
+
+type drapeauxSubmit struct {
+	repo, playbook, environnement, inventaire, runRef *string
+	become                                            *prompt.Source
+}
+
+func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
+	fs := neuf("submit")
+	f := drapeauxSubmit{
+		repo:          fs.String("repo", "", "nom du dépôt côté serveur ; inutile si le fichier de projet déclare `repo:`"),
+		playbook:      fs.String("playbook", "", "playbook à exécuter, relatif à la racine du dépôt"),
+		environnement: fs.String("env", "", "environnement cible"),
+		inventaire:    fs.String("inventory", "", "inventaire, relatif à la racine du dépôt"),
+		// Rejouer une soumission interrompue produit le même commit d'audit, donc
+		// le même SHA (ADR-0025) : la reprise est sûre, à condition de reprendre
+		// le même identifiant.
+		runRef: fs.String("run-ref", "", "reprendre une soumission interrompue"),
+	}
+	// La MÊME mécanique de saisie que pour une clé ou un enrôlement : trois
+	// drapeaux nommés pareil, jamais argv, jamais l'environnement.
+	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
+	// `-K` est le nom qu'`ansible-playbook` lui donne. Voir Abreger.
+	f.become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	return fs, f
+}
+
+type drapeauxEnroler struct {
+	env, hote, adresse, login, runRef, groupe *string
+	port                                      *int
+	mdp                                       *prompt.Source
+	toutes, dryRun, oui                       *bool
+	parMachine, accepter, arreter             *bool
+}
+
+func fsEnroler() (*flag.FlagSet, drapeauxEnroler) {
+	fs := neuf("enroll")
+	f := drapeauxEnroler{
+		env:     fs.String("env", "", "environnement"),
+		hote:    fs.String("host", "", "nom de la machine, tel que l'inventaire Ansible la nomme"),
+		adresse: fs.String("address", "", "où se connecter : une adresse, ou un nom que LE POD sait résoudre"),
+		port:    fs.Int("port", 22, "port SSH"),
+		login:   fs.String("login", "", "compte à ouvrir sur la machine"),
+		runRef:  fs.String("run-ref", "", "reprendre un enrôlement interrompu"),
+
+		toutes:     fs.Bool("all", false, "enrôler toutes les machines de l'inventaire qui ne le sont pas"),
+		groupe:     fs.String("group", "", "restreindre --all à un groupe de l'inventaire"),
+		dryRun:     fs.Bool("dry-run", false, "montrer le plan et s'arrêter là"),
+		oui:        fs.Bool("yes", false, "ne pas demander confirmation du plan"),
+		parMachine: fs.Bool("password-per-host", false, "un mot de passe par machine, au lieu d'un pour tout le lot"),
+		accepter:   fs.Bool("accept-new-hostkeys", false, "ne PAS soumettre les empreintes ; elles restent au récapitulatif"),
+		arreter:    fs.Bool("stop-on-error", false, "arrêter au premier échec au lieu de continuer"),
+	}
+	// Sans provenance explicite, la saisie au terminal est prise par défaut :
+	// c'est le geste attendu de cette commande.
+	f.mdp = prompt.Declarer(fs, "password", "le mot de passe du compte")
+	return fs, f
+}
+
+type drapeauxHote struct {
+	fichier, env, hote, groupe *string
+	depuisInv, dryRun          *bool
+}
+
+func fsHote() (*flag.FlagSet, drapeauxHote) {
+	fs := neuf("host")
+	return fs, drapeauxHote{
+		fichier:   fs.String("f", "", "fichier de déclaration (YAML ou JSON)"),
+		env:       fs.String("env", "", "environnement"),
+		hote:      fs.String("host", "", "machine"),
+		depuisInv: fs.Bool("from-inventory", false, "lire l'inventaire ANSIBLE du dépôt courant"),
+		groupe:    fs.String("group", "", "restreindre --from-inventory à un groupe"),
+		dryRun:    fs.Bool("dry-run", false, "montrer le plan et s'arrêter là"),
+	}
+}
+
+type drapeauxDepot struct {
+	nom, remoteURL, mainline, remote *string
+	oui                              *bool
+}
+
+func fsDepot() (*flag.FlagSet, drapeauxDepot) {
+	fs := neuf("repo")
+	return fs, drapeauxDepot{
+		nom:       fs.String("name", "", "nom du dépôt côté serveur ; déduit de l'URL du remote"),
+		remoteURL: fs.String("remote-url", "", "URL http(s) que le serveur clonera ; déduite du remote git"),
+		mainline:  fs.String("mainline-ref", "", "branche de référence, en refs/heads/<nom>"),
+		remote:    fs.String("remote", "", "remote git interrogé pour la déduction (défaut : origin)"),
+		oui:       fs.Bool("yes", false, "ne pas demander confirmation"),
+	}
+}
+
+type drapeauxCle struct {
+	env *string
+	cle *prompt.Source
+}
+
+func fsCle() (*flag.FlagSet, drapeauxCle) {
+	fs := neuf("key")
+	f := drapeauxCle{env: fs.String("env", "", "environnement")}
+	// Multiligne : une clé PEM ne se saisit pas à l'aveugle, l'utilisateur ne
+	// verrait rien de ce qu'il colle. Le registre le sait et refuse l'invite en
+	// le disant.
+	f.cle = prompt.DeclarerMultiligne(fs, "key", "la clé privée")
+	return fs, f
+}
+
+type drapeauxLogin struct {
+	subject *string
+	mdp     *prompt.Source
+}
+
+func fsLogin() (*flag.FlagSet, drapeauxLogin) {
+	fs := neuf("login")
+	f := drapeauxLogin{subject: fs.String("subject", "", "identifiant de votre compte")}
+	// La MÊME mécanique de saisie que partout ailleurs : jamais argv, jamais
+	// l'environnement, refus net quand deux provenances sont données.
+	f.mdp = prompt.Declarer(fs, "password", "votre mot de passe")
+	return fs, f
+}
+
+type drapeauxPasswd struct{ ancien, nouveau *prompt.Source }
+
+func fsPasswd() (*flag.FlagSet, drapeauxPasswd) {
+	fs := neuf("passwd")
+	return fs, drapeauxPasswd{
+		ancien:  prompt.Declarer(fs, "current-password", "votre mot de passe actuel"),
+		nouveau: prompt.Declarer(fs, "new-password", "votre nouveau mot de passe"),
+	}
+}
+
+type drapeauxUtilisateur struct {
+	subject, nom *string
+	admin        *bool
+}
+
+func fsUtilisateur() (*flag.FlagSet, drapeauxUtilisateur) {
+	fs := neuf("user")
+	return fs, drapeauxUtilisateur{
+		subject: fs.String("subject", "", "identifiant du compte"),
+		nom:     fs.String("name", "", "nom affiché dans l'audit"),
+		admin:   fs.Bool("admin", false, "accorder l'administration"),
+	}
+}
+
+type drapeauxDroit struct{ subject *string }
+
+func fsDroit() (*flag.FlagSet, drapeauxDroit) {
+	fs := neuf("grant")
+	return fs, drapeauxDroit{subject: fs.String("subject", "", "identifiant du compte")}
+}
+
+// flagsPour rend le FlagSet d'un chemin de commande, pour l'affichage de l'aide.
+//
+// Une commande sans drapeau rend nil, et la page omet alors la section plutôt
+// que d'afficher un titre vide.
+func flagsPour(chemin []string) *flag.FlagSet {
+	if len(chemin) == 0 {
+		return nil
+	}
+	var fs *flag.FlagSet
+	switch chemin[0] {
+	case "submit":
+		fs, _ = fsSubmit()
+	case "enroll":
+		fs, _ = fsEnroler()
+	case "host":
+		fs, _ = fsHote()
+	case "repo":
+		fs, _ = fsDepot()
+	case "key":
+		fs, _ = fsCle()
+	case "login":
+		fs, _ = fsLogin()
+	case "passwd":
+		fs, _ = fsPasswd()
+	case "user":
+		fs, _ = fsUtilisateur()
+	case "grant":
+		fs, _ = fsDroit()
+	}
+	return fs
+}
+
+// aide écrit la page demandée sur la sortie standard.
+//
+// Sur STDOUT et non stderr, et l'appelant rend nil : une aide explicitement
+// demandée est une commande qui a RÉUSSI. C'est ce qui la distingue d'une
+// commande incomplète, dont l'ancienne implémentation la rapprochait en rendant
+// l'aide sous forme d'erreur.
+func aide(sortie io.Writer, args []string) error {
+	command.Afficher(sortie, command.SansAide(args), flagsPour)
+	return nil
+}

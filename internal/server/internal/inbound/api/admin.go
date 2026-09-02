@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 )
@@ -72,9 +71,4 @@ func ecrireJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("réponse non écrite", slog.String("error", err.Error()))
 	}
-}
-
-// errorf construit une erreur de validation destinée à l'appelant.
-func errorf(format string, args ...any) error {
-	return fmt.Errorf(format, args...)
 }

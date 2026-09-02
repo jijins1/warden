@@ -393,6 +393,37 @@ func (c *Client) ForgetHost(ctx context.Context, environment, name string) error
 		"/admin/hosts/"+url.PathEscape(environment)+"/"+url.PathEscape(name), nil, nil)
 }
 
+// Repo est un dépôt tel que le serveur le connaît.
+//
+// Comme `Host`, c'est un type de FIL et non le type du cœur, dupliqué à dessein
+// (ADR-0011) : le jour où l'un des deux gagne un champ que l'autre ne doit pas
+// porter, la divergence se déclare ici.
+type Repo struct {
+	Name        string `json:"name"`
+	RemoteURL   string `json:"remote_url"`
+	MainlineRef string `json:"mainline_ref"`
+}
+
+// ListRepos rend les dépôts connus du serveur.
+func (c *Client) ListRepos(ctx context.Context) ([]Repo, error) {
+	var out []Repo
+	err := c.appeler(ctx, http.MethodGet, "/admin/repos", nil, &out)
+	return out, err
+}
+
+// PutRepo déclare un dépôt, ou remplace sa configuration.
+//
+// Le nom voyage DEUX FOIS — dans le chemin et dans le corps — parce que c'est ce
+// que le serveur attend, et qu'il refuse la requête si les deux se contredisent.
+// C'est sa façon de rendre impossible de configurer un dépôt en croyant en viser
+// un autre.
+func (c *Client) PutRepo(ctx context.Context, r Repo) error {
+	if r.Name == "" {
+		return errors.New("le nom du dépôt est requis")
+	}
+	return c.appeler(ctx, http.MethodPut, "/admin/repos/"+url.PathEscape(r.Name), r, nil)
+}
+
 // NewEnrollment est ce que `warden enroll` déclare.
 //
 // Le mot de passe ne survit PAS à cette requête : le serveur le range dans une

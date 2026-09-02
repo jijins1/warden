@@ -25,10 +25,18 @@ type ManagedHost struct {
 	Name        string
 	Environment string
 
-	// Address est l'endroit où l'enrôlement se connecte. Une adresse et pas un
-	// nom : dépendre d'une résolution faite dans le pod ferait enrôler une
-	// machine que l'opérateur croyait désigner.
-	Address netip.Addr
+	// Address est l'endroit où l'enrôlement se connecte : une adresse IP, ou un
+	// nom que LE POD sait résoudre (ADR-0036).
+	//
+	// L'ADR-0030 n'acceptait qu'une adresse, pour que la machine jointe soit
+	// exactement celle que l'opérateur désignait. Ce risque n'est pas effacé, il
+	// est DÉPLACÉ : un nom est résolu par le résolveur du pod, dont la vue n'est
+	// pas celle du poste de l'opérateur. Ce qui l'a emporté est qu'un inventaire
+	// Ansible nomme couramment ses machines sans `ansible_host`, et qu'exiger une
+	// adresse forçait à tenir une seconde vérité à la main.
+	//
+	// Ce qui protège reste l'empreinte épinglée, pas la forme de ce champ.
+	Address string
 	Port    int
 
 	// Login est le compte que warden ouvre, pas l'utilisateur du produit.
@@ -73,7 +81,57 @@ var (
 	nomDHote  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
 	compteSSH = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 	cleDHote  = regexp.MustCompile(`^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) `)
+
+	// nomResoluble est la forme d'un nom d'hôte RFC 1123 : des labels
+	// alphanumériques séparés par des points, un tiret accepté à l'intérieur d'un
+	// label mais jamais à ses bords.
+	//
+	// Elle ne dit RIEN de la résolubilité — c'est le résolveur du pod qui
+	// tranchera, et lui seul. Elle écarte ce qui ne peut pas être un nom : les
+	// espaces, les guillemets, les sauts de ligne, un `_` (légal en DNS, refusé
+	// par la plupart des piles TCP pour un nom d'hôte), une URL.
+	nomResoluble = regexp.MustCompile(
+		`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 )
+
+// longueurMaxAdresse borne un nom d'hôte. 253 est la limite du DNS ; la colonne
+// `managed_host.address` en accepte autant.
+const longueurMaxAdresse = 253
+
+// ValiderAdresse accepte une adresse IP ou un nom d'hôte (ADR-0036).
+//
+// L'ordre compte : on tente l'ADRESSE d'abord. Une IP est une désignation sans
+// intermédiaire, et les refus qu'on lui applique — `0.0.0.0`, le multicast —
+// n'ont aucun sens pour un nom. Ce qui n'est pas une IP est alors jugé comme un
+// nom, et rien de plus n'est vérifié ici : savoir si `db-prod-02` existe est une
+// question que seul le résolveur DU POD peut trancher, au moment de la connexion.
+//
+// Conséquence à dire à l'utilisateur, et pas seulement ici : le pod ne lit pas
+// de `ssh_config`. Un alias qui n'existe que dans le `~/.ssh/config` de
+// l'opérateur passera cette validation et échouera à la connexion.
+func ValiderAdresse(adresse string) error {
+	if adresse == "" {
+		return errors.New("adresse absente — c'est là que l'enrôlement se connecte")
+	}
+	if len(adresse) > longueurMaxAdresse {
+		return fmt.Errorf("adresse de %d caractères, %d au plus", len(adresse), longueurMaxAdresse)
+	}
+
+	if ip, err := netip.ParseAddr(adresse); err == nil {
+		if ip.IsUnspecified() || ip.IsMulticast() {
+			// `0.0.0.0` désigne « toutes les interfaces » côté écoute et rien du
+			// tout côté connexion ; une adresse multicast ne désigne pas une
+			// machine. Les accepter enrôlerait une ligne qui ne joint jamais rien.
+			return fmt.Errorf("%s ne désigne pas une machine", ip)
+		}
+		return nil
+	}
+
+	if !nomResoluble.MatchString(adresse) {
+		return fmt.Errorf("%q n'est ni une adresse IP ni un nom d'hôte", adresse)
+	}
+	return nil
+}
 
 // Validate applique les invariants du descripteur.
 //
@@ -87,15 +145,8 @@ func (h ManagedHost) Validate() error {
 	if err := ValidateEnvironment(h.Environment); err != nil {
 		return fmt.Errorf("hôte %s : %w", h.Name, err)
 	}
-	if !h.Address.IsValid() {
-		return fmt.Errorf("hôte %s : adresse absente ou illisible — c'est là que "+
-			"l'enrôlement se connecte, et un nom d'hôte n'en tient pas lieu", h.Name)
-	}
-	if h.Address.IsUnspecified() || h.Address.IsMulticast() {
-		// `0.0.0.0` désigne « toutes les interfaces » côté écoute et rien du
-		// tout côté connexion ; une adresse multicast ne désigne pas une
-		// machine. Les accepter enrôlerait une ligne qui ne joint jamais rien.
-		return fmt.Errorf("hôte %s : %s ne désigne pas une machine", h.Name, h.Address)
+	if err := ValiderAdresse(h.Address); err != nil {
+		return fmt.Errorf("hôte %s : %w", h.Name, err)
 	}
 	if h.Port < 1 || h.Port > 65535 {
 		return fmt.Errorf("hôte %s : port %d hors bornes", h.Name, h.Port)
@@ -183,18 +234,9 @@ func (t EnrollTarget) Validate() error {
 	// réussit et une déclaration que la base refuse.
 	h := ManagedHost{
 		Name: t.Host, Environment: "x", Login: t.Login,
-		Port: t.Port, Mode: HostAssisted,
+		Address: t.Address, Port: t.Port, Mode: HostAssisted,
 	}
-	addr, err := netip.ParseAddr(t.Address)
-	if err != nil {
-		return fmt.Errorf("cible %s : adresse %q illisible — une ADRESSE est attendue, "+
-			"pas un nom : c'est là que l'enrôlement se connecte", t.Host, t.Address)
-	}
-	h.Address = addr
-	if err := h.Validate(); err != nil {
-		return err
-	}
-	return nil
+	return h.Validate()
 }
 
 // SecretStash range une valeur sensible le temps qu'elle serve.

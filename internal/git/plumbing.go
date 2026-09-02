@@ -64,6 +64,63 @@ func (g *Git) HeadRef(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// RemoteURL returns the URL configured for a remote.
+//
+// An unknown remote is not an error here: it returns the empty string. The
+// caller — `warden repo declare` — has something useful to say about a
+// repository with no `origin`, and a git error message about exit code 2 is not
+// it.
+func (g *Git) RemoteURL(ctx context.Context, name string) (string, error) {
+	if !g.IsRepository(ctx) {
+		return "", ErrNotARepository
+	}
+	if name == "" {
+		return "", fmt.Errorf("remote name is required")
+	}
+
+	out, _, err := g.run(ctx, "remote", "get-url", name)
+	if err != nil {
+		var exit *exec.ExitError
+		// Exit 2 is "no such remote". Every other failure is a real one.
+		if errors.As(err, &exit) && exit.ExitCode() == 2 {
+			return "", nil
+		}
+		return "", fmt.Errorf("git remote get-url %s: %w", name, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// RemoteHeadRef returns the remote's default branch as a `refs/heads/...` ref,
+// or the empty string when the repository does not know it.
+//
+// Not knowing it is the ordinary case, not a failure: `refs/remotes/<remote>/HEAD`
+// is only set by a clone, or by an explicit `git remote set-head`. A repository
+// created with `git init` and given a remote by hand has never had it.
+func (g *Git) RemoteHeadRef(ctx context.Context, remote string) (string, error) {
+	if remote == "" {
+		return "", fmt.Errorf("remote name is required")
+	}
+
+	out, _, err := g.run(ctx, "symbolic-ref", "--quiet", "refs/remotes/"+remote+"/HEAD")
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return "", nil // not set
+		}
+		return "", fmt.Errorf("git symbolic-ref refs/remotes/%s/HEAD: %w", remote, err)
+	}
+
+	// `refs/remotes/origin/main` names a tracking ref; what the server stores is
+	// the branch on the remote itself. Translating here rather than at the call
+	// site keeps the tracking-ref shape from leaking into the API payload.
+	tracking := strings.TrimSpace(out)
+	prefix := "refs/remotes/" + remote + "/"
+	if !strings.HasPrefix(tracking, prefix) {
+		return "", fmt.Errorf("unexpected symbolic ref %q for remote %s", tracking, remote)
+	}
+	return "refs/heads/" + strings.TrimPrefix(tracking, prefix), nil
+}
+
 // Resolve turns any revision expression into a commit SHA.
 func (g *Git) Resolve(ctx context.Context, rev string) (SHA, error) {
 	if rev == "" {

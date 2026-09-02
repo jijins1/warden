@@ -94,6 +94,14 @@ ouverts, et c'est désormais le seul manque de ce lot.
   chemin d'inventaire.
 - [x] **`runner_image` ne transite plus par la requête** (ADR-0009, ADR-0014).
 
+- [x] ~~**Aucune commande pour déclarer un dépôt.**~~ Résolu (2026-09-02) :
+  `warden repo declare` déduit le descripteur du dépôt courant, l'affiche et le
+  fait confirmer. Le `curl` de la prise en main a disparu.
+- [x] ~~**L'aide est un mur de cent lignes.**~~ Résolu (2026-09-02) : l'arbre de
+  `internal/cli/internal/command` a remplacé `texteUsage`, et deux tests
+  vérifient que les drapeaux documentés existent et que les drapeaux réels sont
+  documentés.
+
 - [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est un manque de
   FONCTIONNALITÉ.** `warden submit` n'accepte que `--repo`, `--playbook`,
   `--env`, `--inventory`, `--run-ref` et la saisie de `become` — dont `-K`.
@@ -225,7 +233,12 @@ aussi, et l'API Kubernetes n'est plus arrêtée que par
 - [ ] **TOFU à la première prise de contact** (ADR-0030). Le premier enrôlement
   sans `host_key` déclarée fait confiance à ce qui répond. `warden host declare`
   avec `host_key` est le chemin qui l'évite, et devrait être préféré en
-  production.
+  production. **L'ADR-0036 a rendu cette dette plus chère** : une adresse peut
+  désormais être un nom, dont la résolution a lieu dans le pod — l'empreinte
+  épinglée est ce qui reste pour savoir à quoi on parle.
+- [ ] **Rien ne vérifie qu'un nom enrôlé résout encore depuis le cluster**
+  (ADR-0036). Ça ne se découvre qu'au run suivant. L'équivalent d'un
+  `ansible -m ping` lancé depuis un pod reste à écrire.
 
 ---
 

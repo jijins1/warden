@@ -68,6 +68,23 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 	}
 	defer motDePasse.Wipe()
 
+	// `motDePasse.Wipe` en `apresEnvoi` : le secret disparaît dès que la requête
+	// est partie, et non à la fin de la fonction. Entre les deux il y a le RUN,
+	// qui dure des minutes — c'est précisément l'intervalle pendant lequel il ne
+	// doit plus être en mémoire.
+	_, err = enrolerUne(ctx, api, suiveur, o, motDePasse, motDePasse.Wipe, sortie)
+	return err
+}
+
+// enrolerUne est le corps de l'enrôlement, sur un secret DÉJÀ LU.
+//
+// La séparation existe pour le lot : `EnrolerLot` lit un mot de passe une fois
+// et le réutilise pour N machines. Qui efface le secret, et QUAND, devient donc
+// une question — d'où `apresEnvoi`, appelée dès que la requête est partie. Une
+// machine seule y met `Wipe` ; un lot ne le peut pas, et l'efface à la fin.
+func enrolerUne(ctx context.Context, api *client.Client, suiveur Suiveur, o OptionsEnrolement, motDePasse prompt.Secret, apresEnvoi func(), sortie io.Writer) (Empreinte, error) {
+	var err error
+
 	runRef := o.RunRef
 	if runRef == "" {
 		// Le MÊME générateur que `warden submit` : deux formes d'identifiant
@@ -75,7 +92,7 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 		// schéma contraint.
 		runRef, err = upload.NewRunRef()
 		if err != nil {
-			return err
+			return Empreinte{}, err
 		}
 	}
 
@@ -90,16 +107,17 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 		Password: string(motDePasse.Reveal()),
 	})
 	if err != nil {
-		return err
+		return Empreinte{}, err
 	}
-	// Effacé dès que la requête est partie : la valeur a fait son voyage.
-	motDePasse.Wipe()
+	if apresEnvoi != nil {
+		apresEnvoi()
+	}
 
 	_, _ = fmt.Fprintf(sortie, "enrôlement %s\n\n", runRef)
 
 	res, fin, err := suivreLEnrolement(ctx, suiveur, runRef, sortie)
 	if err != nil {
-		return err
+		return Empreinte{}, err
 	}
 
 	if fin.Status != "succeeded" {
@@ -119,14 +137,14 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 					"réinstallée — auquel cas retirez-la de l'inventaire puis réenrôlez-la —,\n"+
 					"soit quelque chose d'autre répond à sa place.\n",
 				o.Address, o.Host)
-			return fmt.Errorf("empreinte de %s : la machine n'est pas celle attendue", o.Host)
+			return Empreinte{}, fmt.Errorf("empreinte de %s : la machine n'est pas celle attendue", o.Host)
 		}
-		return fmt.Errorf("l'enrôlement de %s a échoué (%s)", o.Host, fin.Status)
+		return Empreinte{}, fmt.Errorf("l'enrôlement de %s a échoué (%s)", o.Host, fin.Status)
 	}
 	if res.HostKey == "" {
 		// Le run dit avoir réussi mais n'a pas rapporté d'empreinte. Déclarer la
 		// machine sans elle la laisserait non épinglée en la croyant enrôlée.
-		return fmt.Errorf("l'enrôlement de %s s'est terminé sans rapporter d'empreinte", o.Host)
+		return Empreinte{}, fmt.Errorf("l'enrôlement de %s s'est terminé sans rapporter d'empreinte", o.Host)
 	}
 
 	emp := Empreinte{Valeur: res.Fingerprint, Algorithme: algorithmeDe(res.HostKey)}
@@ -134,7 +152,7 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 	if o.Confirmer != nil && !o.Confirmer(emp) {
 		_, _ = fmt.Fprintf(sortie, "\nDéclaration abandonnée. La clé EST posée sur %s ;\n"+
 			"la machine n'est simplement pas enregistrée dans l'inventaire.\n", o.Host)
-		return errors.New("déclaration refusée")
+		return emp, errors.New("déclaration refusée")
 	}
 
 	// Le `run_ref` accompagne la déclaration : c'est lui qui permet au serveur
@@ -145,11 +163,11 @@ func Enroler(ctx context.Context, api *client.Client, suiveur Suiveur, o Options
 		Name: o.Host, Environment: o.Environment, Address: o.Address,
 		Port: port, Login: o.Login, HostKey: res.HostKey,
 	}); err != nil {
-		return fmt.Errorf("la machine est enrôlée mais n'a pas pu être déclarée : %w", err)
+		return emp, fmt.Errorf("la machine est enrôlée mais n'a pas pu être déclarée : %w", err)
 	}
 
 	_, _ = fmt.Fprintf(sortie, "\n%s est enrôlée et épinglée.\n", o.Host)
-	return nil
+	return emp, nil
 }
 
 func (o OptionsEnrolement) valider() error {
@@ -159,8 +177,9 @@ func (o OptionsEnrolement) valider() error {
 	case o.Host == "":
 		return errors.New("--host est requis")
 	case o.Address == "":
-		return errors.New("--address est requis — une ADRESSE, pas un nom : " +
-			"c'est là que l'enrôlement se connecte")
+		return errors.New("--address est requis : c'est là que l'enrôlement se " +
+			"connecte. Une adresse IP, ou un nom que LE POD sait résoudre — sa vue " +
+			"du DNS n'est pas la vôtre, et il ne lit pas votre ssh_config")
 	case o.Login == "":
 		return errors.New("--login est requis : quel compte warden doit-il ouvrir ?")
 	case o.MotDePasse == nil:
@@ -292,15 +311,6 @@ func ConfirmerAuTerminal(entree io.Reader, sortie io.Writer) func(Empreinte) boo
 			"Sur la machine :  ssh-keygen -lf %s\n"+
 			"Déclarer et épingler ? [o/N] ", emp.Fichier())
 
-		reponse, err := prompt.ReadLine(entree)
-		if err != nil {
-			return false
-		}
-		switch strings.ToLower(strings.TrimSpace(string(reponse.Reveal()))) {
-		case "o", "oui", "y", "yes":
-			return true
-		default:
-			return false
-		}
+		return lireOui(entree)
 	}
 }

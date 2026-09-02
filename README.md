@@ -200,10 +200,56 @@ one answer, from one table.
 
 ---
 
+## Repository enrolment
+
+The server has to know a repository before a run can target it. From inside the
+repository:
+
+```sh
+warden repo declare        # name, remote and mainline ref are read from git,
+                           # shown to you, then confirmed
+warden repo list
+```
+
+The confirmation matters. When the repository was never cloned — so git does not
+know the remote's default branch — the **current branch** is used as a fallback,
+and declaring from a feature branch would pin the wrong comparison point for
+every run of that repository.
+
+The server only knows how to clone over http(s); if your `origin` is an SSH URL,
+pass the http form with `--remote-url`.
+
+Adding `repo: <name>` to `.ansibleproxy.yml` then makes `warden submit --repo`
+unnecessary. Wait until the server accepts that key before committing it: the
+server re-reads this file from the commit tree and rejects unknown fields.
+
+---
+
 ## Machine enrolment
 
 A run needs an SSH key on the target. warden offers two ways, converging on the
 same inventory entry:
+
+**From your Ansible inventory** — the path to prefer when the repository already
+has one. warden reads the inventory declared by `.ansibleproxy.yml`, compares it
+to what it already knows, and only handles what is missing:
+
+```sh
+warden enroll --all --env prod --dry-run    # see before you do
+warden enroll --all --env prod              # one password, one machine at a time
+warden host declare --from-inventory --env prod   # when the keys are already in place
+```
+
+Only `ansible_host`, `ansible_user` and `ansible_port` are read, along with the
+`vars:` written in the document itself. **`group_vars/` and `host_vars/` are
+not** — reproducing Ansible's variable precedence approximately would enrol
+machines under the wrong account with nothing to say so. A Jinja value is
+refused for the same reason. A host with no `ansible_host` is enrolled under its
+**name**, resolved from the cluster ([ADR-0037]).
+
+Machines already enrolled whose inventory says something else are reported and
+left alone: whether the host moved or someone mistyped a line is a question for
+you, not for the tool.
 
 **Declarative** — you put the public key on your machines yourself, then tell
 warden about them:
@@ -218,7 +264,8 @@ warden host declare -f hosts.yaml
 ```yaml
 hosts:
   - host: db-prod-02        # the name as your Ansible inventory calls it
-    address: 10.20.0.42     # an ADDRESS: this is where we connect
+    address: 10.20.0.42     # where we connect: an address, or a name THE POD
+                            # can resolve (it does not read your ssh_config)
     login: ansible
     host_key: "ssh-ed25519 AAAA..."   # optional — and it is what protects
                                       # you from a blind first contact
@@ -246,9 +293,37 @@ Once a machine is pinned, a substituted host is refused outright — a distinct
 error from a network failure, because the correct response is to investigate,
 not to retry.
 
-An address is required and a hostname will not do: resolving a name inside the
-pod could enrol a machine you did not mean to designate, and a machine enrolled
-at the wrong address is a machine you only *believe* you can reach.
+`address` takes an IP address or a hostname. A name is resolved **inside the
+pod**, whose view of DNS is the cluster's and not your workstation's — and the
+pod reads no `ssh_config`, so an alias that only exists in your `~/.ssh/config`
+will pass validation and fail to connect. What protects you from reaching the
+wrong machine is the pinned host key, not the shape of this field ([ADR-0036]).
+
+---
+
+## Finding a command
+
+The help is **drawered**: three levels, each answering the question of its level.
+
+```sh
+warden --help                # every command, one line each
+warden help host             # what `host` does, and its verbs
+warden help host declare     # one verb: usage, flags, examples
+warden host declare --help   # the same page, from the invocation
+```
+
+`--help` is recognised anywhere on the line. Help you asked for goes to stdout
+and exits **0** — it is a command that succeeded. An incomplete, unknown or
+malformed command goes to stderr, exits **1**, and shows only what concerns it:
+
+```
+$ warden hots
+warden: "hots" n'est pas une commande de « warden ». Vouliez-vous dire "host" ?
+```
+
+Flag documentation is rendered from the real `flag.FlagSet`, and two tests
+assert the correspondence both ways — a flag added without a help entry fails the
+suite rather than staying invisible.
 
 ---
 
@@ -433,6 +508,8 @@ months later. The ones that explain the most:
 - [ADR-0011] — one binary per trust domain, boundaries enforced by the compiler
 - [ADR-0020] — access credentials, and what v1 knowingly does not do
 - [ADR-0030] — machine enrolment, and the egress we opened
+- [ADR-0036] — an address or a resolvable name, and where the risk moved
+- [ADR-0037] — enrolling from the Ansible inventory, without becoming Ansible
 - [ADR-0031] — reconciling killed runs, and who may pronounce an outcome
 - [ADR-0032] — local accounts and sessions, and what a login endpoint refuses to say
 - [ADR-0033] — environment grants: the half of authorization that does not need the network
@@ -451,3 +528,5 @@ The product specification lives in [`specs/initial.md`](specs/initial.md).
 [ADR-0031]: docs/adr/0031-reconciliation-des-runs-tues.md
 [ADR-0032]: docs/adr/0032-comptes-locaux-et-sessions.md
 [ADR-0033]: docs/adr/0033-droits-par-environnement.md
+[ADR-0036]: docs/adr/0036-adresse-ou-nom-resoluble.md
+[ADR-0037]: docs/adr/0037-enrolement-depuis-linventaire-ansible.md

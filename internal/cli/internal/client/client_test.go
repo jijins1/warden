@@ -132,3 +132,81 @@ func TestUneQueryNEstPasAvaleeParLeChemin(t *testing.T) {
 		t.Errorf("environment reçu = %q, attendu prod", vuQuery)
 	}
 }
+
+// Le nom d'un dépôt voyage dans le CHEMIN et dans le corps.
+//
+// Le serveur refuse la requête si les deux se contredisent — c'est sa façon de
+// rendre impossible de configurer un dépôt en croyant en viser un autre. Le
+// client doit donc les poser tous les deux, et depuis la même valeur.
+func TestPutRepoPoseLeNomDansLeCheminEtDansLeCorps(t *testing.T) {
+	var vuChemin, vuMethode string
+	var vuCorps client.Repo
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vuChemin, vuMethode = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&vuCorps)
+	}))
+	defer srv.Close()
+
+	api, err := client.New(client.Config{BaseURL: srv.URL, Subject: "alice"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	depot := client.Repo{
+		Name:        "mon-depot",
+		RemoteURL:   "https://forge.example.com/equipe/mon-depot.git",
+		MainlineRef: "refs/heads/main",
+	}
+	if err := api.PutRepo(t.Context(), depot); err != nil {
+		t.Fatalf("PutRepo: %v", err)
+	}
+
+	if vuMethode != http.MethodPut {
+		t.Errorf("méthode = %q, attendu PUT", vuMethode)
+	}
+	if vuChemin != "/admin/repos/mon-depot" {
+		t.Errorf("chemin = %q, attendu /admin/repos/mon-depot", vuChemin)
+	}
+	if vuCorps != depot {
+		t.Errorf("corps = %+v, attendu %+v", vuCorps, depot)
+	}
+}
+
+// Un nom vide est refusé AVANT le réseau : sans lui la requête partirait sur
+// `/admin/repos/`, une route qui n'existe pas, et le 404 parlerait de droits
+// d'administration au lieu de nommer la vraie cause.
+func TestPutRepoRefuseUnNomVideSansAppeler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("le serveur a été appelé")
+	}))
+	defer srv.Close()
+
+	api, err := client.New(client.Config{BaseURL: srv.URL, Subject: "alice"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := api.PutRepo(t.Context(), client.Repo{RemoteURL: "https://x/y.git"}); err == nil {
+		t.Fatal("un dépôt sans nom a été accepté")
+	}
+}
+
+func TestListReposLitLaListe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]client.Repo{
+			{Name: "ansible", RemoteURL: "https://forge/ansible.git", MainlineRef: "refs/heads/main"},
+		})
+	}))
+	defer srv.Close()
+
+	api, err := client.New(client.Config{BaseURL: srv.URL, Subject: "alice"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	depots, err := api.ListRepos(t.Context())
+	if err != nil {
+		t.Fatalf("ListRepos: %v", err)
+	}
+	if len(depots) != 1 || depots[0].Name != "ansible" {
+		t.Fatalf("dépôts = %+v", depots)
+	}
+}

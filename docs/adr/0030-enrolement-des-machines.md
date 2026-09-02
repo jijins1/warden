@@ -78,6 +78,13 @@ pod** ferait enrôler une machine que l'opérateur croyait désigner — et une
 machine enrôlée à la mauvaise adresse est une machine dont on croit détenir
 l'accès. Stockée en `inet`, donc validée par PostgreSQL.
 
+> **Renversé par l'[ADR-0036](0036-adresse-ou-nom-resoluble.md)** (2026-09-01).
+> Le champ accepte désormais un nom autant qu'une adresse, et la colonne est un
+> `text`. Le risque décrit ci-dessus n'est pas effacé mais déplacé, et ce qui
+> protège de joindre la mauvaise machine — l'empreinte épinglée — n'a pas
+> changé. Ce qui a fait céder cette décision est l'usage : un inventaire Ansible
+> nomme couramment ses machines sans `ansible_host`.
+
 Le `host` est le nom **d'inventaire Ansible**, parce que c'est par lui qu'un
 event de run — dont l'`host` vient d'Ansible — se rapproche d'une machine
 enrôlée. Un identifiant à nous ne se rapprocherait de rien.

@@ -237,3 +237,27 @@ func TestParseValideLeTemplate(t *testing.T) {
 		t.Errorf("le message doit nommer le champ : %v", err)
 	}
 }
+
+// Le champ `repo` nomme le dépôt côté serveur, et rend `--repo` inutile.
+//
+// C'est de l'ADRESSAGE et non de la configuration de run : il ne décide de rien
+// de ce qui s'exécute, il désigne à qui l'on parle. C'est ce qui autorise la CLI
+// à le lire, là où elle s'interdit `default_env` et `runner_image`.
+func TestParseRepo(t *testing.T) {
+	p, err := Parse([]byte("repo: mon-depot\nserver: https://warden.example.com\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if p.Repo != "mon-depot" {
+		t.Errorf("repo = %q, attendu mon-depot", p.Repo)
+	}
+}
+
+// L'ajout de `repo` n'a pas ouvert la porte : un champ inconnu reste refusé, et
+// ce refus est ce qui impose de déployer le serveur AVANT que quiconque commite
+// la nouvelle clé.
+func TestUnChampInconnuResteRefuseApresLAjoutDeRepo(t *testing.T) {
+	if _, err := Parse([]byte("repo: mon-depot\ndepot: mon-depot\n")); err == nil {
+		t.Fatal("un champ inconnu a été accepté")
+	}
+}

@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -885,7 +885,7 @@ func TestLIngestionNeVoitPasLesCles(t *testing.T) {
 func machine(env, nom, adresse string) core.ManagedHost {
 	return core.ManagedHost{
 		Name: nom, Environment: env,
-		Address: netip.MustParseAddr(adresse),
+		Address: adresse,
 		Port:    core.PortSSHParDefaut, Login: "ansible",
 		Mode: core.HostDeclared,
 	}
@@ -911,9 +911,10 @@ func TestUneMachineEstEnregistreeEtRelue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HostByName: %v", err)
 	}
-	// L'adresse fait l'aller-retour SANS le masque que le type `inet` ajoute :
-	// `10.20.0.42/32` ne se reconnecte à rien.
-	if relue.Address.String() != "10.20.0.42" {
+	// L'adresse fait l'aller-retour telle quelle. Elle était jadis un `inet`,
+	// qui rendait `10.20.0.42/32` — une valeur qui ne se reconnecte à rien ; la
+	// migration 00012 l'a passée en `text` et la question ne se pose plus.
+	if relue.Address != "10.20.0.42" {
 		t.Errorf("adresse relue = %q", relue.Address)
 	}
 	if relue.HostKey != h.HostKey || relue.Login != "ansible" || relue.Port != 22 {
@@ -928,8 +929,9 @@ func TestUneMachineEstEnregistreeEtRelue(t *testing.T) {
 	}
 }
 
-// IPv6 aussi : un découpage de chaîne à la main aurait cassé dessus, et c'est
-// pour ça que la conversion est faite par `host()` côté base.
+// IPv6 aussi. Le cas comptait doublement du temps du type `inet` ; il reste
+// vérifié parce que la contrainte de forme de la migration 00012 doit accepter
+// les deux-points, y compris en tête d'une adresse abrégée.
 func TestUneAdresseIPv6TraverseIntacte(t *testing.T) {
 	dsn := startPostgres(t)
 	ctx := context.Background()
@@ -947,8 +949,136 @@ func TestUneAdresseIPv6TraverseIntacte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HostByName: %v", err)
 	}
-	if relue.Address.String() != "2001:db8::42" {
+	if relue.Address != "2001:db8::42" {
 		t.Errorf("adresse relue = %q", relue.Address)
+	}
+}
+
+// Un NOM d'hôte est enregistré et relu tel quel (ADR-0036).
+//
+// C'est le test de la migration 00012 : la colonne était un `inet`, qui aurait
+// refusé cette ligne. Ce qu'on vérifie n'est pas que le nom résout — la base
+// n'en sait rien et le pod tranchera — mais qu'il traverse sans être réécrit.
+func TestUnNomDHoteEstEnregistreEtRelu(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SaveHost(ctx, machine("prod", "kodi", "kodi.lan")); err != nil {
+		t.Fatalf("SaveHost: %v", err)
+	}
+	relue, err := s.HostByName(ctx, "prod", "kodi")
+	if err != nil {
+		t.Fatalf("HostByName: %v", err)
+	}
+	if relue.Address != "kodi.lan" {
+		t.Errorf("adresse relue = %q", relue.Address)
+	}
+}
+
+// Une adresse déjà en base traverse la migration 00012 SANS CHANGER.
+//
+// C'est la question la plus chère de l'ADR-0036 : une flotte est déjà enrôlée,
+// et une conversion de type qui réécrit des adresses ferait perdre l'accès à des
+// machines de production. Ce qui est vérifié est l'EXPRESSION de conversion —
+// `host(address)` — sur les deux familles d'adresses, plus le fait que ce
+// qu'elle produit satisfait la nouvelle contrainte de forme.
+//
+// La table est un décalque jetable de `managed_host` d'avant la migration, et
+// les deux instructions sont recopiées du fichier 00012. La duplication est
+// délibérée : goose ne rejoue pas une migration déjà appliquée, et sans décalque
+// il n'y aurait aucun moyen d'exercer le chemin de MONTÉE sur une base qui a
+// déjà des lignes.
+func TestUneAdresseInetTraverseLaMigrationSansChanger(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	conn := connect(t, dsn)
+	defer conn.Close(ctx)
+
+	if _, err := conn.Exec(ctx, `CREATE TABLE decalque_00012 (name text, address inet NOT NULL)`); err != nil {
+		t.Fatalf("création du décalque: %v", err)
+	}
+	avant := map[string]string{
+		"v4":          "10.20.0.42",
+		"v6":          "2001:db8::42",
+		"v6 abrégée":  "::1",
+		"v4 en /8":    "10.0.0.1",
+		"hors privée": "203.0.113.7",
+	}
+	for nom, adresse := range avant {
+		if _, err := conn.Exec(ctx,
+			`INSERT INTO decalque_00012 (name, address) VALUES ($1, $2::inet)`, nom, adresse); err != nil {
+			t.Fatalf("insertion de %s: %v", nom, err)
+		}
+	}
+
+	// Les deux instructions de la migration, dans l'ordre.
+	if _, err := conn.Exec(ctx,
+		`ALTER TABLE decalque_00012 ALTER COLUMN address TYPE text USING host(address)`); err != nil {
+		t.Fatalf("conversion: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `ALTER TABLE decalque_00012 ADD CONSTRAINT decalque_adresse_forme
+	       CHECK (address ~ '^[A-Za-z0-9:][A-Za-z0-9.:_-]{0,252}$')`); err != nil {
+		// Une contrainte refusée ici signifie qu'elle refuse des lignes
+		// EXISTANTES : la migration échouerait en production.
+		t.Fatalf("contrainte de forme refusée sur des lignes déjà en base: %v", err)
+	}
+
+	for nom, attendue := range avant {
+		var relue string
+		if err := conn.QueryRow(ctx,
+			`SELECT address FROM decalque_00012 WHERE name = $1`, nom).Scan(&relue); err != nil {
+			t.Fatalf("relecture de %s: %v", nom, err)
+		}
+		if relue != attendue {
+			t.Errorf("%s : adresse %q après migration, %q avant", nom, relue, attendue)
+		}
+		// Et ce que la base rend est ce que le cœur accepte : sans ça, une
+		// machine migrée deviendrait irrécupérable au premier `SaveHost`.
+		if err := core.ValiderAdresse(relue); err != nil {
+			t.Errorf("%s : adresse migrée %q refusée par le cœur : %v", nom, relue, err)
+		}
+	}
+}
+
+// La contrainte de forme de la migration 00012 écarte ce qui ne peut être ni une
+// adresse ni un nom. Elle double `core.ValiderAdresse` volontairement : le cœur
+// peut nommer la machine fautive, la base fait autorité.
+func TestLaBaseRefuseUneAdresseInformeMemeSansLeCoeur(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	// Directement en SQL : la validation Go refuse déjà ces valeurs, et ce qu'on
+	// vérifie ici est que la BASE les refuserait aussi.
+	conn := connect(t, dsn)
+	defer conn.Close(ctx)
+
+	const q = `INSERT INTO managed_host (name, environment, address, login, enrollment_mode)
+	           VALUES ('db', 'prod', $1, 'ansible', 'declared')`
+	for nom, adresse := range map[string]string{
+		"avec un espace":   "db prod 02",
+		"avec un saut":     "db\n02",
+		"une URL":          "https://db",
+		"un tiret en tête": "-db",
+		"trop longue":      strings.Repeat("a", 254),
+	} {
+		t.Run(nom, func(t *testing.T) {
+			if _, err := conn.Exec(ctx, q, adresse); err == nil {
+				t.Fatalf("adresse %q acceptée à tort", adresse)
+			}
+		})
 	}
 }
 
@@ -981,7 +1111,7 @@ func TestRedeclarerUneMachineNeRedatePasSonEnrolement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HostByName: %v", err)
 	}
-	if apres.Address.String() != "10.0.0.99" || apres.Login != "deploy" {
+	if apres.Address != "10.0.0.99" || apres.Login != "deploy" {
 		t.Errorf("la correction n'a pas pris : %+v", apres)
 	}
 	if !apres.EnrolledAt.Equal(avant.EnrolledAt) {
@@ -1242,10 +1372,10 @@ func TestUnEnrolementMalFormeEstRefuseParLeCode(t *testing.T) {
 		RunRef: testULID, UserID: u.ID, Environment: "prod", Kind: core.RunEnrollment,
 	}
 	cas := map[string]*core.EnrollTarget{
-		"sans cible":     nil,
-		"sans adresse":   {Host: "db", Port: 22, Login: "ansible"},
-		"nom en adresse": {Host: "db", Address: "db-prod-02", Port: 22, Login: "ansible"},
-		"compte refusé":  {Host: "db", Address: "10.0.0.1", Port: 22, Login: "Root!"},
+		"sans cible":      nil,
+		"sans adresse":    {Host: "db", Port: 22, Login: "ansible"},
+		"adresse absurde": {Host: "db", Address: "db prod 02", Port: 22, Login: "ansible"},
+		"compte refusé":   {Host: "db", Address: "10.0.0.1", Port: 22, Login: "Root!"},
 	}
 	for nom, cible := range cas {
 		t.Run(nom, func(t *testing.T) {

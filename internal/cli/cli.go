@@ -10,7 +10,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -18,11 +17,13 @@ import (
 	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/auth"
 	"github.com/jijins1/warden/internal/cli/internal/client"
+	"github.com/jijins1/warden/internal/cli/internal/command"
 	"github.com/jijins1/warden/internal/cli/internal/projet"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
 	"github.com/jijins1/warden/internal/cli/internal/session"
 	"github.com/jijins1/warden/internal/cli/internal/stream"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
+	"github.com/jijins1/warden/internal/config"
 )
 
 // Variables d'environnement de la configuration.
@@ -42,9 +43,22 @@ const (
 )
 
 // Run exécute la commande demandée.
+//
+// L'AIDE est traitée en premier, et centralement : `warden help host declare`,
+// `warden host declare --help` et `warden --help` sont la même question, posée
+// à trois endroits différents de la ligne. Une commande qui l'interpréterait
+// elle-même répondrait par une erreur de drapeau à quelqu'un qui bute au milieu
+// d'une invocation.
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usage()
+		// Rien de demandé n'est pas une aide demandée : l'index part sur stderr
+		// et le code de sortie est non nul, parce que taper `warden` seul n'a
+		// rien accompli.
+		command.Arbre().Index(os.Stderr)
+		return ErrDejaDit
+	}
+	if command.Demandee(args) {
+		return aide(os.Stdout, args)
 	}
 
 	switch args[0] {
@@ -64,150 +78,43 @@ func Run(ctx context.Context, args []string) error {
 		return commandeSubmit(ctx, args[1:], os.Stdout)
 	case "key":
 		return commandeCle(ctx, args[1:], os.Stdout)
+	case "repo":
+		return commandeDepot(ctx, args[1:], os.Stdout)
 	case "host":
 		return commandeHote(ctx, args[1:], os.Stdout)
 	case "enroll":
 		return commandeEnroler(ctx, args[1:], os.Stdout)
-	case "help", "-h", "--help":
-		return usage()
 	default:
-		return fmt.Errorf("commande inconnue %q\n\n%s", args[0], texteUsage)
+		return command.Inconnue(nil, args[0])
 	}
 }
 
-const texteUsage = `warden — exécution auditée de playbooks Ansible
-
-Ouvrir une session :
-  warden login  --subject <compte>             le mot de passe est demandé au
-                                               terminal ; --password-file et
-                                               --password-stdin existent pour
-                                               les usages non interactifs
-  warden logout
-  warden whoami                                demande au SERVEUR qui il croit
-                                               que vous êtes
-  warden passwd                                change votre mot de passe et
-                                               coupe toutes vos sessions
-
-Administrer les comptes (administrateurs) :
-  warden user add    --subject <compte> [--name <nom>] [--admin]
-                                               le mot de passe est TIRÉ par le
-                                               serveur et affiché une seule fois
-  warden user list
-  warden user passwd --subject <compte>        en réinitialise un
-  warden user disable --subject <compte>
-  warden user enable  --subject <compte>
-
-Droits par environnement (lecture seule) :
-  warden grant list   [--subject <compte>]     les révoqués sont affichés :
-                                               c'est une vue d'audit
-
-  AUCUNE commande ne modifie les droits. Ils viennent d'un document versionné
-  dans le dépôt de déploiement, que le rôle « controller » réconcilie :
-
-    environments:
-      prod:
-        - alice
-        - bob
-      staging: []          # explicitement personne
-
-  Pour chaque environnement NOMMÉ, la liste fait autorité : un compte retiré du
-  document est révoqué. Un environnement ABSENT n'est pas touché, donc les droits
-  se découpent en plusieurs fichiers et un fichier tronqué ne révoque pas tout.
-
-  Sans droit, pas de clé d'accès à l'environnement. AVEC le droit, rien ne borne
-  ce que le playbook peut joindre — l'egress du runner est ouvert.
-
-Lancer un run :
-  warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
-                [-K | --ask-become-pass]       demande le mot de passe
-                                               d'élévation au terminal ; « -K »
-                                               est celui d'ansible-playbook
-
-Administrer les clés d'accès :
-  warden key generate --env <nom>              frappe la paire ; la partie privée
-                                               ne quitte jamais le cluster
-  warden key import   --env <nom> --key-file <chemin> | --key-stdin
-  warden key show     --env <nom>              affiche la clé à poser dans
-                                               les authorized_keys
-  warden key list
-
-Administrer les machines enrôlées :
-  warden host declare -f <fichier.yaml> [--env <nom>]
-  warden host list    [--env <nom>]
-  warden host forget  --env <nom> --host <machine>
-
-Enrôler une machine (warden pose la clé lui-même) :
-  warden enroll --env <nom> --host <machine> --address <ip> --login <compte>
-                                               le mot de passe est demandé au
-                                               terminal ; --password-file et
-                                               --password-stdin existent pour
-                                               les usages non interactifs
-
-Format d'un fichier de déclaration :
-  hosts:
-    - host: db-prod-02        # le nom TEL QUE l'inventaire Ansible le nomme
-      address: 10.20.0.42     # une ADRESSE : c'est là qu'on se connecte
-      login: ansible          # le compte que warden ouvre
-      port: 22                # facultatif
-      host_key: "ssh-ed25519 AAAA..."   # facultatif, mais c'est lui qui
-                                        # protège du premier contact aveugle
-
-Fichier de projet (.ansibleproxy.yml, commité à la racine du dépôt) :
-  server: https://warden.example.com   où joindre le control plane
-  default_env: staging                 environnement quand --env est absent
-  inventory: inventories/{{ env }}     chemin de l'inventaire ; « {{ env }} » est
-                                       le seul substituable reconnu
-  runner_image: registry/…/runner:2.3  image du pod d'exécution
-  forward_env:                         NOMS des variables du shell à transmettre
-    - VAULT_ADDR                       (les valeurs ne sont jamais journalisées)
-  audit_include:                       chemins à joindre au commit d'audit
-    - inventories/**                   malgré les règles d'ignore
-
-  Le fichier est lu par le SERVEUR dans l'arbre du commit : ce qui s'applique est
-  ce qui est audité. La lecture locale ne sert qu'à joindre le serveur, à savoir
-  quelles variables lire dans le shell, et à composer le commit.
-
-Configuration (environnement) :
-  WARDEN_SERVER    adresse de l'API ; prime sur « server » du fichier
-  WARDEN_GIT_URL   adresse du rôle git (port d'écriture). Facultative : le
-                   serveur l'annonce avec le jeton de push. Ne sert que pour un
-                   déploiement qui ne l'annonce pas encore.
-  WARDEN_SUBJECT   identité AFFIRMÉE, acceptée seulement par un serveur en mode
-                   de développement. « warden login » la rend inutile.
-
-Le jeton de session est rangé dans ~/.config/warden/credentials.json, en 0600,
-indexé par adresse de serveur.`
-
-// usage rend l'aide sous forme d'erreur, pour que `main` la traite comme un
-// échec — taper une commande incomplète ne doit pas rendre un code de sortie nul.
+// erreurDrapeaux enveloppe un refus du paquet `flag` en renvoyant vers la page
+// de la commande — et non vers le manuel entier, ce que faisait l'ancien
+// `texteUsage`.
 //
-// erreurs, où une majuscule ou un point final se retrouve au milieu d'une
-// phrase. Celui-ci est un texte d'aide de cinquante lignes, affiché tel quel et
-// jamais enveloppé : le ponctuer correctement est l'inverse d'un défaut.
+// ST1005 vise les messages qu'on ENVELOPPE, où un point final se retrouve au
+// milieu d'une phrase. Celui-ci est terminal : `main` l'imprime tel quel.
 //
-//nolint:staticcheck // ST1005 vise les messages composables dans d'autres
-func usage() error { return errors.New(texteUsage) }
+//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé à son tour.
+func erreurDrapeaux(commande string, err error) error {
+	return fmt.Errorf("%w\n\n« warden %s --help » décrit les drapeaux.", err, commande)
+}
+
+// ErrDejaDit signale une erreur dont le message a DÉJÀ été écrit sur stderr.
+//
+// Elle existe pour l'index d'aide, qui fait cinquante lignes : le faire voyager
+// dans une valeur d'erreur le ferait préfixer de « warden: » par `main`, ce qui
+// est le contraire de ce qu'on veut lire en tête d'un manuel.
+var ErrDejaDit = errors.New("aucune commande")
 
 func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error {
-	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // les messages d'erreur sont les nôtres
-
-	repo := fs.String("repo", "", "nom du dépôt côté serveur")
-	playbook := fs.String("playbook", "", "playbook à exécuter")
-	environnement := fs.String("env", "", "environnement cible")
-	inventaire := fs.String("inventory", "", "inventaire")
-	// Rejouer une soumission interrompue produit le même commit d'audit, donc le
-	// même SHA (ADR-0025) : la reprise est sûre, à condition de reprendre le même
-	// identifiant.
-	runRef := fs.String("run-ref", "", "reprendre une soumission interrompue")
-	// La MÊME mécanique de saisie que pour une clé ou un enrôlement : trois
-	// drapeaux nommés pareil, jamais argv, jamais l'environnement.
-	become := prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
-	// `-K` est le nom qu'`ansible-playbook` lui donne. Voir Abreger.
-	become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	fs, f := fsSubmit()
+	repo, playbook, environnement := f.repo, f.playbook, f.environnement
+	inventaire, runRef, become := f.inventaire, f.runRef, f.become
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("submit", err)
 	}
 
 	// Le répertoire courant, et non un chemin en option : la capture s'applique
@@ -228,16 +135,9 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		return err
 	}
 
-	// La variable d'environnement PRIME sur le fichier : c'est la surcharge d'un
-	// utilisateur qui vise délibérément un autre serveur, et elle ne doit pas
-	// demander d'éditer un fichier versionné pour le reste de l'équipe.
-	adresse := os.Getenv(EnvServeur)
-	if adresse == "" {
-		adresse = config.Server
-	}
-	if adresse == "" {
-		return fmt.Errorf("aucune adresse de serveur : posez %s ou déclarez `server` dans %s\n\n%s",
-			EnvServeur, configFichier, texteUsage)
+	adresse, err := adresseServeurDe(config)
+	if err != nil {
+		return err
 	}
 
 	// L'adresse du rôle `git` n'est plus exigée ici : le serveur l'annonce avec
@@ -261,9 +161,16 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		defer motDePasseBecome.Wipe()
 	}
 
+	// Le drapeau prime sur le fichier : viser un autre dépôt le temps d'une
+	// commande ne doit pas demander d'éditer un fichier versionné.
+	nomDuDepot := *repo
+	if nomDuDepot == "" {
+		nomDuDepot = config.Repo
+	}
+
 	res, err := submit.Run(ctx, api, submit.Options{
 		RepoDir:     cwd,
-		Repo:        *repo,
+		Repo:        nomDuDepot,
 		Environment: *environnement,
 		Inventory:   *inventaire,
 		Playbook:    *playbook,
@@ -307,10 +214,46 @@ func apiSeule() (*client.Client, error) {
 	return clientPour(adresse)
 }
 
+// adresseServeurDans lit l'adresse du serveur pour une commande qui s'exécute
+// DANS un dépôt.
+//
+// Ce n'est pas `adresseServeur` : celle-ci n'a que l'environnement, parce que
+// `key`, `host` et `user` ne sont attachées à aucun dépôt. Ici le fichier de
+// projet a son mot à dire, et c'est ce qui permet de déclarer un dépôt sans
+// avoir d'abord posé une variable d'environnement pour le désigner.
+func adresseServeurDans(repoDir string) (string, error) {
+	// Une lecture qui échoue n'est PAS rattrapée par WARDEN_SERVER : un fichier
+	// de projet présent mais invalide est une faute à corriger, pas un fichier
+	// dont on se passe. `projet.Lire` rend un document nul sans erreur quand le
+	// fichier est absent, ce qui est le cas légitime.
+	config, err := projet.Lire(repoDir)
+	if err != nil {
+		return "", err
+	}
+	return adresseServeurDe(config)
+}
+
+// adresseServeurDe applique la précédence entre l'environnement et le fichier.
+//
+// La variable d'environnement PRIME sur le fichier : c'est la surcharge d'un
+// utilisateur qui vise délibérément un autre serveur, et elle ne doit pas
+// demander d'éditer un fichier versionné pour le reste de l'équipe.
+func adresseServeurDe(p config.Project) (string, error) {
+	if adresse := os.Getenv(EnvServeur); adresse != "" {
+		return adresse, nil
+	}
+	if p.Server != "" {
+		return p.Server, nil
+	}
+	return "", fmt.Errorf("aucune adresse de serveur : posez %s, ou déclarez `server` dans %s",
+		EnvServeur, configFichier)
+}
+
 func adresseServeur() (string, error) {
 	adresse := os.Getenv(EnvServeur)
 	if adresse == "" {
-		return "", fmt.Errorf("%s doit être définie\n\n%s", EnvServeur, texteUsage)
+		return "", fmt.Errorf("%s doit être définie : c'est l'adresse de l'API du "+
+			"control plane", EnvServeur)
 	}
 	return adresse, nil
 }
@@ -345,18 +288,17 @@ func clientPour(adresse string) (*client.Client, error) {
 
 func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage : warden key <generate|import|show|list>\n\n%s", texteUsage)
+		return command.Manquante([]string{"key"})
 	}
 
-	fs := flag.NewFlagSet("key", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	env := fs.String("env", "", "environnement")
-	// Multiligne : une clé PEM ne se saisit pas à l'aveugle, l'utilisateur ne
-	// verrait rien de ce qu'il colle. Le registre le sait et refuse l'invite en
-	// le disant.
-	cle := prompt.DeclarerMultiligne(fs, "key", "la clé privée")
+	fs, f := fsCle()
+	env, cle := f.env, f.cle
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("key", err)
+	}
+
+	if err := command.VerifierVerbe([]string{"key"}, args[0]); err != nil {
+		return err
 	}
 
 	api, err := apiSeule()
@@ -374,22 +316,36 @@ func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
 	case "list":
 		return admin.ListerCles(ctx, api, sortie)
 	default:
-		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+		return command.Inconnue([]string{"key"}, args[0])
 	}
 }
 
 func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage : warden host <declare|list|forget>\n\n%s", texteUsage)
+		return command.Manquante([]string{"host"})
 	}
 
-	fs := flag.NewFlagSet("host", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fichier := fs.String("f", "", "fichier de déclaration (YAML ou JSON)")
-	env := fs.String("env", "", "environnement")
-	hote := fs.String("host", "", "machine")
+	fs, f := fsHote()
+	fichier, env, hote := f.fichier, f.env, f.hote
+	depuisInv, groupe, dryRun := f.depuisInv, f.groupe, f.dryRun
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("host", err)
+	}
+	// Le verbe AVANT tout le reste : une faute de frappe doit être signalée comme
+	// telle, et non comme le premier obstacle que la commande rencontre ensuite.
+	if err := command.VerifierVerbe([]string{"host"}, args[0]); err != nil {
+		return err
+	}
+
+	// `--from-inventory` s'exécute DANS un dépôt et lit son fichier de projet,
+	// là où les autres verbes n'ont que l'environnement. Le cas est traité avant
+	// la construction du client, qui n'est pas la même des deux côtés.
+	if *depuisInv {
+		if *fichier != "" {
+			return errors.New("-f et --from-inventory désignent deux sources de " +
+				"machines : donnez l'une ou l'autre")
+		}
+		return declarerDepuisInventaire(ctx, args[0], *env, *groupe, *dryRun, sortie)
 	}
 
 	api, err := apiSeule()
@@ -405,8 +361,90 @@ func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 	case "forget":
 		return admin.OublierHote(ctx, api, *env, *hote, sortie)
 	default:
-		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+		return command.Inconnue([]string{"host"}, args[0])
 	}
+}
+
+// commandeDepot déclare ou liste les dépôts connus du serveur.
+//
+// Elle est la SEULE commande d'administration à s'exécuter dans un dépôt, et
+// c'est ce qui la distingue des autres : elle lit `server:` du fichier de projet
+// comme `warden submit`, là où `key`, `host` et `user` exigent WARDEN_SERVER.
+// Exiger la variable ici obligerait à la poser pour déclarer le dépôt qui la
+// porte, ce qui est exactement à l'envers.
+func commandeDepot(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return command.Manquante([]string{"repo"})
+	}
+
+	fs, f := fsDepot()
+	nom, remoteURL, mainline := f.nom, f.remoteURL, f.mainline
+	remote, oui := f.remote, f.oui
+	if err := fs.Parse(args[1:]); err != nil {
+		return erreurDrapeaux("repo", err)
+	}
+
+	if err := command.VerifierVerbe([]string{"repo"}, args[0]); err != nil {
+		return err
+	}
+
+	// Le répertoire courant, et non un chemin en option : la même raison que
+	// pour `submit` — un drapeau inviterait à déclarer un dépôt qu'on ne regarde
+	// pas.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "declare":
+		o := admin.OptionsDepot{
+			RepoDir: cwd, Name: *nom, RemoteURL: *remoteURL,
+			MainlineRef: *mainline, Remote: *remote,
+			Confirmer: admin.ConfirmerDepotAuTerminal(os.Stdin, sortie),
+		}
+		if *oui {
+			o.Confirmer = nil
+		}
+		return admin.DeclarerDepot(ctx, api, o, sortie)
+	case "list":
+		return admin.ListerDepots(ctx, api, sortie)
+	default:
+		return command.Inconnue([]string{"repo"}, args[0])
+	}
+}
+
+// declarerDepuisInventaire enregistre les machines de l'inventaire du dépôt.
+func declarerDepuisInventaire(ctx context.Context, verbe, env, groupe string, dryRun bool, sortie io.Writer) error {
+	if verbe != "declare" {
+		return fmt.Errorf("--from-inventory ne s'applique qu'à `warden host declare`, pas à %q", verbe)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	return admin.DeclarerDepuisInventaire(ctx, api, admin.OptionsInventaire{
+		RepoDir: cwd, Environment: env, Groupe: groupe, DryRun: dryRun,
+	}, sortie)
 }
 
 // suiveurPour construit le client de flux, porteur de la même session que le
@@ -420,21 +458,23 @@ func suiveurPour(adresse string) (*stream.Client, error) {
 }
 
 func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error {
-	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	env := fs.String("env", "", "environnement")
-	hote := fs.String("host", "", "nom de la machine, tel que l'inventaire Ansible la nomme")
-	adresse := fs.String("address", "", "adresse où se connecter")
-	port := fs.Int("port", 22, "port SSH")
-	login := fs.String("login", "", "compte à ouvrir sur la machine")
-	runRef := fs.String("run-ref", "", "reprendre un enrôlement interrompu")
-	// Sans provenance explicite, la saisie au terminal est prise par défaut :
-	// c'est le geste attendu de cette commande.
-	mdp := prompt.Declarer(fs, "password", "le mot de passe du compte")
+	fs, f := fsEnroler()
+	env, hote, adresse := f.env, f.hote, f.adresse
+	port, login, runRef, mdp := f.port, f.login, f.runRef, f.mdp
+	toutes, groupe, dryRun, oui := f.toutes, f.groupe, f.dryRun, f.oui
+	parMachine, accepter, arreter := f.parMachine, f.accepter, f.arreter
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("enroll", err)
+	}
+
+	if *toutes {
+		return enrolerLeLot(ctx, lotDemande{
+			Env: *env, Groupe: *groupe, DryRun: *dryRun, Oui: *oui,
+			ParMachine: *parMachine, Accepter: *accepter, Arreter: *arreter,
+			MotDePasse: mdp,
+			Seule:      *hote != "" || *adresse != "" || *login != "",
+		}, sortie)
 	}
 
 	api, err := apiSeule()
@@ -456,19 +496,74 @@ func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error
 	}, sortie)
 }
 
+// lotDemande porte ce que les drapeaux de `--all` expriment.
+type lotDemande struct {
+	Env, Groupe              string
+	DryRun, Oui, ParMachine  bool
+	Accepter, Arreter, Seule bool
+	MotDePasse               *prompt.Source
+}
+
+// enrolerLeLot enrôle toutes les machines manquantes de l'inventaire.
+//
+// Elle s'exécute DANS un dépôt, comme `warden repo declare` : c'est l'inventaire
+// du projet qui dit quelles machines existent.
+func enrolerLeLot(ctx context.Context, d lotDemande, sortie io.Writer) error {
+	if d.Seule {
+		// Mélanger les deux formes ne veut rien dire, et l'accepter en ignorant
+		// l'une des deux ferait enrôler autre chose que ce qui était demandé.
+		return errors.New("--all enrôle les machines de l'inventaire : " +
+			"--host, --address et --login ne s'y appliquent pas")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+	suiveur, err := suiveurPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	o := admin.OptionsLot{
+		OptionsInventaire: admin.OptionsInventaire{
+			RepoDir: cwd, Environment: d.Env, Groupe: d.Groupe, DryRun: d.DryRun,
+		},
+		MotDePasse:            d.MotDePasse,
+		ParMachine:            d.ParMachine,
+		AccepterNouvelles:     d.Accepter,
+		ArreterAuPremierEchec: d.Arreter,
+		Confirmer:             admin.ConfirmerLotAuTerminal(os.Stdin, sortie),
+		ConfirmerEmpreinte:    admin.ConfirmerAuTerminal(os.Stdin, sortie),
+	}
+	if d.Oui {
+		o.Confirmer = nil
+	}
+	if d.Accepter {
+		// L'absence de question se lit comme une absence, pas comme un « oui »
+		// prononcé par le produit à la place de quelqu'un.
+		o.ConfirmerEmpreinte = nil
+	}
+	return admin.EnrolerLot(ctx, api, suiveur, o, sortie)
+}
+
 // --- la session ---
 
 func commandeLogin(ctx context.Context, args []string, sortie io.Writer) error {
-	fs := flag.NewFlagSet("login", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	subject := fs.String("subject", "", "identifiant de votre compte")
-	// La MÊME mécanique de saisie que partout ailleurs : jamais argv, jamais
-	// l'environnement, refus net quand deux provenances sont données.
-	mdp := prompt.Declarer(fs, "password", "votre mot de passe")
+	fs, f := fsLogin()
+	subject, mdp := f.subject, f.mdp
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("login", err)
 	}
 
 	adresse, err := adresseServeur()
@@ -488,7 +583,7 @@ func commandeLogin(ctx context.Context, args []string, sortie io.Writer) error {
 
 func commandeLogout(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) > 0 {
-		return fmt.Errorf("warden logout ne prend pas d'argument\n\n%s", texteUsage)
+		return errors.New("warden logout ne prend pas d'argument")
 	}
 	adresse, err := adresseServeur()
 	if err != nil {
@@ -504,7 +599,7 @@ func commandeLogout(ctx context.Context, args []string, sortie io.Writer) error 
 
 func commandeWhoami(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) > 0 {
-		return fmt.Errorf("warden whoami ne prend pas d'argument\n\n%s", texteUsage)
+		return errors.New("warden whoami ne prend pas d'argument")
 	}
 	adresse, err := adresseServeur()
 	if err != nil {
@@ -518,14 +613,11 @@ func commandeWhoami(ctx context.Context, args []string, sortie io.Writer) error 
 }
 
 func commandePasswd(ctx context.Context, args []string, sortie io.Writer) error {
-	fs := flag.NewFlagSet("passwd", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	ancien := prompt.Declarer(fs, "current-password", "votre mot de passe actuel")
-	nouveau := prompt.Declarer(fs, "new-password", "votre nouveau mot de passe")
+	fs, f := fsPasswd()
+	ancien, nouveau := f.ancien, f.nouveau
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("passwd", err)
 	}
 
 	adresse, err := adresseServeur()
@@ -543,17 +635,18 @@ func commandePasswd(ctx context.Context, args []string, sortie io.Writer) error 
 
 func commandeUtilisateur(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage : warden user <add|list|passwd|disable|enable>\n\n%s", texteUsage)
+		return command.Manquante([]string{"user"})
 	}
 
-	fs := flag.NewFlagSet("user", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	subject := fs.String("subject", "", "identifiant du compte")
-	nom := fs.String("name", "", "nom affiché dans l'audit")
-	admin := fs.Bool("admin", false, "accorder l'administration")
+	fs, f := fsUtilisateur()
+	subject, nom, admin := f.subject, f.nom, f.admin
 
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("user", err)
+	}
+
+	if err := command.VerifierVerbe([]string{"user"}, args[0]); err != nil {
+		return err
 	}
 
 	api, err := apiSeule()
@@ -573,21 +666,24 @@ func commandeUtilisateur(ctx context.Context, args []string, sortie io.Writer) e
 	case "enable":
 		return auth.BasculerCompte(ctx, api, *subject, false, sortie)
 	default:
-		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+		return command.Inconnue([]string{"user"}, args[0])
 	}
 }
 
 func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage : warden grant list [--subject <compte>]\n\n%s", texteUsage)
+		return command.Manquante([]string{"grant"})
 	}
 
-	fs := flag.NewFlagSet("grant", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	subject := fs.String("subject", "", "identifiant du compte")
+	fs, f := fsDroit()
+	subject := f.subject
 
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+		return erreurDrapeaux("grant", err)
+	}
+
+	if err := command.VerifierVerbe([]string{"grant"}, args[0]); err != nil {
+		return err
 	}
 
 	api, err := apiSeule()
@@ -599,6 +695,6 @@ func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
 	case "list":
 		return auth.ListerDroits(ctx, api, *subject, sortie)
 	default:
-		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+		return command.Inconnue([]string{"grant"}, args[0])
 	}
 }

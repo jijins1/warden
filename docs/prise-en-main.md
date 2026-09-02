@@ -3,7 +3,8 @@
 Le chemin complet, de rien du tout à un playbook qui tourne sur une machine.
 
 Écrit en suivant les commandes sur le déploiement de référence, pas de mémoire :
-chaque étape a été exécutée. Ce qui n'a pas de commande est signalé comme tel.
+chaque étape a été exécutée. Ce qui n'a pas de commande est signalé comme tel ;
+à ce jour, seule la pose du premier administrateur en est là.
 
 ---
 
@@ -149,7 +150,73 @@ Une clé par environnement, partagée par ses machines : les logs de l'hôte dir
 
 ## 6. Les machines
 
-Deux modes, qui convergent sur le même état final.
+Deux modes, qui convergent sur le même état final — et deux façons de les
+désigner : une machine à la fois, ou **toute la flotte depuis votre inventaire
+Ansible**.
+
+### Toute la flotte, depuis l'inventaire du dépôt
+
+C'est le chemin à préférer quand le dépôt a déjà un inventaire. Depuis le dépôt :
+
+```sh
+warden enroll --all --env prod --dry-run   # voir avant de faire
+warden enroll --all --env prod
+```
+
+warden lit le chemin déclaré par `inventory` dans `.ansibleproxy.yml`, résout
+`{{ env }}`, en tire les machines, les compare à `warden host list`, et **ne
+traite que celles qui manquent**. Il affiche le plan, demande une fois
+confirmation, puis enrôle machine par machine avec **un seul mot de passe**.
+
+```
+inventaire  inventories/prod
+environnement  prod
+4 machine(s) dans l'inventaire, 1 déjà connue(s) du serveur
+
+1 machine(s) déjà enrôlée(s) dont l'inventaire dit autre chose.
+Elles ne sont PAS touchées :
+
+MACHINE  INVENTAIRE ≠ SERVEUR
+kodi     adresse 192.168.16.2 ≠ 192.168.16.9
+
+3 machine(s) à traiter :
+
+MACHINE  ADRESSE        COMPTE  PORT  GROUPES
+ionos    192.168.18.10  root    2222  distant
+muzi     192.168.16.3   ruokki  22    cluster
+tiny     tiny  (nom)    ruokki  22    cluster
+```
+
+Ce que warden lit de l'inventaire, et **rien d'autre** :
+
+| clé | rôle |
+|---|---|
+| `ansible_host` | l'adresse. **Absente**, c'est le NOM qui sert d'adresse |
+| `ansible_user` | le compte que warden ouvre |
+| `ansible_port` | facultatif |
+
+Les `vars:` écrits dans le document sont hérités, du groupe vers la machine.
+**`group_vars/` et `host_vars/` ne sont pas lus** : reproduire à peu près la
+précédence d'Ansible enrôlerait des machines sous le mauvais compte sans que rien
+ne le dise. Une valeur Jinja est refusée pour la même raison. Si une machine n'a
+pas d'`ansible_user`, le lot s'arrête **avant la première connexion** en la
+nommant.
+
+> **« (nom) »** signale une machine sans `ansible_host` : c'est son nom qui sert
+> d'adresse, et il sera résolu **depuis le cluster** — pas depuis votre poste, et
+> sans lire votre `ssh_config`.
+
+Drapeaux utiles : `--group <nom>` restreint le lot, `--password-per-host` quand
+les comptes ne partagent pas leur mot de passe, `--stop-on-error` pour s'arrêter
+au premier échec au lieu de continuer, `--yes` pour ne pas confirmer le plan.
+
+Si les clés sont **déjà posées** sur vos machines, la même lecture sert au mode
+déclaratif :
+
+```sh
+warden host declare --from-inventory --env prod --dry-run
+warden host declare --from-inventory --env prod
+```
 
 ### Mode assisté — warden pose la clé lui-même
 
@@ -178,7 +245,8 @@ dit et renvoie vers `warden host declare`.
 # machines.yaml
 hosts:
   - host: db-01              # le nom TEL QUE l'inventaire Ansible le nomme
-    address: 10.20.0.42      # une ADRESSE : c'est là qu'on se connecte
+    address: 10.20.0.42      # où l'on se connecte : une adresse, ou un nom
+                             # que LE POD sait résoudre
     login: ansible
     port: 22                 # facultatif
     host_key: "ssh-ed25519 AAAA..."   # facultatif, mais c'est lui qui épingle
@@ -191,34 +259,71 @@ warden host forget --env prod --host db-01
 ```
 
 `host_key` est facultatif et devrait ne pas l'être en production : sans lui, le
-premier contact fait confiance à ce qui répond.
+premier contact fait confiance à ce qui répond. C'est aussi la limite du chemin
+`--from-inventory` : un inventaire Ansible ne porte pas de clé d'hôte, donc les
+machines déclarées par ce chemin ne sont pas épinglées — `warden host list`
+l'affiche en toutes lettres.
 
 > `host forget` retire la ligne d'inventaire. Il ne retire **pas** la clé
 > publique de l'`authorized_keys` de la machine.
 
-## 7. Configurer le dépôt — ⚠ pas de commande
+## 7. Configurer le dépôt
 
-Un dépôt doit être connu du serveur avant qu'on puisse y lancer un run. **La CLI
-n'a pas de commande pour ça** ; l'endpoint existe, il faut l'appeler à la main.
+Un dépôt doit être connu du serveur avant qu'on puisse y lancer un run. Depuis le
+dépôt lui-même :
 
 ```sh
-# Le fichier de session indexe par adresse, sans barre finale.
-TOKEN=$(python3 -c "
-import json, os
-f = json.load(open(os.path.expanduser('~/.config/warden/credentials.json')))
-print(f['servers'][os.environ['WARDEN_SERVER'].rstrip('/')]['token'])")
-
-curl -X PUT "$WARDEN_SERVER/admin/repos/mon-depot" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"mon-depot",
-       "remote_url":"https://forge.example.com/equipe/mon-depot.git",
-       "mainline_ref":"refs/heads/main"}'
+cd ~/src/mon-depot
+warden repo declare
 ```
+
+La commande déduit tout de git — le nom du dernier segment de l'URL d'`origin`,
+le remote de sa configuration, la branche de référence — puis **affiche ce
+qu'elle a trouvé et demande confirmation** avant d'écrire :
+
+```
+nom                   mon-depot
+remote                https://forge.example.com/equipe/mon-depot.git
+branche de référence  refs/heads/main
+
+Déclarer ce dépôt auprès du serveur ? [o/N]
+```
+
+La question n'est pas une politesse. Quand le dépôt n'a pas été cloné — donc
+quand git ne connaît pas la branche par défaut du remote — c'est la **branche
+courante** qui sert de repli. Déclarer depuis une branche de feature épinglerait
+le mauvais point de comparaison pour tous les runs du dépôt, et c'est ce moment
+qui existe pour l'attraper. `--mainline-ref` la corrige, `--yes` saute la
+question dans un script.
 
 `mainline_ref` n'est pas décoratif : c'est la branche protégée contre laquelle le
 `pre-receive` contrôle la fraîcheur du commit d'audit, et c'est le serveur qui la
 détient — un dépôt qui déclarerait lui-même la sienne choisirait ce que le
 serveur vérifie.
+
+> **Si votre `origin` est en SSH**, la déduction échoue en le disant : le serveur
+> ne sait cloner qu'en http(s). Donnez la forme http du même dépôt avec
+> `--remote-url`.
+
+`warden repo list` affiche les dépôts connus.
+
+### Se passer de `--repo`
+
+Une fois le dépôt déclaré, la commande affiche la ligne à ajouter au fichier de
+projet :
+
+```yaml
+# .ansibleproxy.yml
+repo: mon-depot
+```
+
+`warden submit` n'a alors plus besoin de `--repo`. Le drapeau reste prioritaire
+quand il est donné.
+
+> ⚠ **Attendez que le serveur accepte ce champ avant de le commiter.** Le serveur
+> relit `.ansibleproxy.yml` depuis l'arbre du commit et **refuse les clés qu'il
+> ne connaît pas** : contre un serveur plus ancien, cette ligne fait échouer
+> *tous* les runs du dépôt.
 
 ## 8. Lancer un playbook
 
@@ -311,14 +416,40 @@ warden key generate --env staging
 warden enroll --env staging --host web-01 --address 10.0.0.7 --login ansible
 warden host list --env staging
 
-# 4. le dépôt, à la main faute de commande
-curl -X PUT "$WARDEN_SERVER/admin/repos/mon-depot" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"mon-depot","remote_url":"https://forge/x.git","mainline_ref":"refs/heads/main"}'
+# 4. le dépôt, depuis le dépôt
+cd ~/src/mon-depot
+warden repo declare
 
 # 5. le run
-cd ~/src/mon-depot
 warden submit --repo mon-depot --playbook play.yml --env staging --inventory hosts
+```
+
+
+---
+
+## Trouver une commande
+
+L'aide est **à tiroir** : trois niveaux, chacun répondant à la question de son
+niveau.
+
+```sh
+warden --help                    # les commandes, une ligne chacune
+warden help host                 # ce que « host » fait, et ses verbes
+warden help host declare         # un verbe : usage, drapeaux, exemples
+warden host declare --help       # la même page, depuis l'invocation
+```
+
+`--help` est reconnu **n'importe où** dans la ligne : `warden enroll --env prod
+--help` répond par la page d'`enroll`, et non par une erreur de drapeau.
+
+Une aide demandée sort sur la sortie standard et rend **0** — c'est une commande
+qui a réussi. Une commande incomplète, inconnue ou mal formée sort sur l'erreur
+standard et rend **1**, en ne montrant que ce qui la concerne :
+
+```
+$ warden hots
+warden: "hots" n'est pas une commande de « warden ». Vouliez-vous dire "host" ?
+« warden --help » les liste toutes.
 ```
 
 ---
