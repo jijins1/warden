@@ -120,6 +120,10 @@ func Detecter(ctx context.Context, o OptionsDepot) (client.Repo, error) {
 	// exactement aussi exécutable que celui d'un fichier de configuration.
 	propre, err := git.ParseRemote(r.RemoteURL)
 	if err != nil {
+		// ST1005 : les trois lignes qui suivent l'erreur enveloppée sont un
+		// paragraphe terminal, imprimé tel quel. Lui retirer son point final ne
+		// le rendrait pas composable, seulement inachevé.
+		//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
 		return client.Repo{}, fmt.Errorf("remote %s : %w\n\n"+
 			"Le serveur ne sait cloner qu'en http(s). Une URL SSH — git@…, ssh://… —\n"+
 			"désigne pourtant souvent le même dépôt : donnez sa forme http avec\n"+

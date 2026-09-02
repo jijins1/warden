@@ -424,8 +424,8 @@ func lotAvecMotDePasseJetable(t *testing.T) (admin.OptionsLot, *client.Client, *
 	suiveur := &suiveurDeLot{echouer: map[string]bool{}, hotes: map[string]string{}}
 	var premiere sync.Once
 	api := serveur(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/admin/enrollments":
+		switch r.URL.Path {
+		case "/admin/enrollments":
 			var n client.NewEnrollment
 			_ = json.NewDecoder(r.Body).Decode(&n)
 			if n.Password != "hunter2" {

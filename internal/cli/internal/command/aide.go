@@ -97,11 +97,18 @@ func Inconnue(chemin []string, saisi string) error {
 		ou = "warden " + strings.Join(chemin, " ")
 	}
 
+	// ST1005 vise les messages qu'on ENVELOPPE, où une majuscule ou un point
+	// final se retrouve au milieu d'une phrase. Ceux-ci sont terminaux : `main`
+	// les imprime tels quels et rend la main. Ce sont des phrases complètes, et
+	// les priver de ponctuation ne les rendrait pas composables — seulement mal
+	// écrites.
 	if proche := plusProche(saisi, candidats); proche != "" {
+		//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
 		return fmt.Errorf("%q n'est pas une commande de « %s ». Vouliez-vous dire %q ?\n"+
 			"« %s --help » les liste toutes.", saisi, ou, proche, ou)
 	}
 	sort.Strings(candidats)
+	//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
 	return fmt.Errorf("%q n'est pas une commande de « %s ». Il y a : %s.",
 		saisi, ou, strings.Join(candidats, ", "))
 }
@@ -111,6 +118,7 @@ func Manquante(chemin []string) error {
 	racine := Arbre()
 	noeud, _ := racine.Trouver(chemin)
 	ou := strings.Join(chemin, " ")
+	//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
 	return fmt.Errorf("« warden %s » attend une sous-commande : %s.\n"+
 		"« warden help %s » les décrit.", ou, strings.Join(noeud.Verbes(), ", "), ou)
 }

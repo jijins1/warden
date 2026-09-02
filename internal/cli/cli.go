@@ -89,6 +89,18 @@ func Run(ctx context.Context, args []string) error {
 	}
 }
 
+// erreurDrapeaux enveloppe un refus du paquet `flag` en renvoyant vers la page
+// de la commande — et non vers le manuel entier, ce que faisait l'ancien
+// `texteUsage`.
+//
+// ST1005 vise les messages qu'on ENVELOPPE, où un point final se retrouve au
+// milieu d'une phrase. Celui-ci est terminal : `main` l'imprime tel quel.
+//
+//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé à son tour.
+func erreurDrapeaux(commande string, err error) error {
+	return fmt.Errorf("%w\n\n« warden %s --help » décrit les drapeaux.", err, commande)
+}
+
 // ErrDejaDit signale une erreur dont le message a DÉJÀ été écrit sur stderr.
 //
 // Elle existe pour l'index d'aide, qui fait cinquante lignes : le faire voyager
@@ -102,7 +114,7 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	inventaire, runRef, become := f.inventaire, f.runRef, f.become
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n« warden submit --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("submit", err)
 	}
 
 	// Le répertoire courant, et non un chemin en option : la capture s'applique
@@ -282,7 +294,7 @@ func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
 	fs, f := fsCle()
 	env, cle := f.env, f.cle
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n« warden key --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("key", err)
 	}
 
 	if err := command.VerifierVerbe([]string{"key"}, args[0]); err != nil {
@@ -317,7 +329,7 @@ func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 	fichier, env, hote := f.fichier, f.env, f.hote
 	depuisInv, groupe, dryRun := f.depuisInv, f.groupe, f.dryRun
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n« warden host --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("host", err)
 	}
 	// Le verbe AVANT tout le reste : une faute de frappe doit être signalée comme
 	// telle, et non comme le premier obstacle que la commande rencontre ensuite.
@@ -369,7 +381,7 @@ func commandeDepot(ctx context.Context, args []string, sortie io.Writer) error {
 	nom, remoteURL, mainline := f.nom, f.remoteURL, f.mainline
 	remote, oui := f.remote, f.oui
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n« warden repo --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("repo", err)
 	}
 
 	if err := command.VerifierVerbe([]string{"repo"}, args[0]); err != nil {
@@ -453,7 +465,7 @@ func commandeEnroler(ctx context.Context, args []string, sortie io.Writer) error
 	parMachine, accepter, arreter := f.parMachine, f.accepter, f.arreter
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n« warden enroll --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("enroll", err)
 	}
 
 	if *toutes {
@@ -551,7 +563,7 @@ func commandeLogin(ctx context.Context, args []string, sortie io.Writer) error {
 	subject, mdp := f.subject, f.mdp
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n« warden login --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("login", err)
 	}
 
 	adresse, err := adresseServeur()
@@ -605,7 +617,7 @@ func commandePasswd(ctx context.Context, args []string, sortie io.Writer) error 
 	ancien, nouveau := f.ancien, f.nouveau
 
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n« warden passwd --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("passwd", err)
 	}
 
 	adresse, err := adresseServeur()
@@ -630,7 +642,7 @@ func commandeUtilisateur(ctx context.Context, args []string, sortie io.Writer) e
 	subject, nom, admin := f.subject, f.nom, f.admin
 
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n« warden user --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("user", err)
 	}
 
 	if err := command.VerifierVerbe([]string{"user"}, args[0]); err != nil {
@@ -667,7 +679,7 @@ func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
 	subject := f.subject
 
 	if err := fs.Parse(args[1:]); err != nil {
-		return fmt.Errorf("%w\n\n« warden grant --help » décrit les drapeaux.", err)
+		return erreurDrapeaux("grant", err)
 	}
 
 	if err := command.VerifierVerbe([]string{"grant"}, args[0]); err != nil {
