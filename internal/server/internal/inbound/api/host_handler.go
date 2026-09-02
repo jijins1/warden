@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/netip"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
@@ -16,9 +15,11 @@ import (
 // l'autre ne doit pas porter, la divergence se déclare ici plutôt que dans un
 // type du cœur qui se mettrait à porter des étiquettes JSON.
 //
-// L'ADRESSE est obligatoire et ce n'est pas négociable : c'est là que
-// l'enrôlement se connecte, et dépendre d'une résolution DNS faite dans le pod
-// ferait enrôler une machine que l'opérateur croyait désigner.
+// L'ADRESSE reste obligatoire — c'est là que l'enrôlement se connecte — mais
+// elle accepte désormais un NOM autant qu'une adresse IP (ADR-0036). La
+// résolution a alors lieu dans le pod, ce que l'ADR-0030 refusait ; ce qui
+// protège de joindre la mauvaise machine est l'empreinte épinglée, pas la forme
+// de ce champ.
 type hostPayload struct {
 	Name        string `json:"host"`
 	Environment string `json:"environment,omitempty"`
@@ -55,7 +56,7 @@ func versHostPayload(h core.ManagedHost) hostPayload {
 	return hostPayload{
 		Name:        h.Name,
 		Environment: h.Environment,
-		Address:     h.Address.String(),
+		Address:     h.Address,
 		Port:        h.Port,
 		Login:       h.Login,
 		HostKey:     h.HostKey,
@@ -78,26 +79,16 @@ func versManagedHost(p hostPayload, environnement string, mode core.EnrollmentMo
 		env = environnement
 	}
 
-	addr, err := netip.ParseAddr(p.Address)
-	if err != nil {
-		return core.ManagedHost{}, errAdresse(p)
-	}
-
 	port := p.Port
 	if port == 0 {
 		port = core.PortSSHParDefaut
 	}
 
 	h := core.ManagedHost{
-		Name: p.Name, Environment: env, Address: addr,
+		Name: p.Name, Environment: env, Address: p.Address,
 		Port: port, Login: p.Login, HostKey: p.HostKey, Mode: mode,
 	}
 	return h, h.Validate()
-}
-
-func errAdresse(p hostPayload) error {
-	return errorf("hôte %s : adresse %q illisible — une ADRESSE est attendue, "+
-		"pas un nom : c'est là que l'enrôlement se connecte", p.Name, p.Address)
 }
 
 // HandleListHosts rend l'inventaire des machines.

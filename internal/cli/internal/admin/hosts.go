@@ -106,8 +106,10 @@ func verifier(inv client.Inventory, environnement string) error {
 		case h.Name == "":
 			return fmt.Errorf("machine n°%d : `host` manquant", rang)
 		case h.Address == "":
-			return fmt.Errorf("machine %s : `address` manquante — une ADRESSE est attendue, "+
-				"pas un nom : c'est là que l'enrôlement se connecte", h.Name)
+			return fmt.Errorf("machine %s : `address` manquante — c'est là que "+
+				"l'enrôlement se connecte. Une adresse IP, ou un nom que LE POD "+
+				"sait résoudre : sa vue du DNS n'est pas la vôtre, et il ne lit "+
+				"pas votre ssh_config", h.Name)
 		case h.Login == "":
 			return fmt.Errorf("machine %s : `login` manquant — quel compte warden doit-il ouvrir ?", h.Name)
 		case h.Environment == "" && environnement == "":

@@ -159,8 +159,9 @@ func (o OptionsEnrolement) valider() error {
 	case o.Host == "":
 		return errors.New("--host est requis")
 	case o.Address == "":
-		return errors.New("--address est requis — une ADRESSE, pas un nom : " +
-			"c'est là que l'enrôlement se connecte")
+		return errors.New("--address est requis : c'est là que l'enrôlement se " +
+			"connecte. Une adresse IP, ou un nom que LE POD sait résoudre — sa vue " +
+			"du DNS n'est pas la vôtre, et il ne lit pas votre ssh_config")
 	case o.Login == "":
 		return errors.New("--login est requis : quel compte warden doit-il ouvrir ?")
 	case o.MotDePasse == nil:

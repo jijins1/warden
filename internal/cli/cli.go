@@ -137,7 +137,7 @@ Administrer les machines enrôlées :
   warden host forget  --env <nom> --host <machine>
 
 Enrôler une machine (warden pose la clé lui-même) :
-  warden enroll --env <nom> --host <machine> --address <ip> --login <compte>
+  warden enroll --env <nom> --host <machine> --address <ip|nom> --login <compte>
                                                le mot de passe est demandé au
                                                terminal ; --password-file et
                                                --password-stdin existent pour
@@ -146,7 +146,8 @@ Enrôler une machine (warden pose la clé lui-même) :
 Format d'un fichier de déclaration :
   hosts:
     - host: db-prod-02        # le nom TEL QUE l'inventaire Ansible le nomme
-      address: 10.20.0.42     # une ADRESSE : c'est là qu'on se connecte
+      address: 10.20.0.42     # où l'on se connecte : une adresse, ou un nom
+                              # que LE POD sait résoudre (pas votre ssh_config)
       login: ansible          # le compte que warden ouvre
       port: 22                # facultatif
       host_key: "ssh-ed25519 AAAA..."   # facultatif, mais c'est lui qui

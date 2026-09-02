@@ -218,7 +218,8 @@ warden host declare -f hosts.yaml
 ```yaml
 hosts:
   - host: db-prod-02        # the name as your Ansible inventory calls it
-    address: 10.20.0.42     # an ADDRESS: this is where we connect
+    address: 10.20.0.42     # where we connect: an address, or a name THE POD
+                            # can resolve (it does not read your ssh_config)
     login: ansible
     host_key: "ssh-ed25519 AAAA..."   # optional — and it is what protects
                                       # you from a blind first contact
@@ -246,9 +247,11 @@ Once a machine is pinned, a substituted host is refused outright — a distinct
 error from a network failure, because the correct response is to investigate,
 not to retry.
 
-An address is required and a hostname will not do: resolving a name inside the
-pod could enrol a machine you did not mean to designate, and a machine enrolled
-at the wrong address is a machine you only *believe* you can reach.
+`address` takes an IP address or a hostname. A name is resolved **inside the
+pod**, whose view of DNS is the cluster's and not your workstation's — and the
+pod reads no `ssh_config`, so an alias that only exists in your `~/.ssh/config`
+will pass validation and fail to connect. What protects you from reaching the
+wrong machine is the pinned host key, not the shape of this field ([ADR-0036]).
 
 ---
 
@@ -433,6 +436,7 @@ months later. The ones that explain the most:
 - [ADR-0011] — one binary per trust domain, boundaries enforced by the compiler
 - [ADR-0020] — access credentials, and what v1 knowingly does not do
 - [ADR-0030] — machine enrolment, and the egress we opened
+- [ADR-0036] — an address or a resolvable name, and where the risk moved
 - [ADR-0031] — reconciling killed runs, and who may pronounce an outcome
 - [ADR-0032] — local accounts and sessions, and what a login endpoint refuses to say
 - [ADR-0033] — environment grants: the half of authorization that does not need the network
@@ -451,3 +455,4 @@ The product specification lives in [`specs/initial.md`](specs/initial.md).
 [ADR-0031]: docs/adr/0031-reconciliation-des-runs-tues.md
 [ADR-0032]: docs/adr/0032-comptes-locaux-et-sessions.md
 [ADR-0033]: docs/adr/0033-droits-par-environnement.md
+[ADR-0036]: docs/adr/0036-adresse-ou-nom-resoluble.md

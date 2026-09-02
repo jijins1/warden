@@ -225,7 +225,12 @@ aussi, et l'API Kubernetes n'est plus arrêtée que par
 - [ ] **TOFU à la première prise de contact** (ADR-0030). Le premier enrôlement
   sans `host_key` déclarée fait confiance à ce qui répond. `warden host declare`
   avec `host_key` est le chemin qui l'évite, et devrait être préféré en
-  production.
+  production. **L'ADR-0036 a rendu cette dette plus chère** : une adresse peut
+  désormais être un nom, dont la résolution a lieu dans le pod — l'empreinte
+  épinglée est ce qui reste pour savoir à quoi on parle.
+- [ ] **Rien ne vérifie qu'un nom enrôlé résout encore depuis le cluster**
+  (ADR-0036). Ça ne se découvre qu'au run suivant. L'équivalent d'un
+  `ansible -m ping` lancé depuis un pod reste à écrire.
 
 ---
 
