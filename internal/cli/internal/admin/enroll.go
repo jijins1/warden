@@ -293,15 +293,6 @@ func ConfirmerAuTerminal(entree io.Reader, sortie io.Writer) func(Empreinte) boo
 			"Sur la machine :  ssh-keygen -lf %s\n"+
 			"Déclarer et épingler ? [o/N] ", emp.Fichier())
 
-		reponse, err := prompt.ReadLine(entree)
-		if err != nil {
-			return false
-		}
-		switch strings.ToLower(strings.TrimSpace(string(reponse.Reveal()))) {
-		case "o", "oui", "y", "yes":
-			return true
-		default:
-			return false
-		}
+		return lireOui(entree)
 	}
 }

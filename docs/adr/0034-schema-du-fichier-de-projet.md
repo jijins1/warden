@@ -162,6 +162,26 @@ est **détectable après coup**, elle n'est simplement pas **empêchable à la
 source**. Et elle n'ouvre rien de neuf — un client modifié contrôle déjà
 entièrement ce qu'il pousse.
 
+#### Amendement (2026-09-02) : `repo`, troisième lecture cliente
+
+Un troisième champ est lu par la CLI et envoyé dans la requête : `repo`, le nom
+du dépôt **côté serveur**, qui rend `warden submit --repo` inutile.
+
+Ce n'en est pas pour autant une troisième brèche, et la distinction porte tout
+l'argument : `repo` n'est **pas de la configuration de run**. Il ne décide de
+rien de ce qui s'exécute — ni du playbook, ni de l'inventaire, ni de l'image, ni
+de l'environnement. Il désigne **à qui l'on parle**, exactement comme `server`,
+et il relève de la même exception que lui : on ne peut pas demander au serveur
+quel dépôt on lui adresse avant de l'avoir adressé.
+
+Aucun écart entre l'audité et l'appliqué ne peut en naître, parce qu'il ne
+s'applique à rien. Le drapeau `--repo` reste prioritaire quand il est donné.
+
+Ce champ est écrit par personne d'autre que l'utilisateur : `warden repo declare`
+**affiche** la ligne à coller et n'écrit pas le fichier. Modifier d'autorité un
+fichier versionné, dans le dos d'un `git status`, serait la mauvaise surprise que
+ce produit existe pour éviter.
+
 ### Le versionnage du schéma reste ouvert, délibérément
 
 La dette que l'ADR-0009 nomme n'est **pas** soldée ici. Aucun champ de version
@@ -172,6 +192,12 @@ Ce qui tient lieu de protection en attendant est le **refus des champs
 inconnus** : un dépôt utilisant une clé plus récente que son serveur échoue en
 nommant la clé, plutôt que de la voir ignorée en silence. C'est bruyant, c'est
 voulu, et c'est le comportement que l'ADR-0009 exige déjà.
+
+L'ajout de `repo` en a fourni la première démonstration en usage, et sa
+contrepartie : **le serveur doit être déployé avant qu'un dépôt commite la
+nouvelle clé**, faute de quoi tous ses runs échouent. `warden repo declare` le
+dit au moment où il donne la ligne à coller — c'est le seul endroit où
+l'information arrive à temps.
 
 Le versionnage devient obligatoire **avant que des dépôts tiers dépendent du
 format**.

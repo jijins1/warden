@@ -43,6 +43,19 @@ type Project struct {
 	// le jour où le service déménage.
 	Server string `yaml:"server"`
 
+	// Repo est le nom du dépôt CÔTÉ SERVEUR, celui que `warden submit --repo`
+	// nomme quand il est donné.
+	//
+	// Il est lu par la CLI et envoyé dans la requête, ce que ce paquet
+	// s'interdit partout ailleurs (ADR-0009). L'exception tient à ce qu'il n'est
+	// pas de la configuration de RUN : c'est de l'ADRESSAGE, au même titre que
+	// `server`. Il ne décide de rien de ce qui s'exécute — il désigne à qui l'on
+	// parle. Aucun écart entre l'audité et l'appliqué ne peut en naître, parce
+	// qu'il ne s'applique à rien.
+	//
+	// Troisième et dernière lecture cliente, avec `server` et `audit_include`.
+	Repo string `yaml:"repo"`
+
 	// DefaultEnv est l'environnement visé quand `--env` est absent.
 	//
 	// Il est résolu par le SERVEUR depuis le commit, et pas par la CLI : c'est

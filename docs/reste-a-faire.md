@@ -94,6 +94,10 @@ ouverts, et c'est désormais le seul manque de ce lot.
   chemin d'inventaire.
 - [x] **`runner_image` ne transite plus par la requête** (ADR-0009, ADR-0014).
 
+- [x] ~~**Aucune commande pour déclarer un dépôt.**~~ Résolu (2026-09-02) :
+  `warden repo declare` déduit le descripteur du dépôt courant, l'affiche et le
+  fait confirmer. Le `curl` de la prise en main a disparu.
+
 - [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est un manque de
   FONCTIONNALITÉ.** `warden submit` n'accepte que `--repo`, `--playbook`,
   `--env`, `--inventory`, `--run-ref` et la saisie de `become` — dont `-K`.

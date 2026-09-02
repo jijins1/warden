@@ -200,6 +200,31 @@ one answer, from one table.
 
 ---
 
+## Repository enrolment
+
+The server has to know a repository before a run can target it. From inside the
+repository:
+
+```sh
+warden repo declare        # name, remote and mainline ref are read from git,
+                           # shown to you, then confirmed
+warden repo list
+```
+
+The confirmation matters. When the repository was never cloned — so git does not
+know the remote's default branch — the **current branch** is used as a fallback,
+and declaring from a feature branch would pin the wrong comparison point for
+every run of that repository.
+
+The server only knows how to clone over http(s); if your `origin` is an SSH URL,
+pass the http form with `--remote-url`.
+
+Adding `repo: <name>` to `.ansibleproxy.yml` then makes `warden submit --repo`
+unnecessary. Wait until the server accepts that key before committing it: the
+server re-reads this file from the commit tree and rejects unknown fields.
+
+---
+
 ## Machine enrolment
 
 A run needs an SSH key on the target. warden offers two ways, converging on the

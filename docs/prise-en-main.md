@@ -196,24 +196,58 @@ premier contact fait confiance à ce qui répond.
 > `host forget` retire la ligne d'inventaire. Il ne retire **pas** la clé
 > publique de l'`authorized_keys` de la machine.
 
-## 7. Configurer le dépôt — ⚠ pas de commande
+## 7. Configurer le dépôt
 
-Un dépôt doit être connu du serveur avant qu'on puisse y lancer un run. **La CLI
-n'a pas de commande pour ça** ; l'endpoint existe, il faut l'appeler à la main.
+Un dépôt doit être connu du serveur avant qu'on puisse y lancer un run. Depuis le
+dépôt lui-même :
 
 ```sh
-# Le fichier de session indexe par adresse, sans barre finale.
-TOKEN=$(python3 -c "
-import json, os
-f = json.load(open(os.path.expanduser('~/.config/warden/credentials.json')))
-print(f['servers'][os.environ['WARDEN_SERVER'].rstrip('/')]['token'])")
-
-curl -X PUT "$WARDEN_SERVER/admin/repos/mon-depot" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"mon-depot",
-       "remote_url":"https://forge.example.com/equipe/mon-depot.git",
-       "mainline_ref":"refs/heads/main"}'
+cd ~/src/mon-depot
+warden repo declare
 ```
+
+La commande déduit tout de git — le nom du dernier segment de l'URL d'`origin`,
+le remote de sa configuration, la branche de référence — puis **affiche ce
+qu'elle a trouvé et demande confirmation** avant d'écrire :
+
+```
+nom                   mon-depot
+remote                https://forge.example.com/equipe/mon-depot.git
+branche de référence  refs/heads/main
+
+Déclarer ce dépôt auprès du serveur ? [o/N]
+```
+
+La question n'est pas une politesse. Quand le dépôt n'a pas été cloné — donc
+quand git ne connaît pas la branche par défaut du remote — c'est la **branche
+courante** qui sert de repli. Déclarer depuis une branche de feature épinglerait
+le mauvais point de comparaison pour tous les runs du dépôt, et c'est ce moment
+qui existe pour l'attraper. `--mainline-ref` la corrige, `--yes` saute la
+question dans un script.
+
+> **Si votre `origin` est en SSH**, la déduction échoue en le disant : le serveur
+> ne sait cloner qu'en http(s). Donnez la forme http du même dépôt avec
+> `--remote-url`.
+
+`warden repo list` affiche les dépôts connus.
+
+### Se passer de `--repo`
+
+Une fois le dépôt déclaré, la commande affiche la ligne à ajouter au fichier de
+projet :
+
+```yaml
+# .ansibleproxy.yml
+repo: mon-depot
+```
+
+`warden submit` n'a alors plus besoin de `--repo`. Le drapeau reste prioritaire
+quand il est donné.
+
+> ⚠ **Attendez que le serveur accepte ce champ avant de le commiter.** Le serveur
+> relit `.ansibleproxy.yml` depuis l'arbre du commit et **refuse les clés qu'il
+> ne connaît pas** : contre un serveur plus ancien, cette ligne fait échouer
+> *tous* les runs du dépôt.
 
 `mainline_ref` n'est pas décoratif : c'est la branche protégée contre laquelle le
 `pre-receive` contrôle la fraîcheur du commit d'audit, et c'est le serveur qui la
@@ -311,13 +345,11 @@ warden key generate --env staging
 warden enroll --env staging --host web-01 --address 10.0.0.7 --login ansible
 warden host list --env staging
 
-# 4. le dépôt, à la main faute de commande
-curl -X PUT "$WARDEN_SERVER/admin/repos/mon-depot" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"mon-depot","remote_url":"https://forge/x.git","mainline_ref":"refs/heads/main"}'
+# 4. le dépôt, depuis le dépôt
+cd ~/src/mon-depot
+warden repo declare
 
 # 5. le run
-cd ~/src/mon-depot
 warden submit --repo mon-depot --playbook play.yml --env staging --inventory hosts
 ```
 

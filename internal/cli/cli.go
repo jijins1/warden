@@ -23,6 +23,7 @@ import (
 	"github.com/jijins1/warden/internal/cli/internal/session"
 	"github.com/jijins1/warden/internal/cli/internal/stream"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
+	"github.com/jijins1/warden/internal/config"
 )
 
 // Variables d'environnement de la configuration.
@@ -64,6 +65,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeSubmit(ctx, args[1:], os.Stdout)
 	case "key":
 		return commandeCle(ctx, args[1:], os.Stdout)
+	case "repo":
+		return commandeDepot(ctx, args[1:], os.Stdout)
 	case "host":
 		return commandeHote(ctx, args[1:], os.Stdout)
 	case "enroll":
@@ -118,10 +121,22 @@ Droits par environnement (lecture seule) :
   ce que le playbook peut joindre — l'egress du runner est ouvert.
 
 Lancer un run :
-  warden submit --repo <nom> --playbook <fichier> [--env <environnement>] [--inventory <chemin>]
+  warden submit --playbook <fichier> [--repo <nom>] [--env <environnement>] [--inventory <chemin>]
                 [-K | --ask-become-pass]       demande le mot de passe
                                                d'élévation au terminal ; « -K »
                                                est celui d'ansible-playbook
+
+Administrer les dépôts (administrateurs) :
+  warden repo declare                          déclare LE DÉPÔT COURANT : nom,
+                                               remote et branche de référence
+                                               sont déduits de git, affichés,
+                                               puis confirmés
+              [--name <nom>] [--remote-url <url>] [--mainline-ref refs/heads/<b>]
+              [--remote <origin>] [--yes]
+  warden repo list
+
+  Le serveur ne sait cloner qu'en http(s). Si votre « origin » est une URL SSH,
+  donnez la forme http du même dépôt avec --remote-url.
 
 Administrer les clés d'accès :
   warden key generate --env <nom>              frappe la paire ; la partie privée
@@ -155,6 +170,9 @@ Format d'un fichier de déclaration :
 
 Fichier de projet (.ansibleproxy.yml, commité à la racine du dépôt) :
   server: https://warden.example.com   où joindre le control plane
+  repo: mon-depot                      nom du dépôt côté serveur ; rend --repo
+                                       inutile. « warden repo declare » affiche
+                                       la ligne à coller
   default_env: staging                 environnement quand --env est absent
   inventory: inventories/{{ env }}     chemin de l'inventaire ; « {{ env }} » est
                                        le seul substituable reconnu
@@ -229,16 +247,9 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		return err
 	}
 
-	// La variable d'environnement PRIME sur le fichier : c'est la surcharge d'un
-	// utilisateur qui vise délibérément un autre serveur, et elle ne doit pas
-	// demander d'éditer un fichier versionné pour le reste de l'équipe.
-	adresse := os.Getenv(EnvServeur)
-	if adresse == "" {
-		adresse = config.Server
-	}
-	if adresse == "" {
-		return fmt.Errorf("aucune adresse de serveur : posez %s ou déclarez `server` dans %s\n\n%s",
-			EnvServeur, configFichier, texteUsage)
+	adresse, err := adresseServeurDe(config)
+	if err != nil {
+		return err
 	}
 
 	// L'adresse du rôle `git` n'est plus exigée ici : le serveur l'annonce avec
@@ -262,9 +273,16 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		defer motDePasseBecome.Wipe()
 	}
 
+	// Le drapeau prime sur le fichier : viser un autre dépôt le temps d'une
+	// commande ne doit pas demander d'éditer un fichier versionné.
+	nomDuDepot := *repo
+	if nomDuDepot == "" {
+		nomDuDepot = config.Repo
+	}
+
 	res, err := submit.Run(ctx, api, submit.Options{
 		RepoDir:     cwd,
-		Repo:        *repo,
+		Repo:        nomDuDepot,
 		Environment: *environnement,
 		Inventory:   *inventaire,
 		Playbook:    *playbook,
@@ -306,6 +324,41 @@ func apiSeule() (*client.Client, error) {
 		return nil, err
 	}
 	return clientPour(adresse)
+}
+
+// adresseServeurDans lit l'adresse du serveur pour une commande qui s'exécute
+// DANS un dépôt.
+//
+// Ce n'est pas `adresseServeur` : celle-ci n'a que l'environnement, parce que
+// `key`, `host` et `user` ne sont attachées à aucun dépôt. Ici le fichier de
+// projet a son mot à dire, et c'est ce qui permet de déclarer un dépôt sans
+// avoir d'abord posé une variable d'environnement pour le désigner.
+func adresseServeurDans(repoDir string) (string, error) {
+	// Une lecture qui échoue n'est PAS rattrapée par WARDEN_SERVER : un fichier
+	// de projet présent mais invalide est une faute à corriger, pas un fichier
+	// dont on se passe. `projet.Lire` rend un document nul sans erreur quand le
+	// fichier est absent, ce qui est le cas légitime.
+	config, err := projet.Lire(repoDir)
+	if err != nil {
+		return "", err
+	}
+	return adresseServeurDe(config)
+}
+
+// adresseServeurDe applique la précédence entre l'environnement et le fichier.
+//
+// La variable d'environnement PRIME sur le fichier : c'est la surcharge d'un
+// utilisateur qui vise délibérément un autre serveur, et elle ne doit pas
+// demander d'éditer un fichier versionné pour le reste de l'équipe.
+func adresseServeurDe(p config.Project) (string, error) {
+	if adresse := os.Getenv(EnvServeur); adresse != "" {
+		return adresse, nil
+	}
+	if p.Server != "" {
+		return p.Server, nil
+	}
+	return "", fmt.Errorf("aucune adresse de serveur : posez %s, ou déclarez `server` dans %s",
+		EnvServeur, configFichier)
 }
 
 func adresseServeur() (string, error) {
@@ -405,6 +458,64 @@ func commandeHote(ctx context.Context, args []string, sortie io.Writer) error {
 		return admin.ListerHotes(ctx, api, *env, sortie)
 	case "forget":
 		return admin.OublierHote(ctx, api, *env, *hote, sortie)
+	default:
+		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
+	}
+}
+
+// commandeDepot déclare ou liste les dépôts connus du serveur.
+//
+// Elle est la SEULE commande d'administration à s'exécuter dans un dépôt, et
+// c'est ce qui la distingue des autres : elle lit `server:` du fichier de projet
+// comme `warden submit`, là où `key`, `host` et `user` exigent WARDEN_SERVER.
+// Exiger la variable ici obligerait à la poser pour déclarer le dépôt qui la
+// porte, ce qui est exactement à l'envers.
+func commandeDepot(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage : warden repo <declare|list>\n\n%s", texteUsage)
+	}
+
+	fs := flag.NewFlagSet("repo", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	nom := fs.String("name", "", "nom du dépôt côté serveur")
+	remoteURL := fs.String("remote-url", "", "URL http(s) que le serveur clonera")
+	mainline := fs.String("mainline-ref", "", "branche de référence, en refs/heads/<nom>")
+	remote := fs.String("remote", "", "remote git interrogé pour la déduction")
+	oui := fs.Bool("yes", false, "ne pas demander confirmation")
+	if err := fs.Parse(args[1:]); err != nil {
+		return fmt.Errorf("%w\n\n%s", err, texteUsage)
+	}
+
+	// Le répertoire courant, et non un chemin en option : la même raison que
+	// pour `submit` — un drapeau inviterait à déclarer un dépôt qu'on ne regarde
+	// pas.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "declare":
+		o := admin.OptionsDepot{
+			RepoDir: cwd, Name: *nom, RemoteURL: *remoteURL,
+			MainlineRef: *mainline, Remote: *remote,
+			Confirmer: admin.ConfirmerDepotAuTerminal(os.Stdin, sortie),
+		}
+		if *oui {
+			o.Confirmer = nil
+		}
+		return admin.DeclarerDepot(ctx, api, o, sortie)
+	case "list":
+		return admin.ListerDepots(ctx, api, sortie)
 	default:
 		return fmt.Errorf("sous-commande inconnue %q\n\n%s", args[0], texteUsage)
 	}
