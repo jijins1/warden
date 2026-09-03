@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jijins1/warden/internal/config"
 )
@@ -56,6 +57,15 @@ type Requete struct {
 	// ForwardEnv porte les VALEURS lues dans le shell de l'appelant. Elles ne
 	// peuvent venir que de là (§5.4), et elles ne sont JAMAIS journalisées.
 	ForwardEnv map[string]string
+
+	// Flags porte les drapeaux d'`ansible-playbook` demandés (§5.5), dont la
+	// FORME a déjà été validée par `ValiderFlags`.
+	//
+	// Ce qui reste à décider ici est l'appartenance des `--extra-vars` à
+	// l'`extra_vars:` du commit : c'est la seule partie de l'allowlist qui
+	// dépende du projet, donc la seule qui ne pouvait pas être tranchée avant de
+	// l'avoir lu.
+	Flags []string
 }
 
 // Effectif est ce qui s'applique réellement, après composition.
@@ -69,6 +79,13 @@ type Effectif struct {
 	// ForwardEnv ne contient que ce qui a passé les deux filtres : déclaré dans
 	// le commit ET fourni par le shell. Les valeurs sont sensibles.
 	ForwardEnv map[string]string
+
+	// Flags sont les drapeaux retenus, dans l'ordre où le client les a donnés.
+	//
+	// Identiques à ceux de la requête quand elle est acceptée : `composerFlags`
+	// REFUSE au lieu d'amputer, contrairement à `composerForwardEnv`. Voir là-bas
+	// pourquoi l'asymétrie est voulue.
+	Flags []string
 }
 
 // Composer applique l'ordre de composition de l'ADR-0009.
@@ -115,7 +132,82 @@ func Composer(projet config.Project, req Requete) (Effectif, error) {
 	}
 	eff.ForwardEnv = forward
 
+	flags, err := composerFlags(projet.ExtraVars, req.Flags)
+	if err != nil {
+		return Effectif{}, err
+	}
+	eff.Flags = flags
+
 	return eff, nil
+}
+
+// PrefixeReserveExtraVar borne ce qu'un `extra_vars:` ne peut pas déclarer.
+//
+// Tout le préfixe et pas une liste de noms, et c'est le point : les variables
+// `ansible_*` décrivent COMMENT le run se connecte — `ansible_become_password`,
+// `ansible_ssh_private_key_file`, `ansible_user`, `ansible_host`,
+// `ansible_python_interpreter`. Les laisser poser par `-e` rendrait à la requête
+// le pouvoir de redéfinir la connexion, c'est-à-dire de sortir de ce que
+// l'inventaire audité décrit — exactement ce que l'ADR-0009 ferme ailleurs.
+//
+// `ansible_become_password` mérite d'être nommé à part : les valeurs d'`-e`
+// sont AUDITÉES (ADR-0039), donc l'autoriser écrirait un mot de passe en clair
+// dans `run.flags`. Le mot de passe d'élévation a son propre chemin, qui ne
+// persiste rien.
+const PrefixeReserveExtraVar = "ansible_"
+
+// composerFlags croise les NOMS de variables du commit avec les VALEURS de la
+// requête, comme `composerForwardEnv` le fait pour le shell.
+//
+// L'ASYMÉTRIE avec `composerForwardEnv` est délibérée et vaut d'être lue : celui-ci
+// REFUSE un nom non déclaré, là où l'autre le jette en silence.
+//
+// La raison est la nature de la source. `forward_env` puise dans un shell
+// ambiant, où des variables existent sans que personne les ait voulues pour ce
+// run : en écarter une n'a rien à signaler. Un `-e version=1.2.3` est au
+// contraire un acte explicite de l'opérateur, tapé pour ce run-là. L'ignorer
+// ferait partir un déploiement SANS la version demandée, et le message d'échec
+// arriverait de la machine cible plutôt que d'ici.
+func composerFlags(declares []string, demandes []string) ([]string, error) {
+	if len(demandes) == 0 {
+		return nil, nil
+	}
+
+	autorises := make(map[string]struct{}, len(declares))
+	for _, n := range declares {
+		if strings.HasPrefix(n, PrefixeReserveExtraVar) {
+			return nil, fmt.Errorf("extra_vars : %s est réservée par warden et ne peut pas être "+
+				"déclarée — les variables `%s*` décrivent comment le run se connecte, "+
+				"et les poser depuis la requête sortirait de l'inventaire audité",
+				n, PrefixeReserveExtraVar)
+		}
+		autorises[n] = struct{}{}
+	}
+
+	for _, f := range demandes {
+		nom, ok := strings.CutPrefix(f, "--extra-vars=")
+		if !ok {
+			continue
+		}
+		nom, _, _ = strings.Cut(nom, "=")
+		if _, permis := autorises[nom]; !permis {
+			// Le message NOMME ce que le commit déclare : sans ça, l'utilisateur
+			// ne sait pas s'il s'est trompé de nom ou s'il doit éditer le
+			// fichier de projet.
+			return nil, fmt.Errorf("extra-var %q : le fichier de projet du commit ne la déclare pas. "+
+				"%s", nom, ceQueLeProjetDeclare(declares))
+		}
+	}
+	return demandes, nil
+}
+
+func ceQueLeProjetDeclare(declares []string) string {
+	if len(declares) == 0 {
+		return "il ne déclare aucun `extra_vars:`"
+	}
+	tries := append([]string(nil), declares...)
+	sort.Strings(tries)
+	return "il déclare : " + strings.Join(tries, ", ")
 }
 
 // composerForwardEnv croise les NOMS du commit avec les VALEURS du client.

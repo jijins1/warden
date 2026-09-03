@@ -18,13 +18,21 @@ import (
 // `user_id` : il vient de l'authentification, et un identifiant d'utilisateur
 // dans un corps de requête est au mieux redondant, au pire une tentative.
 type createRunPayload struct {
-	RunRef      string          `json:"run_ref"`
-	Repo        string          `json:"repo"`
-	Environment string          `json:"environment"`
-	Inventory   string          `json:"inventory"`
-	Playbook    string          `json:"playbook"`
-	BaseSHA     string          `json:"base_sha"`
-	Flags       json.RawMessage `json:"flags,omitempty"`
+	RunRef      string `json:"run_ref"`
+	Repo        string `json:"repo"`
+	Environment string `json:"environment"`
+	Inventory   string `json:"inventory"`
+	Playbook    string `json:"playbook"`
+	BaseSHA     string `json:"base_sha"`
+
+	// Flags porte les drapeaux d'`ansible-playbook` du §5.5.
+	//
+	// Reste un `json.RawMessage` À CE NIVEAU, et seulement ici : le décodage en
+	// liste de chaînes est une VALIDATION, et la faire faire par le décodeur du
+	// corps rendrait « ce n'est pas un tableau » indistinguable de « le corps est
+	// illisible ». `core.FlagsDemandes` la fait, et son message nomme ce qui est
+	// accepté (ADR-0038).
+	Flags json.RawMessage `json:"flags,omitempty"`
 
 	// BecomePassword ne survit PAS à cette requête : il part en consigne
 	// éphémère, et la livraison de l'ordre au pod le consomme. Ni journalisé,
@@ -112,6 +120,23 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LA FORME DES FLAGS EST VALIDÉE ICI, avant que le rôle `git` ne travaille :
+	// un drapeau refusé ne doit pas coûter un rafraîchissement de miroir. Le
+	// message est celui du cœur, en français comme ceux de la configuration de
+	// projet — il nomme la liste acceptée, et l'utilisateur est le seul à pouvoir
+	// corriger sa ligne de commande.
+	//
+	// L'APPARTENANCE d'un `--extra-vars` à l'`extra_vars:` du projet ne peut PAS
+	// être tranchée ici : elle est déclarée dans le commit, qui n'est pas encore
+	// résolu. C'est `core.Composer` qui la contrôle, plus bas (ADR-0039).
+	flags, err := core.FlagsDemandes(payload.Flags)
+	if err != nil {
+		slog.Warn("flags refusés",
+			slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// L'AUTORISATION EN DEUX TEMPS, et le découpage n'est pas une commodité.
 	//
 	// Premier temps, ICI : quand l'utilisateur NOMME son environnement, on le
@@ -183,6 +208,7 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Environment: payload.Environment,
 		Inventory:   payload.Inventory,
 		ForwardEnv:  payload.ForwardEnv,
+		Flags:       flags,
 	})
 	if err != nil {
 		slog.Warn("composition de la configuration refusée",
@@ -289,11 +315,15 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Environment: effectif.Environment,
 		Inventory:   effectif.Inventory,
 		Playbook:    payload.Playbook,
+		// Les flags EFFECTIFS, comme les deux au-dessus (§5.4.2). Ils coïncident
+		// avec les demandés — la composition refuse au lieu d'amputer — et passer
+		// par elle est ce qui garde cette ligne vraie le jour où ce ne serait
+		// plus le cas.
+		Flags:       effectif.Flags,
 		AuditSHA:    auditSHA,
 		BaseSHA:     payload.BaseSHA,
 		MainlineRef: repo.MainlineRef,
 		MainlineSHA: mainlineSHA,
-		Flags:       payload.Flags,
 		// L'image vient du COMMIT, et de lui seul (ADR-0014). Elle ne transite
 		// plus par la requête : `runner_image` y était accepté sans qu'aucun
 		// client ne l'envoie, ce qui contredisait l'ADR-0009 en laissant une

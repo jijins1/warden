@@ -345,3 +345,44 @@ func TestSansMagasinDeDroitsAucuneCleNeSort(t *testing.T) {
 		t.Error("le magasin de clés a été sollicité sans contrôle de droit")
 	}
 }
+
+// LE test du maillon qui manquait.
+//
+// `POST /runs` acceptait un `flags`, la colonne `run.flags` le gardait, le
+// runner savait le poser sur l'argv — et `OrderFor` ne le recopiait PAS dans
+// l'ordre. Un `--check` demandé aurait donc été enregistré comme tel puis
+// exécuté pour de vrai, ce qui est la pire des deux pannes possibles : l'audit
+// dit « simulation » et la machine a changé.
+func TestLOrdrePorteLesFlagsDuRun(t *testing.T) {
+	run := runValide()
+	run.Flags = []string{"--check", "--diff", "--limit=web-01"}
+
+	b, err := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	if err != nil {
+		t.Fatalf("NewOrderBuilder : %v", err)
+	}
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if strings.Join(ordre.Flags, " ") != "--check --diff --limit=web-01" {
+		t.Fatalf("l'ordre porte %v, voulu les trois flags du run", ordre.Flags)
+	}
+}
+
+// Un run sans flag part sans flag : le champ est `omitempty`, et un tableau vide
+// dans l'ordre ferait composer un `cmdline` vide plutôt que pas de `cmdline`.
+func TestUnRunSansFlagDonneUnOrdreSansFlag(t *testing.T) {
+	b, err := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+	if err != nil {
+		t.Fatalf("NewOrderBuilder : %v", err)
+	}
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if len(ordre.Flags) != 0 {
+		t.Fatalf("ordre.Flags = %v, voulu vide", ordre.Flags)
+	}
+}

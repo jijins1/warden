@@ -30,6 +30,16 @@ type Options struct {
 	Inventory   string
 	Playbook    string
 
+	// Flags sont les drapeaux d'`ansible-playbook` du §5.5, déjà composés par
+	// `FlagsAnsible.Composer`.
+	//
+	// Ils ne sont PAS de la configuration lue depuis le commit, et c'est ce qui
+	// les autorise à voyager dans la requête sans contredire l'ADR-0009 : ils
+	// disent COMMENT jouer ce commit-là — en simulation, en montrant les diffs,
+	// sur un sous-ensemble de machines — et non quoi jouer. Le serveur les
+	// revalide et les enregistre dans `run.flags`.
+	Flags []string
+
 	// BecomePassword est le mot de passe d'élévation du §5.5, vide quand
 	// l'utilisateur ne l'a pas demandé.
 	//
@@ -205,6 +215,11 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("envoi du commit d'audit : %w", err)
 	}
 
+	flags, err := encoder(opts.Flags)
+	if err != nil {
+		return nil, err
+	}
+
 	cree, err := api.CreateRun(ctx, client.NewRun{
 		RunRef:      runRef,
 		Repo:        opts.Repo,
@@ -212,6 +227,7 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		Inventory:   opts.Inventory,
 		Playbook:    opts.Playbook,
 		BaseSHA:     base.String(),
+		Flags:       flags,
 		// `Reveal` : le seul endroit où le mot de passe d'élévation sort de son
 		// enveloppe masquée, et il doit se voir en revue.
 		BecomePassword: string(opts.BecomePassword.Reveal()),

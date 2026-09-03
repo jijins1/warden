@@ -338,3 +338,41 @@ func TestLAdresseAnnonceeParLeServeurPrime(t *testing.T) {
 		t.Error("aucun run déclaré")
 	}
 }
+
+// Les flags arrivent dans le corps de `POST /runs`, et sous la forme que le
+// serveur attend : un tableau JSON de chaînes.
+//
+// Le maillon qui manquait était CELUI-CI : `client.NewRun.Flags` existait depuis
+// le début et n'était jamais rempli, donc aucun drapeau Ansible n'était
+// atteignable depuis la CLI.
+func TestLesFlagsPartentDansLaDeclarationDuRun(t *testing.T) {
+	repoDir, _, gitURL, _ := monde(t)
+	api := &apiFactice{prefix: "refs/warden/audit/u1/"}
+
+	o := options(repoDir, gitURL)
+	o.Flags = []string{"--check", "--diff", "--limit=web-01"}
+
+	if _, err := submit.Run(t.Context(), api, o); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+	if len(api.recus) != 1 {
+		t.Fatalf("%d déclaration(s)", len(api.recus))
+	}
+	if got := string(api.recus[0].Flags); got != `["--check","--diff","--limit=web-01"]` {
+		t.Errorf("flags envoyés %s", got)
+	}
+}
+
+// Un run sans flag n'envoie PAS le champ : il est `omitempty`, et un tableau
+// vide ferait passer la requête par la validation des flags pour rien.
+func TestUnRunSansFlagNenvoiePasLeChamp(t *testing.T) {
+	repoDir, _, gitURL, _ := monde(t)
+	api := &apiFactice{prefix: "refs/warden/audit/u1/"}
+
+	if _, err := submit.Run(t.Context(), api, options(repoDir, gitURL)); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+	if api.recus[0].Flags != nil {
+		t.Errorf("flags envoyés %s, voulu rien", api.recus[0].Flags)
+	}
+}

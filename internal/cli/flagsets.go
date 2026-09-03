@@ -6,6 +6,7 @@ import (
 
 	"github.com/jijins1/warden/internal/cli/internal/command"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
+	"github.com/jijins1/warden/internal/cli/internal/submit"
 )
 
 // Les FlagSets sont construits ICI, et pas dans les commandes qui les utilisent.
@@ -33,6 +34,14 @@ func neuf(nom string) *flag.FlagSet {
 type drapeauxSubmit struct {
 	repo, playbook, environnement, inventaire, runRef *string
 	become                                            *prompt.Source
+
+	// Les trois du §5.5 que l'ADR-0038 ouvre. Ils portent LE MÊME NOM que chez
+	// `ansible-playbook`, et ce n'est pas de la coquetterie : la commande se
+	// retrouve dans un historique de shell, et un `--dry-run` qui veut dire
+	// `--check` obligerait à traduire dans les deux sens.
+	check, diff *bool
+	limit       *string
+	extraVars   *submit.Repetable
 }
 
 func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
@@ -46,7 +55,17 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 		// le même SHA (ADR-0025) : la reprise est sûre, à condition de reprendre
 		// le même identifiant.
 		runRef: fs.String("run-ref", "", "reprendre une soumission interrompue"),
+
+		check: fs.Bool("check", false, "simuler : Ansible annonce ce qu'il ferait sans le faire"),
+		diff:  fs.Bool("diff", false, "montrer le contenu de ce qui change, tâche par tâche"),
+		limit: fs.String("limit", "", "restreindre aux machines ou groupes de ce motif Ansible"),
 	}
+
+	// Répétable, et déclaré sous ses DEUX noms comme `ansible-playbook` : `-e` est
+	// celui qu'on tape, `--extra-vars` celui qu'on écrit dans un script.
+	f.extraVars = &submit.Repetable{}
+	fs.Var(f.extraVars, "e", "poser une variable, sous la forme nom=valeur ; répétable")
+	fs.Var(f.extraVars, "extra-vars", "identique à -e")
 	// La MÊME mécanique de saisie que pour une clé ou un enrôlement : trois
 	// drapeaux nommés pareil, jamais argv, jamais l'environnement.
 	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")

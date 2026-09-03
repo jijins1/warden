@@ -189,6 +189,16 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		Environment: run.Environment,
 		Inventory:   run.Inventory,
 		Playbook:    run.Playbook,
+
+		// Les flags du §5.5, relus de la ligne de run et déjà passés par
+		// l'allowlist deux fois — à la création et à la relecture (ADR-0038).
+		//
+		// Cette ligne MANQUAIT, et son absence rendait faux tout ce qui la
+		// suivait : `POST /runs` acceptait un `flags`, la colonne le gardait, et
+		// l'ordre partait sans. Un `--check` demandé aurait été enregistré comme
+		// tel puis exécuté pour de vrai — la pire des deux pannes possibles.
+		Flags: run.Flags,
+
 		// L'origine est composée à partir du dépôt DU RUN. Le nom a déjà traversé
 		// la validation de `depots.dir` côté `git` et la contrainte de la base ;
 		// il ne peut pas contenir de barre ni de `..`.

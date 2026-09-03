@@ -337,6 +337,56 @@ warden submit --repo mon-depot --playbook play.yml --env prod --inventory hosts
 warden submit --repo mon-depot --playbook play.yml -K   # ou --ask-become-pass
 ```
 
+Les trois flags d'`ansible-playbook` acceptés, sous leur nom d'origine :
+
+```sh
+# Simuler : Ansible annonce ce qu'il ferait, et montre le contenu des changements.
+warden submit --repo mon-depot --playbook play.yml --env prod --check --diff
+
+# N'agir que sur une machine, ou sur un groupe de l'inventaire.
+warden submit --repo mon-depot --playbook play.yml --env prod --limit web-01
+```
+
+Le serveur n'accepte que ceux-là et refuse le reste en nommant la liste
+(ADR-0038). Ils sont enregistrés dans le run, et `GET /runs/{run_ref}` les rend :
+zéro changement sous `--check` ne se lit pas comme zéro changement sans.
+
+### `-e`, et la liste blanche qui le rend possible
+
+`-e nom=valeur` ne pose que les variables que le fichier de projet **du commit**
+déclare. C'est le même mécanisme que `forward_env` : le fichier versionné dit les
+noms, la ligne de commande n'apporte que les valeurs.
+
+```yaml
+# .ansibleproxy.yml
+extra_vars:
+  - version
+  - couleur
+```
+
+```sh
+warden submit --playbook deploy.yml --env prod -e version=1.2.3 -e couleur=bleu
+```
+
+Un nom non déclaré est refusé, en nommant ceux qui le sont. Le drapeau est
+répétable et existe sous ses deux noms, `-e` et `--extra-vars`.
+
+> ⚠ **Les valeurs d'`extra_vars` sont AUDITÉES.** Elles sont enregistrées sur le
+> run, servies par l'API et visibles dans les diffs — c'est le but : « quelle
+> version a été déployée » est la question qu'un audit doit pouvoir répondre.
+> **N'y mettez pas de secret.** `forward_env` est le champ dont les valeurs ne
+> sont jamais journalisées, et le mot de passe d'élévation a son propre chemin.
+
+> ⚠ Même précaution de déploiement que pour `repo:` : le serveur **relit ce
+> fichier depuis le commit** et refuse les champs qu'il ne connaît pas. Un dépôt
+> qui commite `extra_vars:` contre un serveur plus ancien verra *tous* ses runs
+> refusés. Déployez le serveur d'abord.
+
+Les noms commençant par `ansible_` sont **réservés** : ils décrivent comment le
+run se connecte, et les poser depuis la requête sortirait de l'inventaire audité.
+`ansible_become_password` en particulier finirait en clair dans la base, les
+valeurs d'`-e` étant enregistrées.
+
 **Le travail non commité part avec.** `submit` construit un commit d'audit depuis
 votre arbre de travail — sans toucher à votre index ni à `HEAD` — le pousse, et
 le runner exécute **ce commit exact**. C'est la raison d'être du produit : ce qui
@@ -463,6 +513,17 @@ sans clé, aucune machine joignable. Il n'empêche **pas** qu'un run légitime d
 `staging` joigne une machine de `prod` — l'egress du pod runner est ouvert, et le
 §10.2 pose que « le périmètre est appliqué par le réseau ou il ne l'est pas ».
 
-De même, `--limit` n'est jamais un contrôle de sécurité, et les flags passés à
-`submit` ne sont **pas** filtrés : la politique serveur du §5.5 n'existe pas
-encore.
+De même, `--limit` **n'est jamais un contrôle de sécurité**, et ne le devient pas
+en passant par warden : un run limité à `web-01` reste un run dont le pod a un
+egress ouvert et une clé d'accès valable sur tout l'environnement. Il restreint
+ce qu'Ansible fait, pas ce que le pod peut joindre.
+
+`--check` n'est pas non plus une garantie d'innocuité : c'est Ansible qui décide
+de le respecter, module par module, et un `command` ou un `shell` sans
+`check_mode:` s'exécute quand même.
+
+Les flags passés à `submit` sont en revanche **filtrés** depuis l'ADR-0038 : le
+serveur n'accepte que `--check`, `--diff` et `--limit`, et refuse le reste en le
+disant. Ce filtre protège l'audit — un `-e @/chemin` ferait exécuter autre chose
+que ce que le commit dit — et non les machines cibles, sur lesquelles le playbook
+exécute déjà du code arbitraire.

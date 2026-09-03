@@ -59,9 +59,16 @@ func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
 		return 0, errors.New("run créé sans dépôt : ses diffs d'audit seraient incalculables (§6.5)")
 	}
 
-	flags := n.Flags
-	if len(flags) == 0 {
-		flags = json.RawMessage(`{}`)
+	// Le TABLEAU est la forme canonique, y compris vide. Le défaut du schéma
+	// initial est un objet — `'{}'::jsonb` — et toutes les lignes antérieures le
+	// portent ; la relecture le tolère (`core.FlagsEnregistres`), mais rien ne
+	// justifie d'écrire encore la forme qu'on doit rattraper.
+	flags, err := json.Marshal(n.Flags)
+	if err != nil {
+		return 0, fmt.Errorf("flags du run %s: %w", n.RunRef, err)
+	}
+	if len(n.Flags) == 0 {
+		flags = []byte(`[]`)
 	}
 
 	var cible any
@@ -88,7 +95,7 @@ VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''),
 RETURNING id`
 
 	var id int64
-	err := s.pool.QueryRow(ctx, q,
+	err = s.pool.QueryRow(ctx, q,
 		n.RunRef, n.UserID, n.Repo, n.Environment, n.Inventory, n.Playbook,
 		n.AuditSHA, n.BaseSHA, n.MainlineRef, n.MainlineSHA, flags,
 		n.RunnerImage, n.RunnerImageDigest,
@@ -209,18 +216,18 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
        coalesce(audit_sha, ''), coalesce(base_sha, ''),
        coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       started_at, ended_at, artifact_pruned_at, kind, enroll_target
+       started_at, ended_at, artifact_pruned_at, kind, enroll_target, flags
   FROM run
  WHERE run_ref = $1`
 
 	var r Run
 	var genre string
-	var cible []byte
+	var cible, flags []byte
 	err := s.pool.QueryRow(ctx, q, runRef).Scan(
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.StartedAt, &r.EndedAt, &r.ArtifactPrunedAt, &genre, &cible,
+		&r.StartedAt, &r.EndedAt, &r.ArtifactPrunedAt, &genre, &cible, &flags,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, ErrNotFound)
@@ -229,6 +236,9 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
 		return Run{}, fmt.Errorf("lecture du run %s: %w", runRef, err)
 	}
 	if err := poserLeGenre(&r, genre, cible); err != nil {
+		return Run{}, fmt.Errorf("run %s: %w", runRef, err)
+	}
+	if r.Flags, err = core.FlagsEnregistres(flags); err != nil {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, err)
 	}
 	return r, nil
@@ -249,18 +259,18 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
        coalesce(audit_sha, ''), coalesce(base_sha, ''),
        coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       artifact_pruned_at, kind, enroll_target
+       artifact_pruned_at, kind, enroll_target, flags
   FROM run
  WHERE id = $1`
 
 	var r Run
 	var genre string
-	var cible []byte
+	var cible, flags []byte
 	err := s.pool.QueryRow(ctx, q, id).Scan(
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.ArtifactPrunedAt, &genre, &cible,
+		&r.ArtifactPrunedAt, &genre, &cible, &flags,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %d: %w", id, ErrNotFound)
@@ -269,6 +279,12 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
 		return Run{}, fmt.Errorf("lecture du run %d: %w", id, err)
 	}
 	if err := poserLeGenre(&r, genre, cible); err != nil {
+		return Run{}, fmt.Errorf("run %d: %w", id, err)
+	}
+	// La revalidation a lieu ICI et pas seulement à l'entrée : c'est l'appelant
+	// de la LIVRAISON, donc le dernier point avant que ces chaînes deviennent
+	// l'`argv` d'un processus du domaine hostile (ADR-0011).
+	if r.Flags, err = core.FlagsEnregistres(flags); err != nil {
 		return Run{}, fmt.Errorf("run %d: %w", id, err)
 	}
 	return r, nil

@@ -32,12 +32,15 @@ ment coûte plus qu'un manque déclaré, parce qu'on ne le relit pas.
   `exec.go` énonçait « les flags EFFECTIFS, déjà filtrés par la politique
   serveur (§5.5) ». Suivi du chemin : `api/run_handler.go:27` accepte un
   `json.RawMessage`, `:206` le recopie tel quel, et il ressort sur l'`argv`.
-  Aucun filtrage nulle part. Le commentaire dit maintenant que ce sont les flags
-  **demandés**, renvoie à l'écart assumé par l'ADR-0021, et ajoute ce qui
+  Aucun filtrage nulle part. Le commentaire disait alors que ce sont les flags
+  **demandés**, renvoyait à l'écart assumé par l'ADR-0021, et ajoutait ce qui
   manquait : le filtre **ne pourra jamais vivre là**, puisque ce paquet tourne
   dans le domaine hostile de l'ADR-0011 — une allowlist appliquée par le runner
-  est une allowlist appliquée par le code qu'elle est censée contraindre. Le
-  fond reste ouvert au §2.
+  est une allowlist appliquée par le code qu'elle est censée contraindre.
+
+  Mis à jour le 2026-09-03 : l'allowlist existe (ADR-0038), côté serveur comme
+  ce commentaire l'exigeait. Il a donc été réécrit une seconde fois — il était
+  devenu faux dans l'autre sens, ce qui est le prix d'un commentaire exact.
 
 - [x] **`gitd/doc.go` et `gitclient/client.go` disaient le claim « à écrire ».**
   Faux depuis la phase 2. La relecture a trouvé une **seconde** erreur dans la
@@ -65,8 +68,11 @@ ment coûte plus qu'un manque déclaré, parce qu'on ne le relit pas.
 ## 2. Flags, variables et fichier projet — §5.4, §5.4.1, §5.5
 
 Le fichier projet et le forward de variables sont **FAITS** (2026-08-26,
-[ADR-0034](adr/0034-schema-du-fichier-de-projet.md)). Les flags Ansible restent
-ouverts, et c'est désormais le seul manque de ce lot.
+[ADR-0034](adr/0034-schema-du-fichier-de-projet.md)). Les flags Ansible le sont
+pour quatre d'entre eux (2026-09-03,
+[ADR-0038](adr/0038-flags-ansible-check-diff-limit.md) et
+[ADR-0039](adr/0039-extra-vars-declarees-par-le-commit.md)) ; ce qui reste ouvert
+est le PÉRIMÈTRE de la liste, plus son absence.
 
 - [x] **`internal/config` porte le schéma strict de `.ansibleproxy.yml`.** Six
   champs, plafond de taille, champs inconnus refusés, clés dupliquées refusées,
@@ -102,21 +108,53 @@ ouverts, et c'est désormais le seul manque de ce lot.
   vérifient que les drapeaux documentés existent et que les drapeaux réels sont
   documentés.
 
-- [ ] **AUCUN flag Ansible n'existe côté CLI, et c'est un manque de
-  FONCTIONNALITÉ.** `warden submit` n'accepte que `--repo`, `--playbook`,
-  `--env`, `--inventory`, `--run-ref` et la saisie de `become` — dont `-K`.
-  Aucun des sept du §5.5 — `--limit`, `--tags`, `--skip-tags`, `--check`,
-  `--diff`, `-e/--extra-vars`, `-v` — n'est atteignable. `--check` en
-  particulier : un dry-run est le premier réflexe avant de toucher à la prod.
+- [x] ~~**AUCUN flag Ansible n'existe côté CLI.**~~ Résolu pour trois d'entre eux
+  (2026-09-03, [ADR-0038](adr/0038-flags-ansible-check-diff-limit.md)) :
+  `warden submit --check --diff --limit <motif>`, sous le nom qu'
+  `ansible-playbook` leur donne.
 
-  **Le fil est branché partout sauf au premier maillon** : `client.NewRun.Flags`
-  existe et n'est jamais rempli, `POST /runs` l'accepte, la colonne `run.flags`
-  est là, `dispatch.Order.Flags` la transporte, et `exec.Config.Flags` la pose
-  sur l'`argv`. Il manque les drapeaux et leur sérialisation.
+  **Cette entrée se trompait sur l'étendue du manque, et l'erreur mérite d'être
+  gardée.** Elle disait « le fil est branché partout sauf au premier maillon ».
+  Le suivi refait en entier en a trouvé **trois** coupés :
 
-  **Le cadrage est tranché par l'ADR-0034** et vaut pour les flags : une liste
-  fixe câblée dans le produit est un choix de PÉRIMÈTRE (« la compatibilité
-  exhaustive est un gouffre »), pas un contrôle de sécurité.
+  1. la CLI, seul connu ;
+  2. `core.Run` ne portait pas `Flags`, et ni `RunByID` ni `RunByRef` ne lisaient
+     la colonne — elle s'écrivait sans jamais se relire ;
+  3. `OrderBuilder.OrderFor` ne recopiait pas les flags dans l'ordre remis au
+     pod. **Le pire des trois** : un `--check` envoyé par un client tiers aurait
+     été enregistré comme demandé puis exécuté pour de vrai. L'audit aurait dit
+     « simulation », la machine aurait changé, et rien n'aurait signalé l'écart.
+
+  La leçon est celle de la §1 : un contrat qu'on n'a pas suivi jusqu'au bout se
+  raconte plus court qu'il n'est.
+
+  Une **allowlist** existe désormais (`core.ValiderFlags`), appliquée deux fois —
+  à la création et à la relecture avant livraison. Elle REFUSE au lieu de
+  filtrer, donc `run.flags` dit toujours ce qui a été demandé. Ce qu'elle
+  protège est l'audit et la forme, pas les machines cibles : voir l'ADR-0038.
+
+- [x] ~~**`-e/--extra-vars` déplacerait la source de vérité hors du commit.**~~
+  Objection levée le 2026-09-03
+  ([ADR-0039](adr/0039-extra-vars-declarees-par-le-commit.md)) par le retour
+  d'usage, qui a répondu au lieu de contourner : *« on peut faire comme les
+  variables d'environnement et mettre une liste blanche »*. Un `extra_vars:` dans
+  le fichier de projet déclare les NOMS, la requête n'apporte que les VALEURS —
+  le commit décrit toujours l'espace de ce qui peut varier.
+
+  **Divergence assumée avec `forward_env`** : les valeurs d'`extra_vars` sont
+  AUDITÉES, pas consignées. « Quelle version a été déployée » est la question
+  qu'un audit existe pour répondre, et masquer la valeur la rendrait invisible
+  dans le `--diff` où on la cherche. La contrepartie est écrite partout où
+  quelqu'un pourrait y mettre un mot de passe.
+
+- [ ] **Les trois derniers flags du §5.5.** `--tags`, `--skip-tags` et `-v`
+  s'ajoutent par une ligne dans `drapeauxAcceptes` — c'est la forme retenue pour
+  ça — et attendent une demande.
+
+- [ ] **L'allowlist par ENVIRONNEMENT du §5.5.** Ce qui existe est une liste
+  fixe, la même pour tous. `prod` ne peut pas interdire ce que `staging`
+  autorise. Le point d'application est déjà le bon — `core.ValiderFlags` — donc
+  la rendre configurable ne déplace rien de ce qui est écrit.
 
 - [ ] **Trace du demandé vs effectif.** L'écart que l'ADR-0021 a laissé ouvert.
   Partiellement comblé : les NOMS des variables retenues sont journalisés à la

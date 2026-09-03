@@ -261,3 +261,34 @@ func TestUnChampInconnuResteRefuseApresLAjoutDeRepo(t *testing.T) {
 		t.Fatal("un champ inconnu a été accepté")
 	}
 }
+
+// `extra_vars` déclare les NOMS que `warden submit -e` a le droit de poser. Ce
+// paquet en valide la forme ; quels noms le produit se réserve appartient au
+// cœur.
+func TestParseExtraVarsNoms(t *testing.T) {
+	bons := []string{"version", "target_color", "_prive", "a1", "mixedCase"}
+	for _, n := range bons {
+		if _, err := Parse([]byte("extra_vars: [" + n + "]\n")); err != nil {
+			t.Errorf("%q est un nom de variable Ansible valide : %v", n, err)
+		}
+	}
+
+	mauvais := []string{"avec-tiret", "avec espace", "avec=egal", "1chiffre", "", "avec.point"}
+	for _, n := range mauvais {
+		if _, err := Parse([]byte("extra_vars: [\"" + n + "\"]\n")); err == nil {
+			t.Errorf("%q ne devrait pas être accepté comme nom de variable Ansible", n)
+		}
+	}
+
+	if _, err := Parse([]byte("extra_vars: [a, b, a]\n")); err == nil {
+		t.Error("un nom répété dans extra_vars doit être refusé")
+	}
+
+	p, err := Parse([]byte("extra_vars:\n  - version\n  - couleur\n"))
+	if err != nil {
+		t.Fatalf("Parse : %v", err)
+	}
+	if strings.Join(p.ExtraVars, " ") != "version couleur" {
+		t.Errorf("extra_vars = %v", p.ExtraVars)
+	}
+}

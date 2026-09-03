@@ -203,3 +203,87 @@ func TestCleForwardEnvEstDistincteDeCleBecome(t *testing.T) {
 		t.Error("les clefs de consigne d'un même run doivent être distinctes")
 	}
 }
+
+// L'allowlist d'`extra_vars` est le MÊME mécanisme que celle de `forward_env` :
+// le fichier versionné déclare les noms, la requête n'apporte que des valeurs.
+func TestLesExtraVarsDeclareesPassent(t *testing.T) {
+	eff, err := core.Composer(
+		config.Project{ExtraVars: []string{"version", "couleur"}},
+		core.Requete{Flags: []string{"--check", "--extra-vars=version=1.2.3", "--extra-vars=couleur=bleu"}},
+	)
+	if err != nil {
+		t.Fatalf("Composer : %v", err)
+	}
+	if strings.Join(eff.Flags, " ") != "--check --extra-vars=version=1.2.3 --extra-vars=couleur=bleu" {
+		t.Errorf("flags effectifs %v", eff.Flags)
+	}
+}
+
+// L'ASYMÉTRIE avec `forward_env` est la propriété qui compte ici : une variable
+// non déclarée fait ÉCHOUER, là où une variable de shell non déclarée est jetée
+// en silence.
+//
+// Sans ça, `-e version=1.2.3` partirait sans la version demandée, et l'échec
+// viendrait de la machine cible plutôt que d'ici.
+func TestUneExtraVarNonDeclareeEstRefusee(t *testing.T) {
+	_, err := core.Composer(
+		config.Project{ExtraVars: []string{"version"}},
+		core.Requete{Flags: []string{"--extra-vars=couleur=bleu"}},
+	)
+	if err == nil {
+		t.Fatal("acceptée")
+	}
+	// Le message nomme CE QUE le projet déclare : sans ça, on ne sait pas si on
+	// s'est trompé de nom ou s'il faut éditer le fichier.
+	if !strings.Contains(err.Error(), "couleur") || !strings.Contains(err.Error(), "version") {
+		t.Errorf("message peu utile : %v", err)
+	}
+}
+
+func TestSansExtraVarsDeclareesAucuneNePasse(t *testing.T) {
+	_, err := core.Composer(config.Project{},
+		core.Requete{Flags: []string{"--extra-vars=version=1"}})
+	if err == nil {
+		t.Fatal("acceptée alors que le projet ne déclare rien")
+	}
+	if !strings.Contains(err.Error(), "aucun `extra_vars:`") {
+		t.Errorf("le message ne dit pas que le projet n'en déclare aucune : %v", err)
+	}
+}
+
+// Les autres flags traversent la composition sans avoir besoin d'être déclarés :
+// leur allowlist est fixe et vit dans le cœur.
+func TestLesAutresFlagsNeDemandentAucuneDeclaration(t *testing.T) {
+	eff, err := core.Composer(config.Project{},
+		core.Requete{Flags: []string{"--check", "--diff", "--limit=web-01"}})
+	if err != nil {
+		t.Fatalf("Composer : %v", err)
+	}
+	if len(eff.Flags) != 3 {
+		t.Errorf("flags effectifs %v", eff.Flags)
+	}
+}
+
+// Un `extra_vars:` qui déclare une variable `ansible_*` échoue BRUYAMMENT, comme
+// un `forward_env` qui déclare un nom réservé.
+//
+// `ansible_become_password` est le cas qui motive la règle : les valeurs d'`-e`
+// étant auditées, l'autoriser écrirait un mot de passe en clair dans `run.flags`.
+func TestUnExtraVarsReserveEchoue(t *testing.T) {
+	for _, nom := range []string{
+		"ansible_become_password", "ansible_ssh_private_key_file", "ansible_host",
+	} {
+		t.Run(nom, func(t *testing.T) {
+			_, err := core.Composer(
+				config.Project{ExtraVars: []string{nom}},
+				core.Requete{Flags: []string{"--extra-vars=" + nom + "=x"}},
+			)
+			if err == nil {
+				t.Fatal("accepté")
+			}
+			if !strings.Contains(err.Error(), "réservée") {
+				t.Errorf("message : %v", err)
+			}
+		})
+	}
+}

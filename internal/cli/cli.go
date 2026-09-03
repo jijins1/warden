@@ -117,6 +117,18 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		return erreurDrapeaux("submit", err)
 	}
 
+	// Les flags Ansible sont composés et refusés ICI, avant tout le reste : la
+	// séquence de `submit` capture l'arbre puis le pousse, et découvrir un
+	// `--limit` mal formé après ce travail donnerait un message exact sur une
+	// cause que personne ne relierait (§5.7). Le serveur reste l'autorité et les
+	// revalide (ADR-0038).
+	flagsAnsible, err := submit.FlagsAnsible{
+		Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
+	}.Composer()
+	if err != nil {
+		return err
+	}
+
 	// Le répertoire courant, et non un chemin en option : la capture s'applique
 	// au dépôt dans lequel on se trouve, et un drapeau inviterait à auditer un
 	// dépôt qu'on ne regarde pas.
@@ -174,6 +186,7 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		Environment: *environnement,
 		Inventory:   *inventaire,
 		Playbook:    *playbook,
+		Flags:       flagsAnsible,
 		GitURL:      git,
 		RunRef:      *runRef,
 
