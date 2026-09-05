@@ -1411,12 +1411,19 @@ func TestLesFlagsFontLAllerRetour(t *testing.T) {
 		t.Fatalf("UpsertUser: %v", err)
 	}
 
+	// Les MÊMES champs que `seedRun`, et pas seulement ceux qui intéressent ce
+	// test : la contrainte `run_playbook_complet` (migration 00009) exige qu'un
+	// run de playbook porte inventaire, playbook et les quatre SHA. Un run amputé
+	// échoue à l'INSERT, et le test ne dit alors rien sur les flags.
 	voulus := []string{"--check", "--diff", "--limit=web-01"}
 	id, err := s.CreateRun(ctx, store.NewRun{
 		RunRef: testULID, UserID: u.ID, Repo: "warden",
-		Environment: "staging", Playbook: "site.yml",
-		AuditSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Flags:    voulus,
+		Environment: "staging", Inventory: "inv/staging", Playbook: "site.yml",
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+		Flags:       voulus,
 	})
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)
