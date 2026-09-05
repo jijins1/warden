@@ -124,6 +124,7 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	// revalide (ADR-0038).
 	flagsAnsible, err := submit.FlagsAnsible{
 		Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
+		Become: *f.elever, BecomeUser: *f.eleverVers,
 	}.Composer()
 	if err != nil {
 		return err

@@ -42,6 +42,13 @@ type drapeauxSubmit struct {
 	check, diff *bool
 	limit       *string
 	extraVars   *submit.Repetable
+
+	// elever et eleverVers sont `--become` et `--become-user`, à ne pas confondre
+	// avec `become` ci-dessus, qui est la SAISIE du mot de passe d'élévation.
+	// Les deux se combinent : l'un demande l'élévation, l'autre en fournit le
+	// secret.
+	elever     *bool
+	eleverVers *string
 }
 
 func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
@@ -59,7 +66,14 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 		check: fs.Bool("check", false, "simuler : Ansible annonce ce qu'il ferait sans le faire"),
 		diff:  fs.Bool("diff", false, "montrer le contenu de ce qui change, tâche par tâche"),
 		limit: fs.String("limit", "", "restreindre aux machines ou groupes de ce motif Ansible"),
+
+		eleverVers: fs.String("become-user", "", "compte visé par l'élévation ; root par défaut"),
 	}
+
+	// `-b` et `--become` désignent le MÊME booléen, comme chez ansible-playbook.
+	// Deux `fs.Bool` créeraient deux variables, et `-b` seul serait sans effet.
+	f.elever = fs.Bool("become", false, "élever sur toutes les tâches ; se combine avec -K")
+	fs.BoolVar(f.elever, "b", false, "abréviation d'--become, comme ansible-playbook")
 
 	// Répétable, et déclaré sous ses DEUX noms comme `ansible-playbook` : `-e` est
 	// celui qu'on tape, `--extra-vars` celui qu'on écrit dans un script.

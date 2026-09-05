@@ -147,3 +147,56 @@ func TestRepetableCollecteToutesLesOccurrences(t *testing.T) {
 		t.Errorf("got %v", vars)
 	}
 }
+
+// `-b` complète `-K` : le produit savait transporter le mot de passe
+// d'élévation sans savoir demander l'élévation, donc `-K` ne servait à rien tant
+// que le playbook ne déclarait pas `become: true` lui-même.
+func TestComposerLElevation(t *testing.T) {
+	cas := []struct {
+		nom  string
+		f    FlagsAnsible
+		veut string
+	}{
+		{"become seul", FlagsAnsible{Become: true}, "--become"},
+		{"become et compte", FlagsAnsible{Become: true, BecomeUser: "postgres"},
+			"--become --become-user=postgres"},
+		// L'ordre est stable : l'élévation avant la restriction de périmètre.
+		{"avec le reste", FlagsAnsible{Check: true, Become: true, Limit: "web-01"},
+			"--check --become --limit=web-01"},
+	}
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			got, err := c.f.Composer()
+			if err != nil {
+				t.Fatalf("Composer : %v", err)
+			}
+			if strings.Join(got, " ") != c.veut {
+				t.Errorf("got %q, veut %q", strings.Join(got, " "), c.veut)
+			}
+		})
+	}
+}
+
+// `--become-user` seul n'élève rien : Ansible ne bascule que si l'élévation est
+// demandée. Le laisser passer produirait un run sous le mauvais compte, en
+// silence — le pire mode de panne pour une commande qui touche la prod.
+func TestComposerRefuseUnBecomeUserSeul(t *testing.T) {
+	_, err := (FlagsAnsible{BecomeUser: "postgres"}).Composer()
+	if err == nil {
+		t.Fatal("accepté")
+	}
+	if !strings.Contains(err.Error(), "--become") {
+		t.Errorf("le message ne dit pas ce qui manque : %v", err)
+	}
+}
+
+func TestComposerRefuseUnCompteMalForme(t *testing.T) {
+	for _, compte := range []string{"post gres", "a;id", "$(id)", "-x", "a/b"} {
+		t.Run(compte, func(t *testing.T) {
+			_, err := (FlagsAnsible{Become: true, BecomeUser: compte}).Composer()
+			if err == nil {
+				t.Fatal("accepté")
+			}
+		})
+	}
+}

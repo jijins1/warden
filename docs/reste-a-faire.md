@@ -69,7 +69,7 @@ ment coûte plus qu'un manque déclaré, parce qu'on ne le relit pas.
 
 Le fichier projet et le forward de variables sont **FAITS** (2026-08-26,
 [ADR-0034](adr/0034-schema-du-fichier-de-projet.md)). Les flags Ansible le sont
-pour quatre d'entre eux (2026-09-03,
+pour six d'entre eux (2026-09-03 et 2026-09-05,
 [ADR-0038](adr/0038-flags-ansible-check-diff-limit.md) et
 [ADR-0039](adr/0039-extra-vars-declarees-par-le-commit.md)) ; ce qui reste ouvert
 est le PÉRIMÈTRE de la liste, plus son absence.
@@ -147,9 +147,26 @@ est le PÉRIMÈTRE de la liste, plus son absence.
   dans le `--diff` où on la cherche. La contrepartie est écrite partout où
   quelqu'un pourrait y mettre un mot de passe.
 
+- [x] ~~**`-K` transportait le mot de passe d'élévation sans pouvoir demander
+  l'élévation.**~~ Résolu le 2026-09-05 : `-b/--become` et `--become-user`
+  (amendement de l'[ADR-0038](adr/0038-flags-ansible-check-diff-limit.md)).
+
+  Ce n'était pas un manque de confort mais une INCOHÉRENCE, et elle n'était
+  nommée nulle part : `warden submit -K` ne faisait pas ce que fait
+  `ansible-playbook -K`, puisque rien n'activait `become`. Le mot de passe
+  partait, arrivait dans `env/extravars`, et ne servait à rien tant que le
+  playbook ne déclarait pas `become: true` lui-même.
+
 - [ ] **Les trois derniers flags du §5.5.** `--tags`, `--skip-tags` et `-v`
   s'ajoutent par une ligne dans `drapeauxAcceptes` — c'est la forme retenue pour
   ça — et attendent une demande.
+
+- [ ] **Ansible Vault n'a aucune réponse.** `--vault-password-file`, `--vault-id`
+  et `--ask-vault-pass` sont refusés parce qu'ils feraient venir le secret d'un
+  fichier du pod, hors du magasin de l'ADR-0020. C'est le seul refus de
+  l'ADR-0038 qui laisse un besoin RÉEL sans alternative : `forward_env` couvre
+  les secrets du shell, pas ceux versionnés dans le dépôt. Demande une décision,
+  pas une ligne de table.
 
 - [ ] **L'allowlist par ENVIRONNEMENT du §5.5.** Ce qui existe est une liste
   fixe, la même pour tous. `prod` ne peut pas interdire ce que `staging`

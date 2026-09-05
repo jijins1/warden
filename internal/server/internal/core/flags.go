@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -80,6 +81,19 @@ type drapeau struct {
 var drapeauxAcceptes = []drapeau{
 	// Le dry-run d'Ansible : le premier réflexe avant de toucher à la prod.
 	{nom: "--check"},
+	// L'élévation. Le produit savait déjà transporter le MOT DE PASSE d'élévation
+	// (`-K`, ADR-0018) sans savoir demander l'élévation elle-même : un demi-
+	// mécanisme, où `-K` ne servait à rien si le playbook ne déclarait pas
+	// `become: true` lui-même.
+	//
+	// Ce n'est PAS une élévation de privilège nouvelle : elle exige toujours que
+	// le compte y ait droit sur la machine, et le playbook exécute déjà du code
+	// arbitraire (§2). Ce qu'elle change est le PÉRIMÈTRE — `--become` s'applique
+	// à TOUTES les tâches, y compris celles que le playbook avait laissées non
+	// élevées. C'est enregistré dans `run.flags`, donc visible en audit, et c'est
+	// la raison pour laquelle ça peut l'être.
+	{nom: "--become"},
+	{nom: "--become-user", verifier: verifierCompte},
 	// Le diff par tâche. Il ne rend PAS les secrets visibles : le rédacteur de
 	// l'ADR-0017 est armé des valeurs injectées dans le run, et la clé d'accès
 	// n'apparaît dans aucun résultat de module.
@@ -194,6 +208,15 @@ func ValiderFlags(flags []string) error {
 		}
 		vus[k] = true
 	}
+
+	// `--become-user` SEUL n'élève rien : Ansible ne bascule que si `become` est
+	// demandé, ici ou dans le playbook. Le laisser passer produirait un run qui
+	// tourne sous le mauvais compte sans qu'aucun message ne le dise — et
+	// l'audit enregistrerait un drapeau sans effet, ce qui est pire que rien.
+	if vus["--become-user"] && !vus["--become"] {
+		return errors.New("--become-user sans --become ne fait rien : Ansible n'élève " +
+			"que si l'élévation est demandée")
+	}
 	return nil
 }
 
@@ -225,6 +248,22 @@ func listeAcceptee() string {
 		noms = append(noms, d.nom+"=<valeur>")
 	}
 	return strings.Join(noms, ", ")
+}
+
+// motifCompte borne un nom de compte système.
+//
+// Volontairement étroit : cette valeur descend sur la ligne de commande d'un
+// processus du pod, et un compte Unix ne porte ni espace ni métacaractère de
+// shell. Les formes acceptées couvrent ce qu'on rencontre — `postgres`,
+// `www-data`, `deploy.ci`, `svc_app`.
+var motifCompte = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$`)
+
+// verifierCompte contrôle un nom de compte.
+func verifierCompte(valeur string) error {
+	if !motifCompte.MatchString(valeur) {
+		return fmt.Errorf("%q n'est pas un nom de compte", valeur)
+	}
+	return nil
 }
 
 // verifierLimit contrôle un motif `--limit`.

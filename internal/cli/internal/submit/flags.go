@@ -30,6 +30,17 @@ type FlagsAnsible struct {
 	// cette rédaction a échoué.
 	Diff bool
 
+	// Become est `--become` : élever sur TOUTES les tâches.
+	//
+	// Il complète `-K`, qui ne transportait que le mot de passe : sans lui, le
+	// mot de passe ne servait à rien tant que le playbook ne déclarait pas
+	// `become: true` de son côté.
+	Become bool
+
+	// BecomeUser est le compte visé par l'élévation, vide pour le défaut
+	// d'Ansible — `root`. Il n'a de sens qu'avec Become.
+	BecomeUser string
+
 	// Limit est la valeur de `--limit`, vide quand il n'a pas été demandé.
 	Limit string
 
@@ -56,6 +67,9 @@ type FlagsAnsible struct {
 //
 // Le refus qui compte est celui d'`@fichier`, qui ferait lire la liste des
 // machines dans un fichier du pod au lieu du commit audité.
+// motifCompte est le jumeau de `core.motifCompte`, même duplication assumée.
+var motifCompte = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$`)
+
 var motifLimit = regexp.MustCompile(`^[A-Za-z0-9_.:!&*,~\[\]-]+$`)
 
 // Composer rend la liste à envoyer, dans un ordre stable.
@@ -70,6 +84,21 @@ func (f FlagsAnsible) Composer() ([]string, error) {
 	}
 	if f.Diff {
 		flags = append(flags, "--diff")
+	}
+	if f.Become {
+		flags = append(flags, "--become")
+	}
+	if f.BecomeUser != "" {
+		if !f.Become {
+			// Ansible n'élève que si l'élévation est demandée : passer le compte
+			// seul produirait un run sous le mauvais utilisateur, en silence.
+			return nil, fmt.Errorf("--become-user %s sans --become (ou -b) ne fait rien : "+
+				"Ansible n'élève que si l'élévation est demandée", f.BecomeUser)
+		}
+		if !motifCompte.MatchString(f.BecomeUser) {
+			return nil, fmt.Errorf("--become-user %q : un nom de compte est attendu", f.BecomeUser)
+		}
+		flags = append(flags, "--become-user="+f.BecomeUser)
 	}
 	if f.Limit != "" {
 		if !motifLimit.MatchString(f.Limit) {

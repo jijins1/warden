@@ -92,6 +92,35 @@ précisément de ne pas faire. Il demande sa propre ADR, pas une ligne de plus.
 > commit, donc la source de vérité n'en sort pas. La forme LIBRE de `-e`, elle,
 > reste refusée : `-e @fichier` et `-e '{"json":…}'` ne passent pas.
 
+### Amendement (2026-09-05) : `--become`, qui réparait un demi-mécanisme
+
+`-b/--become` et `--become-user` s'ajoutent à la table. Deux lignes, comme
+annoncé — mais celui-là ne comblait pas seulement un manque de confort, il
+**réparait une incohérence** que ni le §5.5 ni cette ADR n'avaient vue.
+
+Le produit savait depuis toujours transporter le **mot de passe** d'élévation :
+`-K`, une consigne éphémère, `env/extravars` dans le pod (ADR-0018). Il ne savait
+pas **demander l'élévation**. Le mot de passe ne servait donc à rien tant que le
+playbook ne déclarait pas `become: true` de son côté — un demi-mécanisme, dont
+l'autre moitié n'était nommée nulle part. Un opérateur qui tapait `-K` en croyant
+faire ce que fait `ansible-playbook -K` obtenait un run sans élévation.
+
+**Ce n'est pas une élévation de privilège nouvelle.** Elle exige toujours que le
+compte y ait droit sur la machine cible, et le playbook y exécute déjà du code
+arbitraire (§2). Ce qu'elle change est le PÉRIMÈTRE : `--become` s'applique à
+*toutes* les tâches, y compris celles que le playbook avait délibérément laissées
+non élevées. C'est enregistré dans `run.flags`, donc lisible en audit, et c'est
+précisément la raison pour laquelle ça peut être offert.
+
+`--become-user` **seul est refusé**. Ansible n'élève que si l'élévation est
+demandée : le laisser passer produirait un run tournant sous le mauvais compte
+sans qu'aucun message ne le dise, et l'audit enregistrerait un drapeau sans
+effet — pire que rien. Le refus est symétrique des deux côtés, CLI et serveur.
+
+`--become-method` n'est **pas** ajouté, et c'est une décision : `sudo`, `su` ou
+`doas` est une propriété de la MACHINE, pas du run. Sa place est l'inventaire,
+qui est audité, et non un drapeau qui varie d'une invocation à l'autre.
+
 Le cadrage est celui que l'ADR-0034 a déjà tranché pour le fichier de projet :
 une liste fixe câblée dans le produit est un choix de **périmètre** — « la
 compatibilité exhaustive avec `ansible-playbook` est un gouffre » — et non un

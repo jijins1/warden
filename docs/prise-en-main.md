@@ -334,10 +334,20 @@ warden submit --repo mon-depot --playbook play.yml --env prod --inventory hosts
 ```
 
 ```sh
-warden submit --repo mon-depot --playbook play.yml -K   # ou --ask-become-pass
+warden submit --repo mon-depot --playbook play.yml -b -K   # -b élève, -K donne le mot de passe
 ```
 
-Les trois flags d'`ansible-playbook` acceptés, sous leur nom d'origine :
+> ⚠ **`-K` seul n'élève rien.** Il ne fait que transporter le mot de passe. Si
+> votre playbook ne déclare pas `become: true` lui-même, il faut `-b` — c'est ce
+> que fait `ansible-playbook -K`, et warden le sépare en deux drapeaux parce que
+> les deux moitiés voyagent par des chemins différents : le drapeau est audité,
+> le mot de passe ne l'est jamais.
+>
+> `-b` s'applique à **toutes** les tâches, y compris celles que le playbook avait
+> laissées non élevées. `--become-user <compte>` vise un autre compte que `root`,
+> et n'a de sens qu'avec `-b` — seul, il est refusé.
+
+Les autres flags d'`ansible-playbook` acceptés, sous leur nom d'origine :
 
 ```sh
 # Simuler : Ansible annonce ce qu'il ferait, et montre le contenu des changements.

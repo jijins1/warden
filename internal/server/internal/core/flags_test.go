@@ -28,6 +28,11 @@ func TestValiderFlagsAccepteLesTrois(t *testing.T) {
 		{"--extra-vars=url=https://exemple.net/a?b=c&d=e"},
 		{"--extra-vars=vide="},
 		{"--check", "--extra-vars=version=1"},
+		{"--become"},
+		{"--become", "--become-user=postgres"},
+		{"--become", "--become-user=www-data"},
+		{"--become", "--become-user=deploy.ci"},
+		{"--check", "--become", "--limit=web-01"},
 	}
 	for _, flags := range cas {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
@@ -46,7 +51,7 @@ func TestValiderFlagsRefuse(t *testing.T) {
 		// lequel des drapeaux pose problème envoie relire la ligne entière.
 		dans string
 	}{
-		{"drapeau hors liste", []string{"--become"}, "--become"},
+		{"drapeau hors liste", []string{"--vault-password-file=/x"}, "--vault-password-file"},
 		{"extra-vars", []string{"-e", "cible=prod"}, "-e"},
 		// Le refus qui compte : `@fichier` fait lire la liste des machines dans
 		// le pod au lieu du commit audité.
@@ -73,6 +78,15 @@ func TestValiderFlagsRefuse(t *testing.T) {
 		// deux. Deux variables différentes sont en revanche légitimes.
 		{"deux fois la même extra-var",
 			[]string{"--extra-vars=v=1", "--extra-vars=v=2"}, "deux fois"},
+
+		// `--become-user` SEUL n'élève rien : le laisser passer produirait un run
+		// sous le mauvais compte, sans qu'aucun message ne le dise.
+		{"become-user sans become", []string{"--become-user=postgres"}, "sans --become"},
+		{"become avec valeur", []string{"--become=oui"}, "n'attend pas de valeur"},
+		{"compte avec espace", []string{"--become", "--become-user=post gres"}, "nom de compte"},
+		{"compte avec métacaractère", []string{"--become", "--become-user=a;id"}, "nom de compte"},
+		{"compte vide", []string{"--become", "--become-user="}, "attend une valeur"},
+		{"deux become", []string{"--become", "--become"}, "deux fois"},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
@@ -118,7 +132,7 @@ func TestFlagsDemandes(t *testing.T) {
 		{nom: "nombre", brut: `3`, refuse: true},
 		{nom: "tableau de nombres", brut: `[1,2]`, refuse: true},
 		{nom: "tableau imbriqué", brut: `[["--check"]]`, refuse: true},
-		{nom: "drapeau hors liste", brut: `["--become"]`, refuse: true},
+		{nom: "drapeau hors liste", brut: `["--vault-password-file=/x"]`, refuse: true},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {

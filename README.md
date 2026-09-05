@@ -227,13 +227,20 @@ server re-reads this file from the commit tree and rejects unknown fields.
 
 ## Ansible flags
 
-Four flags reach `ansible-playbook`, under the name it gives them:
+These flags reach `ansible-playbook`, under the name it gives them:
 
 ```sh
 warden submit --playbook play.yml --env prod --check --diff
 warden submit --playbook play.yml --env prod --limit web-01
 warden submit --playbook play.yml --env prod -e version=1.2.3 -e colour=blue
+warden submit --playbook play.yml --env prod -b -K          # escalate, and supply the password
+warden submit --playbook play.yml --env prod -b --become-user postgres
 ```
+
+> ⚠ **`-K` alone escalates nothing.** It only carries the password. Warden splits
+> what `ansible-playbook -K` does into two flags because the two halves travel by
+> different paths: the flag is audited, the password never is. `--become-user`
+> without `-b` is refused — Ansible would silently not switch user.
 
 The server accepts these and **refuses anything else**, naming the list it takes
 ([ADR-0038](docs/adr/0038-flags-ansible-check-diff-limit.md)). That refusal
