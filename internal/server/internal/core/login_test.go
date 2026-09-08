@@ -433,7 +433,16 @@ func TestUnContexteAnnuleNAttendPasLePlancher(t *testing.T) {
 	annuler()
 
 	debut := time.Now()
-	_, _ = a.Login(ctx, "alice", []byte(motDePasseValide))
+	_, err := a.Login(ctx, "alice", []byte(motDePasseValide))
+
+	// L'ERREUR d'abord, parce qu'elle est déterministe là où la durée ne l'est
+	// pas : `context.Canceled` prouve qu'on est sorti sans prendre de place ni
+	// dériver quoi que ce soit. Sans elle, ce test ne tenait que par le fait
+	// qu'Argon2id restait sous les 250 ms — donc pas sur une machine chargée.
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("erreur %v, voulu context.Canceled : l'appel a travaillé "+
+			"alors que l'appelant était déjà parti", err)
+	}
 	if ecoule := time.Since(debut); ecoule >= core.DelaiPlancher {
 		t.Errorf("attente de %v sur un contexte annulé", ecoule)
 	}

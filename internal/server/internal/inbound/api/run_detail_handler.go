@@ -28,6 +28,13 @@ type runDetail struct {
 	Inventory   string `json:"inventory,omitempty"`
 	Playbook    string `json:"playbook,omitempty"`
 
+	// Flags dit sous quels drapeaux le run a tourné (§5.5). Absent quand il n'y
+	// en avait pas, ce qui est le cas de la quasi-totalité des runs.
+	//
+	// Publié parce qu'un `--check` change la LECTURE du reste de la page : zéro
+	// changement sous `--check` ne dit pas la même chose que zéro changement sans.
+	Flags []string `json:"flags,omitempty"`
+
 	// Kind vaut `playbook` ou `enrollment`. Normalisé ici : en base, le vide
 	// vaut `playbook` — c'est ce que sont toutes les lignes antérieures — et
 	// laisser filtrer ce vide obligerait chaque client à connaître l'histoire
@@ -100,6 +107,7 @@ func versRunDetail(run core.Run) runDetail {
 		Environment:      run.Environment,
 		Inventory:        run.Inventory,
 		Playbook:         run.Playbook,
+		Flags:            run.Flags,
 		Kind:             genre,
 		AuditSHA:         run.AuditSHA,
 		BaseSHA:          run.BaseSHA,

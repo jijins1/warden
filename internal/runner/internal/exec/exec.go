@@ -56,17 +56,20 @@ type Config struct {
 
 	// Flags sont les flags passés à `ansible-playbook`, après citation.
 	//
-	// Ils ne sont PAS filtrés. La politique serveur du §5.5 n'existe pas : ce
-	// sont les flags que le client a DEMANDÉS, recopiés tels quels depuis le
-	// corps de la requête (`api/run_handler.go`). C'est l'écart que l'ADR-0021
-	// assume, et que `core.NewRun.Flags` énonce déjà correctement — demandé et
-	// effectif coïncident parce qu'il n'y a rien entre les deux.
+	// Ils SONT filtrés, depuis l'ADR-0038, et ce commentaire disait le contraire
+	// jusque-là — à juste titre : il n'y avait alors aucune allowlist nulle part.
+	// Le filtre vit côté serveur, dans `core.ValiderFlags`, et il refuse au lieu
+	// d'amputer : une requête portant un drapeau non accepté est rejetée, donc ce
+	// qui arrive ici est exactement ce qui a été demandé ET enregistré.
+	//
+	// Il est appliqué DEUX fois — à la création du run et à la relecture de
+	// `run.flags` au moment de composer l'ordre — parce que la seconde est le
+	// dernier point avant ce champ.
 	//
 	// Le filtre ne pourra JAMAIS vivre ici. Ce paquet tourne dans le pod runner,
 	// qui est le domaine hostile de l'ADR-0011 : une allowlist appliquée par le
 	// runner est une allowlist appliquée par le code qu'elle est censée
-	// contraindre. Elle doit vivre côté serveur et par environnement (§5.5) ; ce
-	// champ ne peut qu'en recevoir le résultat.
+	// contraindre. Ce champ ne peut qu'en recevoir le résultat.
 	Flags []string
 
 	// SSHKey est la clé d'accès de l'environnement (ADR-0020), vide quand il
@@ -454,9 +457,10 @@ func (r *Runner) kwargs() (string, error) {
 // citerTous compose la ligne de commande passée à `ansible-playbook`.
 //
 // `ansible-runner` découpe `cmdline` à la façon d'un shell. Les flags viennent
-// pourtant du serveur sous forme de LISTE, déjà filtrée par l'allowlist du
-// §5.5 : les recoller avec des espaces rendrait à la valeur d'un
-// `--extra-vars` le pouvoir d'en introduire d'autres. La citation restitue le
+// pourtant du serveur sous forme de LISTE, filtrée par l'allowlist du §5.5
+// (ADR-0038) : les recoller avec des espaces rendrait à la valeur d'un
+// `--limit` le pouvoir d'introduire d'autres drapeaux, ce qui contournerait
+// l'allowlist par le seul champ qu'elle laisse libre. La citation restitue le
 // découpage voulu.
 func citerTous(flags []string) string {
 	cites := make([]string, 0, len(flags))

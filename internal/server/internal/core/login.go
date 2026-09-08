@@ -95,6 +95,22 @@ func (a *Authenticator) Login(ctx context.Context, subject string, motDePasse []
 	debut := a.maintenant()
 	defer a.attendreLePlancher(ctx, debut)
 
+	// L'ANNULATION EST TESTÉE AVANT le select, et ce n'est pas une redondance
+	// avec le `case <-ctx.Done()` ci-dessous.
+	//
+	// `places` est TAMPONNÉ : quand le contexte est déjà annulé, les deux cas du
+	// select sont prêts, et Go en choisit un au hasard. Une fois sur deux, un
+	// appelant déjà parti prenait donc une place de la file et payait une
+	// dérivation Argon2id complète — exactement ce que le commentaire ci-dessous
+	// affirmait empêcher. Mesuré par un échec de CI à 275 ms sur un plancher de
+	// 250, et non déduit.
+	//
+	// Le select garde son `case <-ctx.Done()` : il couvre l'annulation qui
+	// survient PENDANT l'attente d'une place, que ce contrôle-ci ne voit pas.
+	if err := ctx.Err(); err != nil {
+		return Ouverture{}, err
+	}
+
 	select {
 	case a.places <- struct{}{}:
 		defer func() { <-a.places }()

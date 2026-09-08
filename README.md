@@ -225,6 +225,57 @@ server re-reads this file from the commit tree and rejects unknown fields.
 
 ---
 
+## Ansible flags
+
+These flags reach `ansible-playbook`, under the name it gives them:
+
+```sh
+warden submit --playbook play.yml --env prod --check --diff
+warden submit --playbook play.yml --env prod --limit web-01
+warden submit --playbook play.yml --env prod -e version=1.2.3 -e colour=blue
+warden submit --playbook play.yml --env prod -b -K          # escalate, and supply the password
+warden submit --playbook play.yml --env prod -b --become-user postgres
+```
+
+> ⚠ **`-K` alone escalates nothing.** It only carries the password. Warden splits
+> what `ansible-playbook -K` does into two flags because the two halves travel by
+> different paths: the flag is audited, the password never is. `--become-user`
+> without `-b` is refused — Ansible would silently not switch user.
+
+The server accepts these and **refuses anything else**, naming the list it takes
+([ADR-0038](docs/adr/0038-flags-ansible-check-diff-limit.md)). That refusal
+protects the *audit*, not the target machines — a playbook already runs arbitrary
+code there (§2), but `-e @/path` or a second `-i` would make the run execute
+something the audit commit does not describe.
+
+`-e` only sets variables the project file **in the commit** declares, the same
+way `forward_env` works for shell variables
+([ADR-0039](docs/adr/0039-extra-vars-declarees-par-le-commit.md)):
+
+```yaml
+# .ansibleproxy.yml
+extra_vars:
+  - version
+  - colour
+```
+
+> ⚠ **`extra_vars` values are audited** — recorded on the run, served by the API,
+> visible in diffs. That is the point: "which version was deployed" is what an
+> audit trail is for. **Do not put secrets in `-e`.** `forward_env` is the path
+> whose values are never logged. Names starting with `ansible_` are reserved.
+> As with `repo:`, deploy the server before committing this key — it re-reads the
+> file from the commit tree and rejects unknown fields.
+
+Accepted flags are recorded on the run and served by `GET /runs/{run_ref}`: zero
+changes under `--check` does not read like zero changes without it.
+
+`--limit` is **not** a security control. A run limited to `web-01` still runs in
+a pod with open egress and an access key valid for the whole environment.
+`--check` is not a guarantee either: Ansible honours it module by module, and a
+`command` without `check_mode:` still runs.
+
+---
+
 ## Machine enrolment
 
 A run needs an SSH key on the target. warden offers two ways, converging on the

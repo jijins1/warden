@@ -80,18 +80,44 @@ func submit() Commande {
 		Resume: "lance un playbook depuis le dépôt courant",
 		Usage: []string{
 			"submit --playbook <fichier> [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
+			"submit --playbook <fichier> [--check] [--diff] [--limit <motif>]",
+			"submit --playbook <fichier> [-b] [--become-user <compte>] [-K]",
+			"submit --playbook <fichier> [-e <nom>=<valeur>]...",
 		},
 		Details: "Le dépôt est celui où vous vous trouvez. `--repo` est inutile quand le\n" +
 			"fichier de projet déclare `repo:` ; le drapeau reste prioritaire.\n\n" +
 			"Ce qui s'exécute est résolu par le SERVEUR depuis le commit d'audit, et\n" +
 			"non par cette commande : ce qui s'applique et ce qui est audité sont le\n" +
-			"même octet.",
+			"même octet.\n\n" +
+			"--check, --diff, --limit, -e et -b portent le nom qu'ansible-playbook\n" +
+			"leur donne et font la même chose. Ce sont les SEULS acceptés : le\n" +
+			"serveur refuse tout autre drapeau, en nommant ceux qu'il prend.\n\n" +
+			"-b demande l'élévation, -K en fournit le mot de passe : les deux vont\n" +
+			"ensemble quand la machine en demande un. -b s'applique à TOUTES les\n" +
+			"tâches, y compris celles que le playbook avait laissées non élevées ;\n" +
+			"c'est enregistré sur le run, donc lisible en audit.\n\n" +
+			"-e ne pose que les variables que le fichier de projet DU COMMIT déclare\n" +
+			"sous `extra_vars:`. Une variable non déclarée est refusée en nommant\n" +
+			"celles qui le sont. C'est le même mécanisme que `forward_env`, avec une\n" +
+			"différence qui compte : les valeurs de -e sont AUDITÉES — elles sont\n" +
+			"enregistrées sur le run et servies par l'API. N'y mettez pas de secret ;\n" +
+			"`forward_env` est le chemin dont les valeurs ne sont jamais journalisées.",
 		Flags: []string{"repo", "playbook", "env", "inventory", "run-ref",
+			"check", "diff", "limit", "e", "extra-vars",
+			"b", "become", "become-user",
 			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
 		Exemples: []Exemple{
 			{Ligne: "warden submit --playbook play.yml --env prod --inventory hosts"},
-			{Pourquoi: "avec le mot de passe d'élévation, comme ansible-playbook",
-				Ligne: "warden submit --playbook play.yml --env prod -K"},
+			{Pourquoi: "voir ce qui changerait, sans rien changer",
+				Ligne: "warden submit --playbook play.yml --env prod --check --diff"},
+			{Pourquoi: "n'agir que sur une machine, ou un groupe de l'inventaire",
+				Ligne: "warden submit --playbook play.yml --env prod --limit web-01"},
+			{Pourquoi: "poser des variables, déclarées par `extra_vars:` dans le projet",
+				Ligne: "warden submit --playbook play.yml --env prod -e version=1.2.3 -e couleur=bleu"},
+			{Pourquoi: "élever, et fournir le mot de passe que sudo demandera",
+				Ligne: "warden submit --playbook play.yml --env prod -b -K"},
+			{Pourquoi: "élever vers un autre compte que root",
+				Ligne: "warden submit --playbook play.yml --env prod -b --become-user postgres"},
 			{Pourquoi: "reprendre une soumission interrompue produit le même commit d'audit",
 				Ligne: "warden submit --playbook play.yml --run-ref 01JZQ..."},
 		},

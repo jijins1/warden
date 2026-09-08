@@ -1387,3 +1387,95 @@ func TestUnEnrolementMalFormeEstRefuseParLeCode(t *testing.T) {
 		})
 	}
 }
+
+// Les flags font l'aller-retour par les DEUX lectures.
+//
+// Les deux, et c'est le point : `RunByID` sert la LIVRAISON de l'ordre au pod
+// et `RunByRef` sert l'interface d'audit. Une seule des deux les portant, un
+// `--check` s'exécuterait correctement mais ne se lirait nulle part — ou
+// l'inverse, ce qui est pire.
+func TestLesFlagsFontLAllerRetour(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	u, err := s.UpsertUser(ctx, store.Identity{
+		Type: core.UserLocal, Subject: "alice", DisplayName: "Alice",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	// Les MÊMES champs que `seedRun`, et pas seulement ceux qui intéressent ce
+	// test : la contrainte `run_playbook_complet` (migration 00009) exige qu'un
+	// run de playbook porte inventaire, playbook et les quatre SHA. Un run amputé
+	// échoue à l'INSERT, et le test ne dit alors rien sur les flags.
+	voulus := []string{"--check", "--diff", "--limit=web-01"}
+	id, err := s.CreateRun(ctx, store.NewRun{
+		RunRef: testULID, UserID: u.ID, Repo: "warden",
+		Environment: "staging", Inventory: "inv/staging", Playbook: "site.yml",
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+		Flags:       voulus,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	parID, err := s.RunByID(ctx, id)
+	if err != nil {
+		t.Fatalf("RunByID: %v", err)
+	}
+	if strings.Join(parID.Flags, " ") != strings.Join(voulus, " ") {
+		t.Errorf("RunByID rend %v, voulu %v", parID.Flags, voulus)
+	}
+
+	parRef, err := s.RunByRef(ctx, testULID)
+	if err != nil {
+		t.Fatalf("RunByRef: %v", err)
+	}
+	if strings.Join(parRef.Flags, " ") != strings.Join(voulus, " ") {
+		t.Errorf("RunByRef rend %v, voulu %v", parRef.Flags, voulus)
+	}
+}
+
+// Un run sans flag se relit SANS flag, et non avec une liste vide qui ferait
+// composer un `cmdline` vide.
+//
+// C'est aussi ce qui couvre les lignes ANTÉRIEURES à l'allowlist : le défaut du
+// schéma initial est `'{}'::jsonb`, un objet, et `seedRun` n'envoie rien.
+func TestUnRunSansFlagSeRelitSansFlag(t *testing.T) {
+	dsn := startPostgres(t)
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	id := seedRun(t, s)
+
+	// La forme historique, écrite directement : c'est ce que portent toutes les
+	// lignes créées avant ce test.
+	c := connect(t, dsn)
+	defer c.Close(ctx)
+	if _, err := c.Exec(ctx, `UPDATE run SET flags = '{}'::jsonb WHERE id = $1`, id); err != nil {
+		t.Fatalf("UPDATE: %v", err)
+	}
+
+	r, err := s.RunByID(ctx, id)
+	if err != nil {
+		t.Fatalf("RunByID: %v", err)
+	}
+	if len(r.Flags) != 0 {
+		t.Errorf("Flags = %v, voulu vide", r.Flags)
+	}
+}

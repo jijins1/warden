@@ -89,6 +89,26 @@ type Project struct {
 	// produit se réserve est une décision, donc elle appartient au cœur.
 	ForwardEnv []string `yaml:"forward_env"`
 
+	// ExtraVars liste les NOMS des variables que `warden submit -e` a le droit de
+	// poser (§5.5).
+	//
+	// Même mécanisme que `forward_env`, et pour la même raison : le fichier
+	// versionné déclare ce qui a le droit de passer, la requête n'apporte que des
+	// valeurs. C'est ce qui rend `-e` compatible avec l'ADR-0009 — sans cette
+	// déclaration, il ferait exécuter un paramètre que le commit ne décrit nulle
+	// part.
+	//
+	// UNE DIFFÉRENCE MAJEURE avec `forward_env`, et elle doit être lue avant
+	// d'utiliser ce champ : les valeurs d'`extra_vars` sont AUDITÉES. Elles sont
+	// enregistrées dans `run.flags` et servies par l'API, parce que « quelle
+	// version a été déployée » est précisément la question qu'un audit doit
+	// pouvoir répondre. N'y mettez pas de secret : `forward_env` est le champ
+	// dont les valeurs ne sont jamais journalisées (ADR-0039).
+	//
+	// Ce paquet en valide la FORME et rien d'autre. Quels noms le produit se
+	// réserve est une décision, donc elle appartient au cœur.
+	ExtraVars []string `yaml:"extra_vars"`
+
 	// AuditInclude liste les pathspecs à réintégrer dans le commit d'audit
 	// malgré les règles d'ignore (§5.3).
 	//
@@ -144,6 +164,9 @@ func Parse(raw []byte) (Project, error) {
 	}
 
 	if err := validerForwardEnv(p.ForwardEnv); err != nil {
+		return Project{}, fmt.Errorf("%s : %w", File, err)
+	}
+	if err := validerExtraVars(p.ExtraVars); err != nil {
 		return Project{}, fmt.Errorf("%s : %w", File, err)
 	}
 
@@ -215,6 +238,27 @@ func validerForwardEnv(noms []string) error {
 		}
 		if _, deja := vus[n]; deja {
 			return fmt.Errorf("forward_env : %q est listé deux fois", n)
+		}
+		vus[n] = struct{}{}
+	}
+	return nil
+}
+
+// validerExtraVars contrôle la FORME des noms, et rien de plus.
+//
+// La même forme qu'une variable d'environnement, et ce n'est pas un raccourci :
+// un nom de variable Ansible est un identifiant Python, donc lettres, chiffres
+// et `_`, ne commençant pas par un chiffre. Un nom portant un `=`, un point ou
+// un espace ne serait de toute façon pas atteignable depuis un playbook.
+func validerExtraVars(noms []string) error {
+	vus := make(map[string]struct{}, len(noms))
+	for _, n := range noms {
+		if !nomDeVariable(n) {
+			return fmt.Errorf("extra_vars : %q n'est pas un nom de variable Ansible "+
+				"(lettres, chiffres et `_`, ne commençant pas par un chiffre)", n)
+		}
+		if _, deja := vus[n]; deja {
+			return fmt.Errorf("extra_vars : %q est listé deux fois", n)
 		}
 		vus[n] = struct{}{}
 	}

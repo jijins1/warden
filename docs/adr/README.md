@@ -50,6 +50,8 @@ d'implémentation prises en cours de route.
 | [0035](0035-surface-navigateur.md) | Surface navigateur : une origine déclarée, un cookie, et UNE seule allowlist | Accepted |
 | [0036](0036-adresse-ou-nom-resoluble.md) | L'adresse d'une machine accepte un nom, et le risque change de main | Accepted |
 | [0037](0037-enrolement-depuis-linventaire-ansible.md) | Enrôler depuis l'inventaire Ansible, et ne pas devenir Ansible | Accepted |
+| [0038](0038-flags-ansible-check-diff-limit.md) | Trois flags Ansible, une allowlist, et le maillon qui manquait | Accepted |
+| [0039](0039-extra-vars-declarees-par-le-commit.md) | `-e` : les noms viennent du commit, les valeurs sont auditées | Accepted |
 
 ## Convention
 

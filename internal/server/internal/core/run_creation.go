@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"regexp"
 	"time"
@@ -50,9 +49,16 @@ type NewRun struct {
 	MainlineSHA string
 
 	// Flags tels qu'exécutés (§5.5). Il n'y a pas de colonne « demandé » en
-	// face : la politique serveur étant mise de côté, demandé et effectif
-	// coïncident (ADR-0021).
-	Flags json.RawMessage
+	// face, et ce n'est plus tout à fait pour la raison que l'ADR-0021 donnait :
+	// l'allowlist existe désormais (ADR-0038), mais elle REFUSE au lieu de
+	// filtrer. Une requête portant un drapeau non accepté n'est pas amputée, elle
+	// est rejetée — donc ce qui est enregistré est bien ce qui a été demandé.
+	//
+	// Une liste de chaînes DÉJÀ validée par `ValiderFlags`, et non le
+	// `json.RawMessage` du corps de la requête : ces valeurs finissent sur
+	// l'`argv` d'`ansible-playbook`, et laisser du JSON brut traverser le cœur
+	// revenait à ne les regarder nulle part.
+	Flags []string
 
 	RunnerImage       string // ADR-0014
 	RunnerImageDigest string

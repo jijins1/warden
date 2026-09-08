@@ -73,6 +73,15 @@ type Run struct {
 	Inventory   string
 	Playbook    string
 
+	// Flags sont les drapeaux d'`ansible-playbook` du §5.5, tels qu'ils ont été
+	// acceptés à la création (ADR-0038). Vide pour la quasi-totalité des runs.
+	//
+	// Ils sont RELUS et non recomposés : c'est ce qui permet à l'interface
+	// d'audit de dire « ce run était un `--check` », qui est une différence de
+	// nature et non de détail — un run qui n'a rien modifié parce qu'il ne le
+	// pouvait pas ne se lit pas comme un run qui n'avait rien à modifier.
+	Flags []string
+
 	// Kind distingue un run de playbook d'un run d'enrôlement. Vide vaut
 	// `playbook` : c'est ce que toutes les lignes antérieures sont.
 	Kind RunKind

@@ -229,3 +229,57 @@ func TestRunRefuseUnEnvironnementMalforme(t *testing.T) {
 		t.Fatalf("un environnement malformé ne doit pas créer de run")
 	}
 }
+
+// Le COMMIT décide quelles extra-vars ont le droit de passer, exactement comme
+// il décide des noms de `forward_env`.
+//
+// Le test le vérifie de bout en bout parce que c'est le seul niveau où l'on voit
+// les deux moitiés du contrôle : la forme, validée avant que le rôle `git`
+// travaille, et l'appartenance, qui exige d'avoir lu le commit.
+func TestUneExtraVarDeclareeParLeCommitPasse(t *testing.T) {
+	s, c, _, _ := monterAvecConfigProjet(t, "extra_vars:\n  - version\n")
+
+	w := posterRun(t, s, administrateur(),
+		corpsRun(`"flags":["--check","--extra-vars=version=1.2.3"]`))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d : %s", w.Code, w.Body.String())
+	}
+	if len(c.recus) != 1 {
+		t.Fatalf("%d runs créés", len(c.recus))
+	}
+	// Enregistrée AVEC sa valeur : « quelle version a été déployée » est la
+	// question qu'un audit doit pouvoir répondre.
+	if strings.Join(c.recus[0].Flags, " ") != "--check --extra-vars=version=1.2.3" {
+		t.Errorf("flags enregistrés %v", c.recus[0].Flags)
+	}
+}
+
+// Une extra-var que le commit ne déclare pas est refusée, et le run n'est pas
+// créé. La CLI ne peut pas trancher ça : le fichier qui fait autorité est celui
+// du commit, pas celui du worktree.
+func TestUneExtraVarNonDeclareeParLeCommitEstRefusee(t *testing.T) {
+	s, c, _, _ := monterAvecConfigProjet(t, "extra_vars:\n  - version\n")
+
+	w := posterRun(t, s, administrateur(),
+		corpsRun(`"flags":["--extra-vars=couleur=bleu"]`))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400 : %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "version") {
+		t.Errorf("le refus ne nomme pas ce que le projet déclare : %s", w.Body.String())
+	}
+	if len(c.recus) != 0 {
+		t.Errorf("%d run(s) créé(s) malgré le refus", len(c.recus))
+	}
+}
+
+// Un projet sans `extra_vars:` n'en accepte AUCUNE. Le défaut est fermé, comme
+// pour `forward_env`.
+func TestSansExtraVarsDansLeCommitAucuneNePasse(t *testing.T) {
+	s, _, _, _ := monterAvecConfigProjet(t, "default_env: prod\n")
+
+	w := posterRun(t, s, administrateur(), corpsRun(`"flags":["--extra-vars=version=1"]`))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400 : %s", w.Code, w.Body.String())
+	}
+}

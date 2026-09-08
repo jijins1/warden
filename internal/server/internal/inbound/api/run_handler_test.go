@@ -450,3 +450,81 @@ func TestLeDroitEstLuSurLAppelantAuthentifie(t *testing.T) {
 		t.Errorf("statut %d, attendu 403 : Bob a utilisé le droit d'Alice", w.Code)
 	}
 }
+
+// Les flags acceptés sont enregistrés TELS QUELS : l'allowlist refuse, elle
+// n'ampute pas. Sans cette propriété, `run.flags` cesserait de dire ce que
+// l'utilisateur a demandé, et l'audit mentirait de la manière la plus discrète
+// qui soit.
+func TestLesFlagsAcceptesSontEnregistres(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"environment":"prod",
+		"playbook":"site.yml",
+		"base_sha":"`+shaMain+`",
+		"flags":["--check","--diff","--limit=web-01"]
+	}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d, attendu 201 : %s", w.Code, w.Body.String())
+	}
+	if len(c.recus) != 1 {
+		t.Fatalf("%d run(s) créé(s)", len(c.recus))
+	}
+	if got := strings.Join(c.recus[0].Flags, " "); got != "--check --diff --limit=web-01" {
+		t.Errorf("flags enregistrés %q", got)
+	}
+}
+
+// Un drapeau hors allowlist est refusé en 400, et le refus a lieu AVANT que le
+// rôle `git` ne travaille : une erreur de frappe ne doit pas coûter un
+// rafraîchissement de miroir.
+func TestUnFlagHorsAllowlistEstRefuseAvantLeRoleGit(t *testing.T) {
+	s, g, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"environment":"prod",
+		"playbook":"site.yml",
+		"base_sha":"`+shaMain+`",
+		"flags":["--vault-password-file=/tmp/x"]
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400 : %s", w.Code, w.Body.String())
+	}
+	// Le message NOMME ce qui est accepté : sans ça, on va chercher la liste
+	// dans un code source.
+	if !strings.Contains(w.Body.String(), "--check") {
+		t.Errorf("le refus ne nomme pas la liste acceptée : %s", w.Body.String())
+	}
+	if len(g.refsDemandees) != 0 {
+		t.Errorf("le rôle git a travaillé pour un run refusé : %v", g.refsDemandees)
+	}
+	if len(c.recus) != 0 {
+		t.Errorf("%d run(s) créé(s) malgré le refus", len(c.recus))
+	}
+}
+
+// `flags` doit être un TABLEAU de chaînes. Le champ était un `json.RawMessage`
+// recopié tel quel jusque sur l'argv : un objet, un nombre ou une liste de
+// listes y passaient sans que rien ne regarde leur forme.
+func TestUnFlagsQuiNestPasUnTableauEstRefuse(t *testing.T) {
+	for _, brut := range []string{`{}`, `3`, `"--check"`, `[1]`, `[["--check"]]`} {
+		t.Run(brut, func(t *testing.T) {
+			s, _, _, _ := monterEcriture(t)
+			w := posterRun(t, s, administrateur(), `{
+				"run_ref":"`+runAlice+`",
+				"repo":"depot",
+				"environment":"prod",
+				"playbook":"site.yml",
+				"base_sha":"`+shaMain+`",
+				"flags":`+brut+`
+			}`)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("statut %d, attendu 400 : %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}

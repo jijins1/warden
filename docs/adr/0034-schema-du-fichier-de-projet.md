@@ -107,6 +107,21 @@ n'intersecte que ce que le commit déclare avec ce que le shell fournit.
 Une valeur envoyée par la CLI pour un nom que le commit ne déclare pas est
 **jetée sans bruit** : elle n'a jamais été autorisée, il n'y a rien à signaler.
 
+#### Amendement (2026-09-03) : `extra_vars`, le même mécanisme pour `-e`
+
+L'[ADR-0039](0039-extra-vars-declarees-par-le-commit.md) ajoute `extra_vars:`,
+qui reprend ce mécanisme mot pour mot : le fichier versionné déclare les NOMS,
+la requête n'apporte que les VALEURS. C'est ce qui rend `-e/--extra-vars`
+compatible avec l'ADR-0009, là où sa forme libre ne l'était pas.
+
+Deux différences, toutes deux voulues et argumentées là-bas :
+
+- un nom non déclaré fait **échouer** au lieu d'être jeté en silence — un `-e`
+  est un acte explicite de l'opérateur, pas une variable d'un shell ambiant ;
+- les **valeurs sont auditées**, enregistrées dans `run.flags` et servies par
+  l'API, au lieu d'être consignées puis détruites. `forward_env` reste le seul
+  chemin dont les valeurs ne sont jamais journalisées.
+
 ### Les noms réservés protègent l'audit, pas l'utilisateur
 
 `core.NomsReserves` refuse `ANSIBLE_CALLBACK_PLUGINS`, `PYTHONPATH` et
