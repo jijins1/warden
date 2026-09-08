@@ -52,6 +52,7 @@ d'implémentation prises en cours de route.
 | [0037](0037-enrolement-depuis-linventaire-ansible.md) | Enrôler depuis l'inventaire Ansible, et ne pas devenir Ansible | Accepted |
 | [0038](0038-flags-ansible-check-diff-limit.md) | Trois flags Ansible, une allowlist, et le maillon qui manquait | Accepted |
 | [0039](0039-extra-vars-declarees-par-le-commit.md) | `-e` : les noms viennent du commit, les valeurs sont auditées | Accepted |
+| [0040](0040-submit-suit-le-run.md) | `warden submit` suit le run, et son code de sortie le dit | Accepted |
 
 ## Convention
 

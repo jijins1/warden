@@ -49,6 +49,11 @@ type drapeauxSubmit struct {
 	// secret.
 	elever     *bool
 	eleverVers *string
+
+	// sansSuivi détache la commande du flux. Le NÉGATIF est le drapeau, parce
+	// que le suivi est le défaut : un `--follow` obligerait à le taper à chaque
+	// fois pour obtenir ce que fait `ansible-playbook` sans qu'on lui demande.
+	sansSuivi *bool
 }
 
 func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
@@ -68,6 +73,9 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 		limit: fs.String("limit", "", "restreindre aux machines ou groupes de ce motif Ansible"),
 
 		eleverVers: fs.String("become-user", "", "compte visé par l'élévation ; root par défaut"),
+
+		sansSuivi: fs.Bool("no-follow", false,
+			"rendre la main dès le run déclaré, sans afficher son déroulement"),
 	}
 
 	// `-b` et `--become` désignent le MÊME booléen, comme chez ansible-playbook.
@@ -241,9 +249,16 @@ func flagsPour(chemin []string) *flag.FlagSet {
 		fs, _ = fsUtilisateur()
 	case "grant":
 		fs, _ = fsDroit()
+	case "logs":
+		fs = fsLogs()
 	}
 	return fs
 }
+
+// fsLogs n'a AUCUN drapeau, et c'est délibéré : ce qu'on suit est un run, il se
+// désigne par son identifiant, et un drapeau pour ça allongerait la commande
+// qu'on tape le plus souvent après une soumission détachée.
+func fsLogs() *flag.FlagSet { return neuf("logs") }
 
 // aide écrit la page demandée sur la sortie standard.
 //

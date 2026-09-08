@@ -237,6 +237,17 @@ warden submit --playbook play.yml --env prod -b -K          # escalate, and supp
 warden submit --playbook play.yml --env prod -b --become-user postgres
 ```
 
+`submit` **follows the run** and prints it task by task, like `ansible-playbook`,
+and **exits non-zero if the run fails** — so it works in a pipeline.
+`--no-follow` returns as soon as the run is declared; `warden logs <run_ref>`
+attaches later. The stream replays from the start, so `warden logs` on a
+finished run shows everything
+([ADR-0040](docs/adr/0040-submit-suit-le-run.md)).
+
+> ⚠ **Ctrl-C detaches, it does not cancel.** The run keeps going server-side and
+> keeps changing your machines. The message says so and repeats the command to
+> re-attach. Cancelling needs a server endpoint that does not exist yet.
+
 > ⚠ **`-K` alone escalates nothing.** It only carries the password. Warden splits
 > what `ansible-playbook -K` does into two flags because the two halves travel by
 > different paths: the flag is audited, the password never is. `--become-user`

@@ -20,6 +20,7 @@ import (
 	"github.com/jijins1/warden/internal/cli/internal/command"
 	"github.com/jijins1/warden/internal/cli/internal/projet"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
+	"github.com/jijins1/warden/internal/cli/internal/render"
 	"github.com/jijins1/warden/internal/cli/internal/session"
 	"github.com/jijins1/warden/internal/cli/internal/stream"
 	"github.com/jijins1/warden/internal/cli/internal/submit"
@@ -76,6 +77,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeDroit(ctx, args[1:], os.Stdout)
 	case "submit":
 		return commandeSubmit(ctx, args[1:], os.Stdout)
+	case "logs":
+		return commandeLogs(ctx, args[1:], os.Stdout)
 	case "key":
 		return commandeCle(ctx, args[1:], os.Stdout)
 	case "repo":
@@ -212,7 +215,82 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	_, _ = fmt.Fprintf(sortie, "run %s\n", res.RunRef)
 	_, _ = fmt.Fprintf(sortie, "  audit   %s\n", res.AuditSHA)
 	_, _ = fmt.Fprintf(sortie, "  contre  %s\n", res.MainlineSHA)
+
+	if *f.sansSuivi {
+		// Détaché, la commande ne sait RIEN de la suite : elle rend 0 parce que
+		// la soumission a réussi, et c'est tout ce qu'elle peut affirmer.
+		// `warden logs` rattrape le déroulement.
+		_, _ = fmt.Fprintf(sortie, "\n« warden logs %s » pour en suivre le déroulement.\n", res.RunRef)
+		return nil
+	}
+
+	return suivreLeRun(ctx, adresse, res.RunRef, sortie)
+}
+
+// suivreLeRun s'attache au flux d'un run et en tire le code de sortie.
+//
+// Le code de sortie NON NUL sur un run en échec est ce qui rend `warden submit`
+// utilisable dans un pipeline, et c'est ce qu'`ansible-playbook` fait. Il n'est
+// possible QUE branché : détachée, la commande ne connaît pas l'issue.
+//
+// L'erreur rendue est `ErrDejaDit` : l'issue vient d'être écrite sur la sortie,
+// et la faire préfixer de « warden: » par `main` la répéterait sous une forme
+// qui ressemblerait à un second échec.
+func suivreLeRun(ctx context.Context, adresse, runRef string, sortie io.Writer) error {
+	suiveur, err := suiveurPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	fin, err := render.Run(ctx, suiveur, runRef, sortie)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			// Ctrl-C DÉTACHE, il n'annule pas : l'annulation du §5.6 demande un
+			// endpoint que le serveur n'expose pas. Le dire est le minimum
+			// honnête — sans ça, l'utilisateur croit avoir arrêté un run qui
+			// continue de modifier ses machines.
+			_, _ = fmt.Fprintf(sortie,
+				"\ndétaché — le run %s CONTINUE côté serveur.\n"+
+					"« warden logs %s » pour s'y rattacher.\n", runRef, runRef)
+			return err
+		}
+		return fmt.Errorf("suivi du run %s : %w", runRef, err)
+	}
+
+	if render.Issue(sortie, runRef, fin) {
+		return ErrDejaDit
+	}
 	return nil
+}
+
+// commandeLogs rattache la sortie standard au flux d'un run.
+//
+// Elle existe parce que `--no-follow` et le Ctrl-C en créent le besoin : sans
+// elle, se détacher serait sans retour, et un drapeau qui mène à une impasse
+// n'est pas une option, c'est un piège.
+func commandeLogs(ctx context.Context, args []string, sortie io.Writer) error {
+	fs := fsLogs()
+	if err := fs.Parse(args); err != nil {
+		return erreurDrapeaux("logs", err)
+	}
+	if fs.NArg() != 1 {
+		//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
+		return errors.New("« warden logs » attend un identifiant de run.\n" +
+			"« warden submit » l'imprime en tête de sa sortie.")
+	}
+	runRef := fs.Arg(0)
+
+	// Le dépôt courant a son mot à dire sur l'adresse : on suit le plus souvent
+	// un run qu'on vient de soumettre, donc depuis le même dépôt.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	return suivreLeRun(ctx, adresse, runRef, sortie)
 }
 
 // apiSeule construit le client pour les commandes qui ne touchent pas à git.
