@@ -14,7 +14,7 @@ de ce qu'on veut ; les ADR restent la référence de ce qu'on a tranché.
 | Phase | État |
 |---|---|
 | 0 — mesure du cold start | ✅ ADR-0015 |
-| 1 — streaming reconnectable | 🟡 le streaming marche ; le Ctrl-C (§5.6) manque, le critère de sortie n'a jamais été exercé |
+| 1 — streaming reconnectable | 🟡 le streaming marche et `submit` s'y attache enfin (ADR-0040) ; le Ctrl-C (§5.6) et les hôtes en vol (§5.8) manquent |
 | 2 — transport git + audit | ✅ vérifié sur le cluster (ADR-0025, ADR-0031) |
 | 3 — pré-chauffage | ❌ rien |
 | 4 — auth, authz, isolation | 🟡 comptes locaux, droits, enrôlement, durcissement du pod ✅ — allowlists, périmètre réseau, OIDC, Vault ❌ |
@@ -167,6 +167,26 @@ est le PÉRIMÈTRE de la liste, plus son absence.
   l'ADR-0038 qui laisse un besoin RÉEL sans alternative : `forward_env` couvre
   les secrets du shell, pas ceux versionnés dans le dépôt. Demande une décision,
   pas une ligne de table.
+
+- [x] ~~**`warden submit` n'affichait pas le déroulement du run.**~~ Résolu le
+  2026-09-08 ([ADR-0040](adr/0040-submit-suit-le-run.md)). Le suivi existait, il
+  fonctionnait, et `warden enroll` s'en servait — `submit` ne s'y attachait
+  jamais. Le maillon n'avait pas été posé, et TOUT autour supposait qu'il
+  l'était : le doc de `stream.New`, le §5.6, le §5.7, et un paquet `render` dont
+  le `doc.go` annonçait ce rôle sans une ligne de code.
+
+- [ ] **Le Ctrl-C du §5.6 n'annule rien.** Il DÉTACHE, et le message le dit —
+  c'est le minimum honnête. L'annulation demande un endpoint que le serveur
+  n'expose pas : les routes de run sont `GET /runs`, `GET /runs/{ref}`,
+  `.../stream`, `.../diff` et `POST /runs`, il n'y a rien à appeler. L'escalade à
+  trois niveaux du §5.6 suppose en plus de porter le signal jusqu'au processus
+  du pod, puis de supprimer le pod : c'est du travail de contrôleur, pas de CLI.
+
+- [ ] **Les hôtes en vol du §5.8.** `render/doc.go` les annonce comme « un
+  différenciateur produit, pas un confort : c'est ce qu'Ansible ne montre pas et
+  qu'on cherche pendant un incident ». Ce qui est affiché aujourd'hui est ce qui
+  est TERMINÉ, tâche par tâche. Savoir sur quelle machine un run BLOQUE reste
+  hors de portée.
 
 - [ ] **L'allowlist par ENVIRONNEMENT du §5.5.** Ce qui existe est une liste
   fixe, la même pour tous. `prod` ne peut pas interdire ce que `staging`

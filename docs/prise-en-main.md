@@ -397,6 +397,23 @@ run se connecte, et les poser depuis la requête sortirait de l'inventaire audit
 `ansible_become_password` en particulier finirait en clair dans la base, les
 valeurs d'`-e` étant enregistrées.
 
+`submit` **suit le run** et affiche son déroulement, tâche par tâche, comme
+`ansible-playbook`. Il rend un **code non nul si le run échoue**, ce qui le rend
+utilisable dans un pipeline.
+
+```sh
+warden submit --repo mon-depot --playbook play.yml --no-follow   # rendre la main tout de suite
+warden logs 01JZQ8XKPT9V2H3M4N5P6Q7R8S                            # s'y rattacher plus tard
+```
+
+Le flux est **rejouable depuis le début** : `warden logs` sur un run déjà
+terminé réaffiche tout. Il n'y a pas deux chemins « rattrapage » et « direct ».
+
+> ⚠ **Ctrl-C détache, il n'annule pas.** Le run CONTINUE côté serveur et
+> continue de modifier vos machines. Le message le dit et rappelle la commande
+> pour se rattacher. L'annulation demande un endpoint que le serveur n'expose pas
+> encore — voir `docs/reste-a-faire.md`.
+
 **Le travail non commité part avec.** `submit` construit un commit d'audit depuis
 votre arbre de travail — sans toucher à votre index ni à `HEAD` — le pousse, et
 le runner exécute **ce commit exact**. C'est la raison d'être du produit : ce qui
