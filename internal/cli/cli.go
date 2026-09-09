@@ -58,6 +58,13 @@ func Run(ctx context.Context, args []string) error {
 		command.Arbre().Index(os.Stderr)
 		return ErrDejaDit
 	}
+	if args[0] == "__complete" {
+		// Interceptée AVANT `command.Demandee` : les mots qu'un shell transmet
+		// pour compléter une ligne peuvent contenir un `--help` que
+		// l'utilisateur a déjà tapé — ce n'est pas une demande d'aide, c'est
+		// justement ce qu'on est en train de compléter.
+		return commandeInterneComplete(ctx, args[1:], os.Stdout)
+	}
 	if command.Demandee(args) {
 		return aide(os.Stdout, args)
 	}
@@ -87,6 +94,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeHote(ctx, args[1:], os.Stdout)
 	case "enroll":
 		return commandeEnroler(ctx, args[1:], os.Stdout)
+	case "completion":
+		return commandeCompletion(args[1:], os.Stdout)
 	default:
 		return command.Inconnue(nil, args[0])
 	}

@@ -222,8 +222,18 @@ func tiret(nom string) string {
 
 // valeurDe dit si le drapeau prend une valeur, sans la nommer d'après le type Go.
 func valeurDe(f *flag.Flag) string {
-	if _, estBool := f.Value.(interface{ IsBoolFlag() bool }); estBool {
+	if estBooleen(f) {
 		return ""
 	}
 	return " <valeur>"
+}
+
+// estBooleen dit si un drapeau se pose sans valeur, comme `--check` ou `-b`.
+//
+// Partagée avec la complétion (`Localiser`) : les deux ont besoin de la même
+// réponse pour la même raison — savoir si le mot qui SUIT un drapeau lui
+// appartient, ou commence autre chose.
+func estBooleen(f *flag.Flag) bool {
+	_, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok
 }

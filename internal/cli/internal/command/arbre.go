@@ -21,6 +21,7 @@ func Arbre() *Commande {
 		Resume: "warden — exécution auditée de playbooks Ansible",
 		Sous: []Commande{
 			login(), logout(), whoami(), passwd(),
+			completion(),
 			submit(),
 			logs(),
 			repo(), utilisateur(), droit(), cle(), hote(), enroler(),
@@ -71,6 +72,23 @@ func passwd() Commande {
 		Flags: []string{
 			"ask-current-password", "current-password-file", "current-password-stdin",
 			"ask-new-password", "new-password-file", "new-password-stdin",
+		},
+	}
+}
+
+func completion() Commande {
+	return Commande{
+		Nom: "completion", Rubrique: RubriqueSession,
+		Resume: "affiche le script d'auto-complétion d'un shell",
+		Usage:  []string{"completion bash", "completion zsh"},
+		Details: "Le script rappelle `warden` à chaque Tab — il ne connaît aucune commande\n" +
+			"par cœur, donc il ne peut jamais proposer un verbe ou un drapeau que\n" +
+			"cette CLI n'a pas.\n\n" +
+			"Un geste de mise en place, comme `warden login` : à faire une fois, dans\n" +
+			"le fichier de démarrage du shell.",
+		Exemples: []Exemple{
+			{Pourquoi: "bash, une fois pour toutes", Ligne: "warden completion bash >> ~/.bashrc"},
+			{Pourquoi: "zsh, une fois pour toutes", Ligne: "echo 'source <(warden completion zsh)' >> ~/.zshrc"},
 		},
 	}
 }
