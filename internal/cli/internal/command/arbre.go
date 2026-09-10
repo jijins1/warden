@@ -21,7 +21,9 @@ func Arbre() *Commande {
 		Resume: "warden — exécution auditée de playbooks Ansible",
 		Sous: []Commande{
 			login(), logout(), whoami(), passwd(),
+			completion(),
 			submit(),
+			logs(),
 			repo(), utilisateur(), droit(), cle(), hote(), enroler(),
 		},
 	}
@@ -74,6 +76,23 @@ func passwd() Commande {
 	}
 }
 
+func completion() Commande {
+	return Commande{
+		Nom: "completion", Rubrique: RubriqueSession,
+		Resume: "affiche le script d'auto-complétion d'un shell",
+		Usage:  []string{"completion bash", "completion zsh"},
+		Details: "Le script rappelle `warden` à chaque Tab — il ne connaît aucune commande\n" +
+			"par cœur, donc il ne peut jamais proposer un verbe ou un drapeau que\n" +
+			"cette CLI n'a pas.\n\n" +
+			"Un geste de mise en place, comme `warden login` : à faire une fois, dans\n" +
+			"le fichier de démarrage du shell.",
+		Exemples: []Exemple{
+			{Pourquoi: "bash, une fois pour toutes", Ligne: "warden completion bash >> ~/.bashrc"},
+			{Pourquoi: "zsh, une fois pour toutes", Ligne: "echo 'source <(warden completion zsh)' >> ~/.zshrc"},
+		},
+	}
+}
+
 func submit() Commande {
 	return Commande{
 		Nom: "submit", Rubrique: RubriqueRuns,
@@ -89,6 +108,13 @@ func submit() Commande {
 			"Ce qui s'exécute est résolu par le SERVEUR depuis le commit d'audit, et\n" +
 			"non par cette commande : ce qui s'applique et ce qui est audité sont le\n" +
 			"même octet.\n\n" +
+			"La commande SUIT le run et affiche son déroulement, comme\n" +
+			"ansible-playbook. Elle rend un code non nul si le run échoue, ce qui\n" +
+			"la rend utilisable dans un pipeline. --no-follow rend la main dès le\n" +
+			"run déclaré ; « warden logs » rattrape le déroulement.\n\n" +
+			"Ctrl-C DÉTACHE la sortie, il n'annule pas le run : celui-ci continue\n" +
+			"côté serveur. L'annulation demande un endpoint que le serveur n'expose\n" +
+			"pas encore.\n\n" +
 			"--check, --diff, --limit, -e et -b portent le nom qu'ansible-playbook\n" +
 			"leur donne et font la même chose. Ce sont les SEULS acceptés : le\n" +
 			"serveur refuse tout autre drapeau, en nommant ceux qu'il prend.\n\n" +
@@ -104,7 +130,7 @@ func submit() Commande {
 			"`forward_env` est le chemin dont les valeurs ne sont jamais journalisées.",
 		Flags: []string{"repo", "playbook", "env", "inventory", "run-ref",
 			"check", "diff", "limit", "e", "extra-vars",
-			"b", "become", "become-user",
+			"b", "become", "become-user", "no-follow",
 			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
 		Exemples: []Exemple{
 			{Ligne: "warden submit --playbook play.yml --env prod --inventory hosts"},
@@ -121,7 +147,25 @@ func submit() Commande {
 			{Pourquoi: "reprendre une soumission interrompue produit le même commit d'audit",
 				Ligne: "warden submit --playbook play.yml --run-ref 01JZQ..."},
 		},
-		Voir: []string{"warden repo declare"},
+		Voir: []string{"warden logs", "warden repo declare"},
+	}
+}
+
+func logs() Commande {
+	return Commande{
+		Nom: "logs", Rubrique: RubriqueRuns,
+		Resume: "rattache la sortie au déroulement d'un run",
+		Usage:  []string{"logs <identifiant de run>"},
+		Details: "Le même affichage que « warden submit », sur un run déjà lancé.\n\n" +
+			"Utile après --no-follow, après un Ctrl-C, ou depuis une autre machine :\n" +
+			"le flux est rejouable depuis le début, il ne commence pas à l'instant\n" +
+			"où l'on s'attache.\n\n" +
+			"L'adresse du serveur vient du fichier de projet du dépôt courant, comme\n" +
+			"pour submit — on suit le plus souvent un run qu'on vient d'y soumettre.",
+		Exemples: []Exemple{
+			{Ligne: "warden logs 01JZQ8XKPT9V2H3M4N5P6Q7R8S"},
+		},
+		Voir: []string{"warden submit"},
 	}
 }
 
