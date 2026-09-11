@@ -40,6 +40,12 @@ type Suiveur interface {
 // pas de la nostalgie : sur une flotte, la question posée est « où en est cette
 // tâche » et non « qu'a fait cette machine ». Une ligne par event, à plat, la
 // rendrait illisible dès la troisième machine.
+//
+// Chaque tâche tient sur UNE ligne de résumé (« ok=3 changed=1 ») plutôt qu'une
+// ligne par hôte : sur une flotte, la question posée est « combien ont changé »,
+// pas le détail machine par machine tant que rien n'a échoué. Les hôtes en
+// échec ou injoignables restent nommés juste en dessous, sans repli possible :
+// c'est l'information qu'on ne doit jamais avoir à aller chercher.
 func Run(ctx context.Context, suiveur Suiveur, runRef string, sortie io.Writer) (stream.Fin, error) {
 	r := &rendu{sortie: sortie, tache: -1, compte: map[string]map[events.State]int{}}
 
@@ -47,9 +53,11 @@ func Run(ctx context.Context, suiveur Suiveur, runRef string, sortie io.Writer) 
 	if err != nil {
 		// Le récapitulatif est écrit MÊME sur erreur : une coupure après huit
 		// minutes de run ne doit pas emporter ce qu'on a déjà vu passer.
+		r.clorreTache()
 		r.recapituler()
 		return stream.Fin{}, err
 	}
+	r.clorreTache()
 	r.recapituler()
 	return fin, nil
 }
@@ -61,11 +69,22 @@ type rendu struct {
 	// titre qu'une fois. -1 parce que 0 est un numéro de tâche valide.
 	tache int
 
+	// tacheCompte et tacheEchecs portent le résumé de la tâche EN COURS,
+	// vidés dans clorreTache() dès que la tâche suivante commence.
+	tacheCompte map[events.State]int
+	tacheEchecs []echecHote
+
 	compte map[string]map[events.State]int
+}
+
+type echecHote struct {
+	hote string
+	etat events.State
 }
 
 func (r *rendu) event(e ws.EventFrame) {
 	if e.TaskNumber != r.tache {
+		r.clorreTache()
 		r.tache = e.TaskNumber
 		if titre := titreDeTache(e); titre != "" {
 			_, _ = fmt.Fprintf(r.sortie, "\n%s\n", titre)
@@ -74,15 +93,50 @@ func (r *rendu) event(e ws.EventFrame) {
 
 	hote := e.Host
 	if hote == "" {
-		// Un event sans hôte vient du play lui-même, pas d'une machine.
-		hote = "—"
+		// Un event sans hôte vient du play lui-même, pas d'une machine : rien
+		// à compter par tâche ni par hôte, et l'afficher ne serait que du
+		// bruit — une ligne vide répétée à chaque event de cycle de vie.
+		return
 	}
-	_, _ = fmt.Fprintf(r.sortie, "  %s %s\n", marqueur(e.State), hote)
+
+	if r.tacheCompte == nil {
+		r.tacheCompte = map[events.State]int{}
+	}
+	r.tacheCompte[e.State]++
+	if e.State == events.StateFailed || e.State == events.StateUnreachable {
+		r.tacheEchecs = append(r.tacheEchecs, echecHote{hote: hote, etat: e.State})
+	}
 
 	if r.compte[hote] == nil {
 		r.compte[hote] = map[events.State]int{}
 	}
 	r.compte[hote][e.State]++
+}
+
+// clorreTache écrit le résumé de la tâche en cours, et le vide.
+//
+// Appelée au changement de tâche ET en fin de run : une tâche dont le run
+// s'arrête au milieu doit quand même laisser son résumé, pour la même raison
+// que le bilan final survit à une coupure.
+func (r *rendu) clorreTache() {
+	if len(r.tacheCompte) == 0 {
+		return
+	}
+
+	colonnes := make([]string, 0, len(ordreRecap))
+	for _, etat := range ordreRecap {
+		if n := r.tacheCompte[etat]; n > 0 {
+			colonnes = append(colonnes, fmt.Sprintf("%s=%d", etat, n))
+		}
+	}
+	_, _ = fmt.Fprintf(r.sortie, "  %s\n", strings.Join(colonnes, "  "))
+
+	for _, ech := range r.tacheEchecs {
+		_, _ = fmt.Fprintf(r.sortie, "    %s %s\n", marqueur(ech.etat), ech.hote)
+	}
+
+	r.tacheCompte = nil
+	r.tacheEchecs = nil
 }
 
 // titreDeTache compose l'en-tête d'une tâche.

@@ -94,6 +94,12 @@ REGISTRY ?= ghcr.io
 REGISTRY_OWNER ?= jijins1
 IMAGE_TAG ?= dev
 
+# Les plateformes PUBLIÉES. `images`, lui, reste un build natif à une seule
+# plateforme — celle de la machine qui l'exécute — parce que c'est le seul mode
+# qu'un `docker build` classique sait charger dans le démon local pour un test
+# immédiat (`test-runner-image`, `web-image` de la CI).
+PLATFORMS ?= linux/amd64,linux/arm64
+
 IMAGE_BASE := $(REGISTRY)/$(REGISTRY_OWNER)
 
 .PHONY: images
@@ -134,11 +140,21 @@ test-runner-image: images ## Vérifie le pilotage d'ansible-runner dans l'image 
 	  -test.run 'TestLeVraiAnsibleRunnerEstPilote|TestLeMotDePasseDElevation' -test.v
 	rm -f $(EXEC_TEST)
 
+# Multi-arch et pas seulement pour l'amd64 des runners GitHub : le rôle `git`
+# et l'agent tournent aussi sur des nœuds arm64 (postes de travail Apple
+# Silicon comme grappes de production), et un tag qui ne pointe que vers
+# l'amd64 y échouerait au démarrage du pod.
+#
+# `buildx build --push` remplace `docker build` + `docker push` : une image
+# multi-plateforme est une LISTE de manifestes, que le démon Docker local ne
+# sait pas retenir sous un seul tag — elle doit être assemblée et envoyée au
+# registre en une seule étape (exige un `docker login $(REGISTRY)` préalable et
+# un builder buildx, ex. `docker buildx create --use`).
 .PHONY: images-push
-images-push: images ## Pousse les images (exige un `docker login $(REGISTRY)` préalable)
-	docker push $(IMAGE_BASE)/wardend:$(IMAGE_TAG)
-	docker push $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG)
-	docker push $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG)
+images-push: ## Construit et pousse les trois images pour $(PLATFORMS)
+	docker buildx build --platform $(PLATFORMS) -f build/wardend.Dockerfile -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) --push .
+	docker buildx build --platform $(PLATFORMS) -f build/runner.Dockerfile  -t $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) --push .
+	docker buildx build --platform $(PLATFORMS) -f build/ui.Dockerfile      -t $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG) --push .
 
 # LE CHART ET LES IMAGES PORTENT LA MÊME VERSION, ET C'EST TOUT L'INTÉRÊT.
 #
