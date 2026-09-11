@@ -22,6 +22,124 @@ import { EventFrame } from '../../core/api/wire-ws';
 /** Filtres d'affichage. Purement locaux : le flux, lui, reçoit tout. */
 type Filtre = 'all' | 'results' | 'changed' | 'failed' | 'unreachable';
 
+/**
+ * Le résumé d'une tâche : une ligne d'en-tête repliable, plutôt qu'une ligne
+ * par event.
+ *
+ * `cle` est le `task_number` du serveur — stable sur toute la durée du run,
+ * ce qui permet à `estDeplie()` de retenir un dépli au fil des arrivées
+ * d'events sans perdre l'état à chaque recalcul.
+ */
+export interface GroupeTache {
+  readonly cle: string;
+  readonly taskName: string;
+  readonly role: string;
+  readonly events: readonly EventFrame[];
+  /** Compte par état, POUR CETTE TÂCHE seule — pas le total du run. */
+  readonly comptes: Readonly<Partial<Record<EventState, number>>>;
+  /** `failed`/`unreachable` seulement : jamais repliés dans un simple compte. */
+  readonly echecs: readonly EventFrame[];
+}
+
+/**
+ * Une ligne de la liste affichée — À PLAT, jamais imbriquée.
+ *
+ * Une tâche repliée n'apparaît que par sa ligne `tache` ; en la dépliant, ses
+ * events s'insèrent juste après dans la MÊME liste. C'est délibéré : la liste
+ * reste virtualisée par `cdk-virtual-scroll`, qui a besoin d'un flux plat
+ * d'éléments de hauteur connue — une structure imbriquée (résumé contenant
+ * son détail) casserait cette hypothèse dès qu'une tâche est ouverte.
+ */
+export type LigneGroupee =
+  | { readonly kind: 'resume'; readonly seq: number }
+  | { readonly kind: 'tache'; readonly groupe: GroupeTache }
+  | { readonly kind: 'event'; readonly event: EventFrame };
+
+/**
+ * Regroupe le flux par tâche, à plat.
+ *
+ * Une ligne par event noie la question qu'on pose sur une flotte — « combien
+ * ont changé sur cette tâche » — sous des dizaines de lignes identiques. Le
+ * regroupement suit `task_number`, le même identifiant que `warden logs`
+ * utilise déjà côté CLI pour la même raison.
+ */
+function grouperParTache(lignes: readonly LigneFlux[]): (GroupeTache | { seq: number })[] {
+  const resultat: (GroupeTache | { seq: number })[] = [];
+  let courant: {
+    cle: string;
+    taskName: string;
+    role: string;
+    events: EventFrame[];
+    comptes: Partial<Record<EventState, number>>;
+    echecs: EventFrame[];
+  } | null = null;
+
+  for (const ligne of lignes) {
+    if (ligne.kind === 'resume') {
+      courant = null;
+      resultat.push({ seq: ligne.seq });
+      continue;
+    }
+
+    const e = ligne.event;
+    // Un event SANS hôte vient du play lui-même, pas d'une machine : rien à
+    // compter par tâche, et l'afficher ne serait que du bruit — une ligne
+    // vide répétée à chaque event de cycle de vie d'Ansible.
+    if (!e.host) {
+      continue;
+    }
+
+    const cle = String(e.task_number ?? 0);
+    if (!courant || courant.cle !== cle) {
+      courant = {
+        cle,
+        taskName: e.task_name ?? '',
+        role: e.role ?? '',
+        events: [],
+        comptes: {},
+        echecs: [],
+      };
+      resultat.push(courant);
+    }
+
+    courant.events.push(e);
+    courant.comptes[e.state] = (courant.comptes[e.state] ?? 0) + 1;
+    if (e.state === 'failed' || e.state === 'unreachable') {
+      courant.echecs.push(e);
+    }
+  }
+
+  return resultat;
+}
+
+/**
+ * Aplatit les groupes en lignes affichables : l'en-tête de chaque tâche,
+ * suivi de ses events SI ET SEULEMENT SI `deplie` la dit ouverte.
+ */
+export function aplatir(
+  lignes: readonly LigneFlux[],
+  deplie: (g: GroupeTache) => boolean,
+): LigneGroupee[] {
+  const resultat: LigneGroupee[] = [];
+  for (const l of grouperParTache(lignes)) {
+    if (!('cle' in l)) {
+      resultat.push({ kind: 'resume', seq: l.seq });
+      continue;
+    }
+    resultat.push({ kind: 'tache', groupe: l });
+    if (deplie(l)) {
+      for (const e of l.events) {
+        resultat.push({ kind: 'event', event: e });
+      }
+    }
+  }
+  return resultat;
+}
+
+/** Fige l'ordre des compteurs dans le résumé d'une tâche : `changed` en tête,
+ * c'est la métrique d'audit principale du produit (ADR-0008). */
+const ORDRE_COMPTES: EventState[] = ['changed', 'ok', 'failed', 'unreachable', 'skipped'];
+
 /** Ce qu'une tâche a réellement fait, extrait du payload d'un event. */
 export interface DetailEvent {
   /** Le module invoqué — `ansible.builtin.copy`. Vide sur un event de cycle de vie. */
@@ -147,7 +265,19 @@ export class EventStream {
    */
   protected readonly suivre = signal(true);
 
+  /**
+   * Le défilement reste virtuel : même après le regroupement par tâche, un
+   * run très bavard peut aligner des centaines de tâches, et `cdk-virtual-
+   * scroll` continue d'éviter de rendre chaque bloc d'un coup. `itemSize`
+   * suppose la hauteur REPLIÉE — un groupe déplié dépasse cette estimation,
+   * ce que la stratégie à taille fixe tolère (elle rend le contenu réel,
+   * seule la mesure du défilement en devient approximative pendant que ce
+   * groupe précis est ouvert).
+   */
   private readonly viewport = viewChild(CdkVirtualScrollViewport);
+
+  /** Dépliages demandés À LA MAIN, en écart du défaut (voir `estDeplie`). */
+  private readonly deplisManuels = signal<ReadonlySet<string>>(new Set());
 
   protected readonly lignes = computed<LigneFlux[]>(() => {
     const toutes = this.flux().lignes();
@@ -168,13 +298,18 @@ export class EventStream {
     return toutes.filter((l) => l.kind === 'resume' || l.event.state === (f as EventState));
   });
 
+  /** Le flux regroupé PAR TÂCHE, à plat — voir `aplatir`. */
+  protected readonly groupes = computed<LigneGroupee[]>(() =>
+    aplatir(this.lignes(), (g) => this.estDeplie(g)),
+  );
+
   protected readonly total = computed(
     () => this.flux().lignes().filter((l) => l.kind === 'event').length,
   );
 
   constructor() {
     effect(() => {
-      const n = this.lignes().length;
+      const n = this.groupes().length;
       if (n > 0 && this.suivre()) {
         // Après le rendu du lot : demander le défilement avant que la liste
         // virtuelle ait mesuré viserait l'avant-dernière ligne.
@@ -184,25 +319,69 @@ export class EventStream {
   }
 
   /**
-   * Identité d'une ligne.
+   * Identité d'une ligne, pour la liste virtuelle.
    *
-   * Le `seq` est monotone par run, donc stable ; une marque de reprise est
-   * identifiée par l'offset auquel elle a eu lieu. Sans cette fonction, la liste
-   * virtuelle recréerait chaque nœud à l'arrivée d'un event, ce qui annulerait
-   * l'intérêt de la virtualisation sur un run bavard.
+   * Le `task_number` identifie une tâche, `seq` un event ou une reprise —
+   * tous deux stables sur toute la durée du run.
    */
-  protected readonly suivi = (_i: number, ligne: LigneFlux): string =>
-    ligne.kind === 'resume' ? `r${ligne.seq}` : `e${ligne.event.seq}`;
+  protected readonly suivi = (_i: number, ligne: LigneGroupee): string => {
+    switch (ligne.kind) {
+      case 'resume':
+        return `r${ligne.seq}`;
+      case 'tache':
+        return `t${ligne.groupe.cle}`;
+      case 'event':
+        return `e${ligne.event.seq}`;
+    }
+  };
 
-  /** Le payload `--diff` est une lecture SÉPARÉMENT autorisée, jamais servie
-   * dans le flux : il vit dans une table à contrôle d'accès distinct parce
-   * qu'il contient des secrets rendus. L'ouvrir est donc une action, pas un
-   * dépliage. */
+  /** Les colonnes du résumé d'une tâche, dans l'ordre fixé par `ORDRE_COMPTES`. */
+  protected colonnesDe(g: GroupeTache): { etat: EventState; n: number }[] {
+    return ORDRE_COMPTES.filter((etat) => (g.comptes[etat] ?? 0) > 0).map((etat) => ({
+      etat,
+      n: g.comptes[etat] ?? 0,
+    }));
+  }
+
+  /**
+   * Une tâche en échec s'ouvre par défaut : c'est l'information qu'on ne doit
+   * jamais avoir à aller chercher derrière un clic. Le clic sert alors à la
+   * REPLIER, d'où l'inversion par rapport au défaut sur `deplisManuels`.
+   */
+  protected estDeplie(g: GroupeTache): boolean {
+    const parDefaut = g.echecs.length > 0;
+    return this.deplisManuels().has(g.cle) ? !parDefaut : parDefaut;
+  }
+
+  protected basculerDepli(cle: string): void {
+    this.deplisManuels.update((s) => {
+      const suivant = new Set(s);
+      if (suivant.has(cle)) {
+        suivant.delete(cle);
+      } else {
+        suivant.add(cle);
+      }
+      return suivant;
+    });
+  }
+
+  /** Le titre d'une tâche, rôle en préfixe s'il existe — la même règle que la CLI. */
+  protected titreDe(g: GroupeTache): string {
+    if (!g.taskName) {
+      return '(tâche sans nom)';
+    }
+    return g.role ? `${g.role} : ${g.taskName}` : g.taskName;
+  }
+
   /** Le module d'un event, pour la liste. Vide sur un event de cycle de vie. */
   protected moduleDe(e: EventFrame): string {
     return moduleCourt(detailDe(e.payload).module);
   }
 
+  /** Le payload `--diff` est une lecture SÉPARÉMENT autorisée, jamais servie
+   * dans le flux : il vit dans une table à contrôle d'accès distinct parce
+   * qu'il contient des secrets rendus. L'ouvrir est donc une action, pas un
+   * dépliage. */
   protected ouvrirDiff(e: EventFrame): void {
     this.#dialogue.open(EventDiffDialog, {
       width: 'min(880px, 92vw)',
@@ -228,6 +407,6 @@ export class EventStream {
 
   protected retourEnBas(): void {
     this.suivre.set(true);
-    this.viewport()?.scrollToIndex(this.lignes().length - 1, 'smooth');
+    this.viewport()?.scrollToIndex(this.groupes().length - 1, 'smooth');
   }
 }

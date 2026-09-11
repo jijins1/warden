@@ -64,7 +64,9 @@ func TestUneTacheNestAnnonceeQuUneFois(t *testing.T) {
 }
 
 // `unreachable` ne se confond pas avec `failed` : une machine injoignable est un
-// problème de réseau ou de clé, pas de playbook.
+// problème de réseau ou de clé, pas de playbook. Les deux restent nommées par
+// hôte même dans le résumé replié — c'est l'information qu'on ne doit jamais
+// avoir à aller chercher.
 func TestLesEtatsOntDesMarqueursDistincts(t *testing.T) {
 	s := &suiveurFactice{
 		frames: []ws.EventFrame{
@@ -81,10 +83,37 @@ func TestLesEtatsOntDesMarqueursDistincts(t *testing.T) {
 	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
 		t.Fatalf("Run : %v", err)
 	}
-	for _, veut := range []string{"· a", "+ b", "✗ c", "⚠ d", "- e"} {
+	// Résumé de la tâche : les états sans échec sont COMPTÉS, pas listés par hôte.
+	for _, veut := range []string{"ok=1", "changed=1", "skipped=1"} {
+		if !strings.Contains(out.String(), veut) {
+			t.Errorf("résumé sans %q :\n%s", veut, out.String())
+		}
+	}
+	// Les échecs, eux, restent nommés — jamais repliés dans un simple compte.
+	for _, veut := range []string{"✗ c", "⚠ d"} {
 		if !strings.Contains(out.String(), veut) {
 			t.Errorf("sortie sans %q :\n%s", veut, out.String())
 		}
+	}
+}
+
+// Un event sans hôte — le play lui-même, pas une machine — ne doit produire
+// AUCUNE ligne : c'était le bruit qui noyait les tâches sur un run bavard.
+func TestUnEventSansHoteNeProduitAucuneLigne(t *testing.T) {
+	s := &suiveurFactice{
+		frames: []ws.EventFrame{
+			frame(0, 0, "", "", "", events.StateUnknown),
+			frame(1, 1, "", "t", "kodi", events.StateOK),
+		},
+		fin: stream.Fin{Status: render.IssueReussi},
+	}
+
+	var out strings.Builder
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+	if strings.Contains(out.String(), "—") {
+		t.Errorf("un event sans hôte a laissé une ligne :\n%s", out.String())
 	}
 }
 

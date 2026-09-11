@@ -36,41 +36,61 @@
   </p>
 }
 
-<!-- Défilement VIRTUEL, non négociable : le volume d'events par run n'est pas
-     mesuré, et le suiveur serveur lit par lots de 500. Rendre chaque ligne
-     rendrait un vrai run inutilisable. -->
+<!-- Un bloc par TÂCHE, pas une ligne par event : la question posée sur une
+     flotte est « combien ont changé sur cette tâche », pas le détail machine
+     par machine tant que rien n'a échoué. La liste reste À PLAT — dépliée,
+     une tâche insère ses events juste après son en-tête dans la MÊME liste,
+     voir `aplatir` — pour rester compatible avec `cdk-virtual-scroll`, qui a
+     besoin d'un flux d'éléments de hauteur connue plutôt que d'un résumé
+     contenant lui-même son détail. -->
 <cdk-virtual-scroll-viewport itemSize="28" class="flux" (scrolledIndexChange)="auDefilement()">
-  <ng-container *cdkVirtualFor="let ligne of lignes(); trackBy: suivi">
-    @if (ligne.kind === 'resume') {
-      <!-- La reprise dit sa position ET que rien n'a manqué. Le serveur relit la
-           table depuis l'offset : le rattrapage et le direct sont le même
-           chemin, donc l'affirmation est exacte. -->
-      <div class="reprise">
-        <span class="trait"></span>
-        <span class="texte w-mono">reconnected — resumed from offset {{ ligne.seq }}, nothing lost</span>
-        <span class="trait"></span>
-      </div>
-    } @else {
-      <button
-        type="button"
-        class="ev"
-        [class.chg]="ligne.event.state === 'changed'"
-        [class.ech]="ligne.event.state === 'failed' || ligne.event.state === 'unreachable'"
-        (click)="ouvrirDiff(ligne.event)">
-        <span class="s w-mono">{{ ligne.event.seq }}</span>
-        <span class="et"><w-state-chip [state]="ligne.event.state" /></span>
-        <span class="tache" [matTooltip]="ligne.event.task_name ?? ''">
-          {{ ligne.event.task_name || '—' }}
-        </span>
-        <!-- LE MODULE, parce que le nom de tâche dit l'intention et pas
-             l'action : « configurer le pare-feu » ne distingue pas une lecture
-             d'une écriture. Le préfixe de collection est retiré, il se répète
-             sur chaque ligne. -->
-        <span class="module w-mono">{{ moduleDe(ligne.event) }}</span>
-        <span class="hote w-mono">{{ ligne.event.host || '' }}</span>
-        <span class="role w-mono">{{ ligne.event.role || '' }}</span>
-        <span class="heure w-mono">{{ ligne.event.occurred_at | date: 'HH:mm:ss' }}</span>
-      </button>
+  <ng-container *cdkVirtualFor="let ligne of groupes(); trackBy: suivi">
+    @switch (ligne.kind) {
+      @case ('resume') {
+        <!-- La reprise dit sa position ET que rien n'a manqué. Le serveur relit
+             la table depuis l'offset : le rattrapage et le direct sont le même
+             chemin, donc l'affirmation est exacte. -->
+        <div class="reprise">
+          <span class="trait"></span>
+          <span class="texte w-mono">reconnected — resumed from offset {{ ligne.seq }}, nothing lost</span>
+          <span class="trait"></span>
+        </div>
+      }
+      @case ('tache') {
+        <button
+          type="button"
+          class="resume"
+          [class.ech]="ligne.groupe.echecs.length > 0"
+          [attr.aria-expanded]="estDeplie(ligne.groupe)"
+          (click)="basculerDepli(ligne.groupe.cle)">
+          <mat-icon class="chevron" [class.ouvert]="estDeplie(ligne.groupe)">chevron_right</mat-icon>
+          <span class="nom" [matTooltip]="titreDe(ligne.groupe)">{{ titreDe(ligne.groupe) }}</span>
+          <span class="comptes">
+            @for (c of colonnesDe(ligne.groupe); track c.etat) {
+              <w-state-chip [state]="c.etat" />
+              <span class="n w-mono">{{ c.n }}</span>
+            }
+          </span>
+        </button>
+      }
+      @case ('event') {
+        <button
+          type="button"
+          class="ev"
+          [class.chg]="ligne.event.state === 'changed'"
+          [class.ech]="ligne.event.state === 'failed' || ligne.event.state === 'unreachable'"
+          (click)="ouvrirDiff(ligne.event)">
+          <span class="s w-mono">{{ ligne.event.seq }}</span>
+          <span class="et"><w-state-chip [state]="ligne.event.state" /></span>
+          <!-- LE MODULE, parce que le nom de tâche dit l'intention et pas
+               l'action : « configurer le pare-feu » ne distingue pas une
+               lecture d'une écriture. Le préfixe de collection est retiré,
+               il se répète sur chaque ligne. -->
+          <span class="module w-mono">{{ moduleDe(ligne.event) }}</span>
+          <span class="hote w-mono">{{ ligne.event.host }}</span>
+          <span class="heure w-mono">{{ ligne.event.occurred_at | date: 'HH:mm:ss' }}</span>
+        </button>
+      }
     }
   </ng-container>
 </cdk-virtual-scroll-viewport>
