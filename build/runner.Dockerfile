@@ -12,16 +12,26 @@
 # plane, ni ses dépendances. Une image commune annulerait la séparation que le
 # découpage des binaires établit.
 
-FROM golang:1.26-alpine AS build
+# `--platform=$BUILDPLATFORM` : cette étape ne fait que compiler du Go, jamais
+# rien qui dépende de l'architecture cible. La construire native (jamais sous
+# QEMU) et croiser via GOARCH est bien plus rapide qu'émuler tout le compilateur
+# — ce qui compte pour un build multi-plateforme, où cette étape tourne deux
+# fois (ADR multi-arch).
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 WORKDIR /src
+
+# Renseignés par buildx d'après `--platform` : absents d'un `docker build`
+# classique, où ils retombent sur la plateforme de l'hôte — donc sans effet ici.
+ARG TARGETOS
+ARG TARGETARCH
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/warden-runner ./cmd/warden-runner
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/warden-runner ./cmd/warden-runner
 
 
 FROM alpine:3.22

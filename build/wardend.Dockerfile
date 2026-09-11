@@ -5,9 +5,19 @@
 # rien ne garantissait nulle part qu'il tournerait avec une version qui le
 # satisfait. L'exigence était déclarative ; l'image la rend vérifiable.
 
-FROM golang:1.26-alpine AS build
+# `--platform=$BUILDPLATFORM` : cette étape ne fait que compiler du Go, jamais
+# rien qui dépende de l'architecture cible. La construire native (jamais sous
+# QEMU) et croiser via GOARCH est bien plus rapide qu'émuler tout le compilateur
+# — ce qui compte pour un build multi-plateforme, où cette étape tourne deux
+# fois (ADR multi-arch).
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 WORKDIR /src
+
+# Renseignés par buildx d'après `--platform` : absents d'un `docker build`
+# classique, où ils retombent sur la plateforme de l'hôte — donc sans effet ici.
+ARG TARGETOS
+ARG TARGETARCH
 
 # Les dépendances d'abord : elles changent bien moins souvent que le code, et
 # cette couche se réutilise entre deux builds.
@@ -23,7 +33,7 @@ COPY . .
 # -trimpath retire les chemins de compilation du binaire. Ils décriraient
 # l'arborescence de la machine de build, dans un binaire qui tourne face à du
 # code arbitraire.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/wardend ./cmd/wardend
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/wardend ./cmd/wardend
 
 
 FROM alpine:3.22
