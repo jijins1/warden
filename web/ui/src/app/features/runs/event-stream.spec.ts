@@ -111,6 +111,19 @@ describe('aplatir', () => {
     expect(plat).toHaveLength(2); // 1 tache + 1 event, pas 2+2
   });
 
+  // `runner_on_start` annonce qu'une tâche démarre sur un hôte donné, AVANT
+  // tout résultat — il porte un hôte, contrairement au bruit sans hôte, mais
+  // ce n'est toujours pas un résultat. Le compter produirait un « unknown=1 »
+  // sur CHAQUE tâche.
+  it('écarte les events « unknown » même avec un hôte', () => {
+    const lignes = [event(0, 1, 'kodi', 'unknown'), event(1, 1, 'kodi', 'changed')];
+
+    const plat = aplatir(lignes, toujoursDeplie) as { kind: string; groupe?: GroupeTache }[];
+
+    expect(plat.map((l) => l.kind)).toEqual(['tache', 'event']);
+    expect(plat[0].groupe?.comptes).toEqual({ changed: 1 });
+  });
+
   // Une marque de reprise garde sa place chronologique et n'appartient à
   // aucune tâche : la dépliée suivante commence un nouveau groupe.
   it('garde les marques de reprise à plat et coupe le groupe en cours', () => {
