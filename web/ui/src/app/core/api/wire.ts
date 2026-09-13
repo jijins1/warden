@@ -103,6 +103,19 @@ export interface ChangementMotDePasse {
   new_password: string;
 }
 
+/**
+ * `GET /admin/repos` et `PUT /admin/repos/{repo}` — api/repo_handler.go.
+ *
+ * Réservé aux administrateurs côté serveur (404 sinon, pas 403 : voir le
+ * commentaire de `HandleListRepos`) — la garde `adminGuard` évite juste un
+ * écran qui répondrait 404 de toute façon.
+ */
+export interface Repo {
+  name: string;
+  remote_url: string;
+  mainline_ref: string;
+}
+
 /** `GET /auth/whoami` — api/auth_handler.go. */
 export interface Whoami {
   subject: string;

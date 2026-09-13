@@ -1,5 +1,5 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './core/auth/auth.guard';
+import { authGuard, adminGuard } from './core/auth/auth.guard';
 
 export const routes: Routes = [
   {
@@ -44,6 +44,15 @@ export const routes: Routes = [
         path: 'account',
         title: 'Account — warden',
         loadComponent: () => import('./features/account/account').then((m) => m.Account),
+      },
+      {
+        // `adminGuard` en plus de la garde de la coquille : `GET /admin/repos`
+        // rend une carte de l'organisation (voir HandleListRepos), pas une vue
+        // restreinte à l'appelant comme le reste de l'UI.
+        path: 'repos',
+        title: 'Repos — warden',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/repos/repo-list').then((m) => m.RepoList),
       },
       { path: '', pathMatch: 'full', redirectTo: 'runs' },
     ],
