@@ -89,6 +89,9 @@ type Run struct {
 	// EnrollTarget n'est renseignée que pour un enrôlement.
 	EnrollTarget *EnrollTarget
 
+	// AdhocTarget n'est renseignée que pour un run ad-hoc.
+	AdhocTarget *AdhocTarget
+
 	AuditSHA    string
 	BaseSHA     string
 	MainlineRef string

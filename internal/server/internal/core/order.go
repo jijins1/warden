@@ -183,7 +183,7 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		return wire.Order{}, err
 	}
 
-	return wire.Order{
+	order := wire.Order{
 		RunRef:      run.RunRef,
 		AuditSHA:    run.AuditSHA,
 		Environment: run.Environment,
@@ -218,7 +218,22 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		// la création du run ; les VALEURS ne le sont jamais et ne font que
 		// passer.
 		ForwardEnv: forward,
-	}, nil
+	}
+
+	// Un run ad-hoc n'a pas de playbook : ce qu'il porte à la place, c'est sa
+	// cible. Tout le reste de l'ordre — jeton git, clé SSH, become, forward-env
+	// — vient d'être composé exactement comme pour un playbook, parce que c'est
+	// exactement ce qu'un ad-hoc partage avec lui.
+	if run.Kind == RunAdhoc {
+		if run.AdhocTarget == nil {
+			return wire.Order{}, fmt.Errorf("run %s : ad-hoc sans cible", run.RunRef)
+		}
+		order.Module = run.AdhocTarget.Module
+		order.ModuleArgs = run.AdhocTarget.ModuleArgs
+		order.HostPattern = run.AdhocTarget.HostPattern
+	}
+
+	return order, nil
 }
 
 // variablesTransmises reprend la consigne des valeurs de variables du run.

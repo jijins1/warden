@@ -159,6 +159,109 @@ func TestLeCommitDAuditNestJamaisCeluiQueLeClientDeclare(t *testing.T) {
 	}
 }
 
+// TestUnRunAdhocEstCreeSansPlaybook vérifie qu'un payload `kind: "adhoc"`
+// traverse le handler sans jamais exiger de playbook, et enregistre sa cible.
+func TestUnRunAdhocEstCreeSansPlaybook(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"environment":"prod",
+		"inventory":"inv",
+		"kind":"adhoc",
+		"module":"shell",
+		"module_args":"uptime",
+		"host_pattern":"web",
+		"base_sha":"`+shaMain+`"
+	}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d, attendu 201 : %s", w.Code, w.Body.String())
+	}
+	if len(c.recus) != 1 {
+		t.Fatalf("%d run(s) créé(s)", len(c.recus))
+	}
+	recu := c.recus[0]
+	if recu.Kind != core.RunAdhoc {
+		t.Errorf("kind = %q, attendu %q", recu.Kind, core.RunAdhoc)
+	}
+	if recu.Playbook != "" {
+		t.Errorf("playbook = %q, un ad-hoc n'en a pas", recu.Playbook)
+	}
+	if recu.AdhocTarget == nil {
+		t.Fatal("cible ad-hoc absente")
+	}
+	if recu.AdhocTarget.Module != "shell" || recu.AdhocTarget.ModuleArgs != "uptime" ||
+		recu.AdhocTarget.HostPattern != "web" {
+		t.Errorf("cible ad-hoc mal reprise : %+v", recu.AdhocTarget)
+	}
+}
+
+// TestUnAdhocEtUnPlaybookALaFoisSontRefuses : les deux disent quoi exécuter,
+// et un client qui envoie les deux a fait une erreur qui doit être nommée
+// plutôt que résolue en silence par l'un des deux champs.
+func TestUnAdhocEtUnPlaybookALaFoisSontRefuses(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"kind":"adhoc",
+		"module":"shell",
+		"host_pattern":"web",
+		"playbook":"site.yml",
+		"base_sha":"`+shaMain+`"
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", w.Code)
+	}
+	if len(c.recus) != 0 {
+		t.Error("un run a été créé malgré playbook et module à la fois")
+	}
+}
+
+// TestUnAdhocSansModuleEstRefuse : la forme du module est vérifiée avant tout
+// travail de dépôt, pour la même raison que les flags.
+func TestUnAdhocSansModuleEstRefuse(t *testing.T) {
+	s, g, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"kind":"adhoc",
+		"host_pattern":"web",
+		"base_sha":"`+shaMain+`"
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", w.Code)
+	}
+	if len(c.recus) != 0 {
+		t.Error("un run a été créé sans module")
+	}
+	if len(g.refsDemandees) != 0 {
+		t.Error("un module refusé ne doit pas coûter une résolution de ref")
+	}
+}
+
+// TestUnGenreInconnuEstRefuse : l'enrôlement a son propre endpoint et ne
+// passe jamais par celui-ci.
+func TestUnGenreInconnuEstRefuse(t *testing.T) {
+	s, _, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"kind":"enrollment",
+		"base_sha":"`+shaMain+`"
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", w.Code)
+	}
+	if len(c.recus) != 0 {
+		t.Error("un run a été créé avec un genre refusé par cet endpoint")
+	}
+}
+
 // TestUnAuditSHAGlisseDansLeCorpsEstRefuse : le champ n'existe pas, et le
 // décodeur le dit.
 //

@@ -310,6 +310,92 @@ func verifierExtraVar(valeur string) error {
 	return nil
 }
 
+// --- l'ad-hoc comme genre de run ---
+
+// AdhocTarget est ce qu'un run ad-hoc exécute : un module Ansible, ses
+// arguments, et le motif de machines qu'il vise — l'équivalent de
+// `ansible <motif> -m <module> -a <args>`.
+//
+// Elle ne porte PAS le mot de passe d'élévation ni la clé d'accès : ceux-ci
+// suivent le même chemin que pour un playbook (§5.5, ADR-0018), parce qu'un
+// ad-hoc est un run de playbook auquel il ne manque QUE le playbook.
+type AdhocTarget struct {
+	Module      string `json:"module"`
+	ModuleArgs  string `json:"module_args,omitempty"`
+	HostPattern string `json:"host_pattern"`
+}
+
+// motifModule borne le nom d'un module Ansible.
+//
+// Volontairement PERMISSIF sur le choix du module : contrairement à `--limit`
+// ou `--become-user`, cette forme n'est PAS une frontière de sécurité — un
+// compte autorisé sur un environnement exécute déjà du code arbitraire via un
+// playbook (`shell`, `command`), et une allowlist de modules ad-hoc ne fermerait
+// rien de réel, seulement une fausse impression de contrôle. Ce qui est vérifié
+// ici est la FORME uniquement : un nom court (`shell`) ou une FQCN pointée
+// (`ansible.builtin.shell`), pour la même raison que `--extra-vars` — ce qui
+// descend vers le domaine hostile de l'ADR-0011 doit avoir une forme connue
+// avant de partir.
+var motifModule = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,2}$`)
+
+// longueurMaxModule borne le nom d'un module — une FQCN Ansible ne s'approche
+// jamais de cette taille, et la borne n'existe que pour ce qui descend sur une
+// ligne de commande.
+const longueurMaxModule = 128
+
+// Validate applique les invariants de la cible.
+func (t AdhocTarget) Validate() error {
+	if err := ValiderModule(t.Module); err != nil {
+		return err
+	}
+	if err := ValiderModuleArgs(t.ModuleArgs); err != nil {
+		return err
+	}
+	if err := verifierLimit(t.HostPattern); err != nil {
+		// Le motif d'un run ad-hoc obéit à la même syntaxe qu'un `--limit` :
+		// c'est le même langage de sélection de machines, seulement porté ici
+		// en position plutôt qu'en drapeau.
+		return fmt.Errorf("motif de machines : %w", err)
+	}
+	return nil
+}
+
+// ValiderModule contrôle la forme d'un nom de module Ansible.
+func ValiderModule(nom string) error {
+	if nom == "" {
+		return errors.New("module absent : un run ad-hoc exécute un module, il faut le nommer")
+	}
+	if len(nom) > longueurMaxModule {
+		return fmt.Errorf("nom de module : %d caractères, maximum %d", len(nom), longueurMaxModule)
+	}
+	if !motifModule.MatchString(nom) {
+		return fmt.Errorf("%q n'est pas un nom de module Ansible valide", nom)
+	}
+	return nil
+}
+
+// ValiderModuleArgs contrôle les arguments d'un module ad-hoc.
+//
+// Une chaîne vide est légitime : beaucoup de modules de diagnostic (`ping`,
+// `setup`) n'en prennent aucun. Le contrôle porte sur ce qui pourrait
+// introduire un argument que personne n'a demandé une fois passé par
+// `ansible-runner` — le même risque, et la même parade, que pour une valeur
+// d'`--extra-vars` (`verifierExtraVar`).
+func ValiderModuleArgs(valeur string) error {
+	if len(valeur) > longueurMaxValeur {
+		return fmt.Errorf("arguments du module : %d caractères, maximum %d", len(valeur), longueurMaxValeur)
+	}
+	for _, r := range valeur {
+		if r < 0x20 || r == 0x7f {
+			if r == '\t' {
+				continue
+			}
+			return errors.New("arguments du module : caractère de contrôle refusé")
+		}
+	}
+	return nil
+}
+
 // nomDeVariableAnsible est le jumeau de `config.nomDeVariable`, côté cœur.
 //
 // La duplication est celle que ce dépôt assume déjà pour la regex de nom de

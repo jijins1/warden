@@ -85,7 +85,12 @@ function grouperParTache(lignes: readonly LigneFlux[]): (GroupeTache | { seq: nu
     // Un event SANS hôte vient du play lui-même, pas d'une machine : rien à
     // compter par tâche, et l'afficher ne serait que du bruit — une ligne
     // vide répétée à chaque event de cycle de vie d'Ansible.
-    if (!e.host) {
+    //
+    // `unknown` AVEC hôte existe aussi — `runner_on_start` annonce qu'une
+    // tâche démarre sur cette machine, avant tout résultat. Le compter
+    // produirait un « unknown=1 » sur CHAQUE tâche, pour une annonce et non
+    // un résultat : du bruit garanti plutôt qu'occasionnel.
+    if (!e.host || e.state === 'unknown') {
       continue;
     }
 

@@ -54,6 +54,17 @@ type Config struct {
 	Playbook  string
 	Inventory string
 
+	// Module, ModuleArgs et HostPattern décrivent un run AD-HOC — l'équivalent
+	// de `ansible <motif> -m <module> -a <args>`, par opposition à
+	// `ansible-playbook`. Mutuellement exclusifs avec Playbook : New() refuse
+	// que les deux modes soient renseignés à la fois, ou ni l'un ni l'autre.
+	//
+	// Contrairement à Playbook et Inventory, ce ne sont PAS des chemins : ils
+	// ne passent donc pas par `sousArbre`.
+	Module      string
+	ModuleArgs  string
+	HostPattern string
+
 	// Flags sont les flags passés à `ansible-playbook`, après citation.
 	//
 	// Ils SONT filtrés, depuis l'ADR-0038, et ce commentaire disait le contraire
@@ -139,8 +150,18 @@ func New(cfg Config) (*Runner, error) {
 	if cfg.Workspace == "" {
 		return nil, errors.New("exécution : espace de travail absent")
 	}
-	if cfg.Playbook == "" {
-		return nil, errors.New("exécution : playbook absent")
+	// Exactement un des deux modes : un playbook, ou un module ad-hoc contre un
+	// motif de machines. Ni l'un ni l'autre laisserait `kwargs()` composer une
+	// trame sans rien à exécuter ; les deux à la fois est une confusion que la
+	// livraison de l'ordre a laissée passer, pas une intention.
+	adhoc := cfg.Module != "" || cfg.HostPattern != ""
+	switch {
+	case cfg.Playbook == "" && !adhoc:
+		return nil, errors.New("exécution : ni playbook ni module ad-hoc")
+	case cfg.Playbook != "" && adhoc:
+		return nil, errors.New("exécution : playbook et module ad-hoc à la fois")
+	case adhoc && (cfg.Module == "" || cfg.HostPattern == ""):
+		return nil, errors.New("exécution ad-hoc : module et motif de machines sont tous deux requis")
 	}
 	if cfg.PrivateDataDir == "" {
 		return nil, errors.New("exécution : répertoire de travail absent")
@@ -148,9 +169,12 @@ func New(cfg Config) (*Runner, error) {
 	// Le playbook et l'inventaire viennent de l'ordre de run, donc du serveur ;
 	// ils n'en restent pas moins des chemins, et un `../` y ferait sortir de
 	// l'arbre audité — c'est-à-dire exécuter autre chose que le commit
-	// journalisé, ce que le §8.2 interdit.
-	if err := sousArbre(cfg.Playbook, "playbook"); err != nil {
-		return nil, err
+	// journalisé, ce que le §8.2 interdit. Un run ad-hoc n'a pas de playbook :
+	// rien à confiner de ce côté.
+	if cfg.Playbook != "" {
+		if err := sousArbre(cfg.Playbook, "playbook"); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Inventory != "" {
 		if err := sousArbre(cfg.Inventory, "inventaire"); err != nil {
@@ -432,11 +456,24 @@ func (r *Runner) poserLesVariables() error {
 // pour un résultat identique.
 func (r *Runner) kwargs() (string, error) {
 	args := map[string]any{
-		"playbook": r.cfg.Playbook,
 		// L'arbre matérialisé sert directement de répertoire de projet : le
 		// recopier sous le `private_data_dir` doublerait la taille du volume
 		// pour rien.
 		"project_dir": r.cfg.Workspace,
+	}
+	if r.cfg.Playbook != "" {
+		args["playbook"] = r.cfg.Playbook
+	} else {
+		// Mode ad-hoc : `ansible-runner worker` accepte `module`/`module_args`/
+		// `host_pattern` à la place de `playbook`, exactement comme la commande
+		// `ansible` accepte `-m`/`-a`/un motif là où `ansible-playbook` attend un
+		// fichier. New() garantit que ce cas n'est atteint qu'avec Module et
+		// HostPattern tous deux renseignés.
+		args["module"] = r.cfg.Module
+		args["host_pattern"] = r.cfg.HostPattern
+		if r.cfg.ModuleArgs != "" {
+			args["module_args"] = r.cfg.ModuleArgs
+		}
 	}
 	if r.cfg.Inventory != "" {
 		args["inventory"] = filepath.Join(r.cfg.Workspace, r.cfg.Inventory)

@@ -45,18 +45,34 @@ func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
 	// Un enrôlement n'a ni dépôt ni commit : ce qu'il exige, c'est une cible.
 	// Les deux contrôles sont donc conditionnés au genre, comme les contraintes
 	// du schéma le sont depuis la migration 00009.
-	if genre == core.RunEnrollment {
+	switch genre {
+	case core.RunEnrollment:
 		if n.EnrollTarget == nil {
 			return 0, errors.New("run d'enrôlement sans cible : il ne saurait pas quoi joindre")
 		}
 		if err := n.EnrollTarget.Validate(); err != nil {
 			return 0, err
 		}
-	} else if n.Repo == "" {
-		// Contrepartie du DROP DEFAULT de la migration 00004 : un run sans dépôt
-		// s'insérerait sans bruit et son artefact deviendrait introuvable des
-		// mois plus tard, au moment précis où quelqu'un en a besoin.
-		return 0, errors.New("run créé sans dépôt : ses diffs d'audit seraient incalculables (§6.5)")
+	case core.RunAdhoc:
+		if n.AdhocTarget == nil {
+			return 0, errors.New("run ad-hoc sans cible : il ne saurait pas quoi exécuter")
+		}
+		if err := n.AdhocTarget.Validate(); err != nil {
+			return 0, err
+		}
+		if n.Repo == "" {
+			// Contrairement à un enrôlement, un ad-hoc résout son motif de
+			// machines dans l'inventaire du dépôt audité : il en a besoin comme
+			// un playbook en a besoin.
+			return 0, errors.New("run ad-hoc créé sans dépôt : son inventaire serait introuvable")
+		}
+	default:
+		if n.Repo == "" {
+			// Contrepartie du DROP DEFAULT de la migration 00004 : un run sans dépôt
+			// s'insérerait sans bruit et son artefact deviendrait introuvable des
+			// mois plus tard, au moment précis où quelqu'un en a besoin.
+			return 0, errors.New("run créé sans dépôt : ses diffs d'audit seraient incalculables (§6.5)")
+		}
 	}
 
 	// Le TABLEAU est la forme canonique, y compris vide. Le défaut du schéma
@@ -71,7 +87,7 @@ func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
 		flags = []byte(`[]`)
 	}
 
-	var cible any
+	var cible, cibleAdhoc any
 	if n.EnrollTarget != nil {
 		brut, err := json.Marshal(n.EnrollTarget)
 		if err != nil {
@@ -79,19 +95,26 @@ func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
 		}
 		cible = brut
 	}
+	if n.AdhocTarget != nil {
+		brut, err := json.Marshal(n.AdhocTarget)
+		if err != nil {
+			return 0, fmt.Errorf("cible ad-hoc du run %s: %w", n.RunRef, err)
+		}
+		cibleAdhoc = brut
+	}
 
 	// Les colonnes de playbook passent par NULLIF : le schéma les veut NULL
-	// pour un enrôlement, et la chaîne vide y violerait la contrainte de forme
-	// des SHA.
+	// pour un enrôlement ou un ad-hoc, et la chaîne vide y violerait la
+	// contrainte de forme des SHA.
 	const q = `
 INSERT INTO run (run_ref, user_id, repo, environment, inventory, playbook,
                  audit_sha, base_sha, mainline_ref, mainline_sha, flags,
                  runner_image, runner_image_digest, state, termination_cause,
-                 kind, enroll_target)
+                 kind, enroll_target, adhoc_target)
 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''),
         NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11,
         NULLIF($12, ''), NULLIF($13, ''), $14, $15,
-        $16, $17)
+        $16, $17, $18)
 RETURNING id`
 
 	var id int64
@@ -100,7 +123,7 @@ RETURNING id`
 		n.AuditSHA, n.BaseSHA, n.MainlineRef, n.MainlineSHA, flags,
 		n.RunnerImage, n.RunnerImageDigest,
 		string(core.RunInterrupted), string(core.CauseUnknown),
-		string(genre), cible,
+		string(genre), cible, cibleAdhoc,
 	).Scan(&id)
 	if err != nil {
 		// Une violation d'unicité ici ne peut porter que sur `run_ref` : c'est la
@@ -216,18 +239,18 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
        coalesce(audit_sha, ''), coalesce(base_sha, ''),
        coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       started_at, ended_at, artifact_pruned_at, kind, enroll_target, flags
+       started_at, ended_at, artifact_pruned_at, kind, enroll_target, adhoc_target, flags
   FROM run
  WHERE run_ref = $1`
 
 	var r Run
 	var genre string
-	var cible, flags []byte
+	var cible, cibleAdhoc, flags []byte
 	err := s.pool.QueryRow(ctx, q, runRef).Scan(
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.StartedAt, &r.EndedAt, &r.ArtifactPrunedAt, &genre, &cible, &flags,
+		&r.StartedAt, &r.EndedAt, &r.ArtifactPrunedAt, &genre, &cible, &cibleAdhoc, &flags,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, ErrNotFound)
@@ -235,7 +258,7 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
 	if err != nil {
 		return Run{}, fmt.Errorf("lecture du run %s: %w", runRef, err)
 	}
-	if err := poserLeGenre(&r, genre, cible); err != nil {
+	if err := poserLeGenre(&r, genre, cible, cibleAdhoc); err != nil {
 		return Run{}, fmt.Errorf("run %s: %w", runRef, err)
 	}
 	if r.Flags, err = core.FlagsEnregistres(flags); err != nil {
@@ -259,18 +282,18 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
        coalesce(audit_sha, ''), coalesce(base_sha, ''),
        coalesce(mainline_ref, ''), coalesce(mainline_sha, ''),
        state, coalesce(termination_cause, ''), changed_count, secrets_unmasked,
-       artifact_pruned_at, kind, enroll_target, flags
+       artifact_pruned_at, kind, enroll_target, adhoc_target, flags
   FROM run
  WHERE id = $1`
 
 	var r Run
 	var genre string
-	var cible, flags []byte
+	var cible, cibleAdhoc, flags []byte
 	err := s.pool.QueryRow(ctx, q, id).Scan(
 		&r.ID, &r.RunRef, &r.UserID, &r.RunDay, &r.Repo, &r.Environment, &r.Inventory, &r.Playbook,
 		&r.AuditSHA, &r.BaseSHA, &r.MainlineRef, &r.MainlineSHA,
 		&r.State, &r.TerminationCause, &r.ChangedCount, &r.SecretsUnmasked,
-		&r.ArtifactPrunedAt, &genre, &cible, &flags,
+		&r.ArtifactPrunedAt, &genre, &cible, &cibleAdhoc, &flags,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("run %d: %w", id, ErrNotFound)
@@ -278,7 +301,7 @@ SELECT id, run_ref, user_id, run_day, repo, environment,
 	if err != nil {
 		return Run{}, fmt.Errorf("lecture du run %d: %w", id, err)
 	}
-	if err := poserLeGenre(&r, genre, cible); err != nil {
+	if err := poserLeGenre(&r, genre, cible, cibleAdhoc); err != nil {
 		return Run{}, fmt.Errorf("run %d: %w", id, err)
 	}
 	// La revalidation a lieu ICI et pas seulement à l'entrée : c'est l'appelant
@@ -307,21 +330,27 @@ func (s *Store) RunKindByID(ctx context.Context, id int64) (core.RunKind, error)
 	return core.RunKind(genre), nil
 }
 
-// poserLeGenre reconstitue le genre du run et sa cible d'enrôlement.
+// poserLeGenre reconstitue le genre du run et sa cible d'enrôlement ou d'ad-hoc.
 //
 // Une cible illisible est une ERREUR et non une valeur vide : le composeur
-// d'ordres enverrait sinon un enrôlement sans adresse, que le runner tenterait
-// de joindre nulle part.
-func poserLeGenre(r *Run, genre string, cible []byte) error {
+// d'ordres enverrait sinon un enrôlement sans adresse, ou un ad-hoc sans
+// module, que le runner tenterait d'exécuter quand même.
+func poserLeGenre(r *Run, genre string, cible, cibleAdhoc []byte) error {
 	r.Kind = core.RunKind(genre)
-	if len(cible) == 0 {
-		return nil
+	if len(cible) > 0 {
+		var t core.EnrollTarget
+		if err := json.Unmarshal(cible, &t); err != nil {
+			return fmt.Errorf("cible d'enrôlement illisible: %w", err)
+		}
+		r.EnrollTarget = &t
 	}
-	var t core.EnrollTarget
-	if err := json.Unmarshal(cible, &t); err != nil {
-		return fmt.Errorf("cible d'enrôlement illisible: %w", err)
+	if len(cibleAdhoc) > 0 {
+		var t core.AdhocTarget
+		if err := json.Unmarshal(cibleAdhoc, &t); err != nil {
+			return fmt.Errorf("cible ad-hoc illisible: %w", err)
+		}
+		r.AdhocTarget = &t
 	}
-	r.EnrollTarget = &t
 	return nil
 }
 

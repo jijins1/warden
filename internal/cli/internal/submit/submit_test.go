@@ -257,6 +257,63 @@ func TestUneConfigurationIncompleteLeDitEnUneFois(t *testing.T) {
 	}
 }
 
+// Un run ad-hoc n'a pas de playbook : module et motif de machines le
+// remplacent, et leur absence doit être nommée comme celle d'un playbook
+// l'est.
+func TestUneConfigurationAdhocIncompleteLeDitEnUneFois(t *testing.T) {
+	_, err := submit.Run(t.Context(), &apiFactice{prefix: "refs/audit/7/"}, submit.Options{
+		RepoDir: "x", Repo: "depot",
+	})
+	if err == nil {
+		t.Fatal("erreur attendue")
+	}
+	if !strings.Contains(err.Error(), "playbook") {
+		t.Errorf("le message ne nomme pas %q : %v", "playbook", err)
+	}
+}
+
+// Playbook et module à la fois disent deux choses différentes de « quoi
+// exécuter » : c'est un refus, pas un des deux qui l'emporte en silence.
+func TestPlaybookEtModuleALaFoisSontRefuses(t *testing.T) {
+	_, err := submit.Run(t.Context(), &apiFactice{prefix: "refs/audit/7/"}, submit.Options{
+		RepoDir: "x", Repo: "depot", Playbook: "site.yml",
+		Module: "shell", HostPattern: "web",
+	})
+	if err == nil {
+		t.Fatal("erreur attendue : playbook et module ad-hoc à la fois")
+	}
+}
+
+// Un run ad-hoc COMPLET traverse la séquence entière — capture, push,
+// déclaration — comme un playbook, et déclare son genre au serveur.
+func TestUnRunAdhocDeclareSonGenre(t *testing.T) {
+	repoDir, _, gitURL, _ := monde(t)
+
+	api := &apiFactice{prefix: "refs/audit/7/"}
+	opts := options(repoDir, gitURL)
+	opts.Playbook = ""
+	opts.Module = "shell"
+	opts.ModuleArgs = "uptime"
+	opts.HostPattern = "web"
+
+	if _, err := submit.Run(t.Context(), api, opts); err != nil {
+		t.Fatalf("submit.Run : %v", err)
+	}
+	if len(api.recus) != 1 {
+		t.Fatalf("%d run(s) déclaré(s)", len(api.recus))
+	}
+	recu := api.recus[0]
+	if recu.Kind != "adhoc" {
+		t.Errorf("kind = %q, attendu adhoc", recu.Kind)
+	}
+	if recu.Playbook != "" {
+		t.Errorf("playbook = %q, un ad-hoc n'en envoie pas", recu.Playbook)
+	}
+	if recu.Module != "shell" || recu.ModuleArgs != "uptime" || recu.HostPattern != "web" {
+		t.Errorf("cible ad-hoc mal transmise : %+v", recu)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

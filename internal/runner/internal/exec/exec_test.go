@@ -185,6 +185,90 @@ func TestLaTrameDEntreeDitQuoiExecuter(t *testing.T) {
 	}
 }
 
+// Un run AD-HOC porte `module`/`module_args`/`host_pattern` à la place de
+// `playbook` — l'équivalent de `ansible <motif> -m <module> -a <args>`.
+func TestLaTrameDEntreeDitQuoiExecuterEnAdhoc(t *testing.T) {
+	entree := fauxRunner(t, "flux-succes.jsonl", "")
+
+	base := t.TempDir()
+	cfg := exec.Config{
+		Workspace:      filepath.Join(base, "src"),
+		PrivateDataDir: filepath.Join(base, "pdd"),
+		Inventory:      "inv/staging",
+		Module:         "shell",
+		ModuleArgs:     "uptime",
+		HostPattern:    "web",
+	}
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	brut, err := os.ReadFile(entree)
+	if err != nil {
+		t.Fatalf("lecture de l'entrée capturée : %v", err)
+	}
+
+	var trame struct {
+		Kwargs struct {
+			Playbook    string `json:"playbook"`
+			Module      string `json:"module"`
+			ModuleArgs  string `json:"module_args"`
+			HostPattern string `json:"host_pattern"`
+			ProjectDir  string `json:"project_dir"`
+			Inventory   string `json:"inventory"`
+		} `json:"kwargs"`
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(string(brut), "\n", 2)[0]), &trame); err != nil {
+		t.Fatalf("kwargs illisibles : %v", err)
+	}
+	if trame.Kwargs.Playbook != "" {
+		t.Errorf("playbook = %q, un run ad-hoc n'en a pas", trame.Kwargs.Playbook)
+	}
+	if trame.Kwargs.Module != "shell" {
+		t.Errorf("module = %q", trame.Kwargs.Module)
+	}
+	if trame.Kwargs.ModuleArgs != "uptime" {
+		t.Errorf("module_args = %q", trame.Kwargs.ModuleArgs)
+	}
+	if trame.Kwargs.HostPattern != "web" {
+		t.Errorf("host_pattern = %q", trame.Kwargs.HostPattern)
+	}
+	if trame.Kwargs.ProjectDir != cfg.Workspace {
+		t.Errorf("project_dir = %q, attendu %q", trame.Kwargs.ProjectDir, cfg.Workspace)
+	}
+}
+
+// Sans arguments, `module_args` est omis plutôt qu'envoyé vide : beaucoup de
+// modules de diagnostic (`ping`, `setup`) n'en attendent aucun.
+func TestSansArgumentsModuleArgsEstOmis(t *testing.T) {
+	entree := fauxRunner(t, "flux-succes.jsonl", "")
+
+	base := t.TempDir()
+	cfg := exec.Config{
+		Workspace:      filepath.Join(base, "src"),
+		PrivateDataDir: filepath.Join(base, "pdd"),
+		Module:         "ping",
+		HostPattern:    "all",
+	}
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	brut, err := os.ReadFile(entree)
+	if err != nil {
+		t.Fatalf("lecture : %v", err)
+	}
+	var trame struct {
+		Kwargs map[string]any `json:"kwargs"`
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(string(brut), "\n", 2)[0]), &trame); err != nil {
+		t.Fatalf("kwargs illisibles : %v", err)
+	}
+	if _, present := trame.Kwargs["module_args"]; present {
+		t.Errorf("module_args présent alors qu'aucun argument n'a été donné : %v", trame.Kwargs)
+	}
+}
+
 // `ansible-runner` découpe `cmdline` à la façon d'un shell. Les flags viennent
 // pourtant du serveur sous forme de LISTE : les recoller sans citation rendrait
 // à la valeur d'un `--extra-vars` le pouvoir d'en introduire d'autres.
@@ -247,6 +331,22 @@ func TestNewRefuseUnMontageIncomplet(t *testing.T) {
 		"sans espace de travail":     {PrivateDataDir: "/w/pdd", Playbook: "site.yml"},
 		"sans playbook":              {Workspace: "/w/src", PrivateDataDir: "/w/pdd"},
 		"sans répertoire de travail": {Workspace: "/w/src", Playbook: "site.yml"},
+
+		// Ni l'un ni l'autre mode : rien à exécuter.
+		"ni playbook ni ad-hoc": {Workspace: "/w/src", PrivateDataDir: "/w/pdd"},
+
+		// Les deux modes à la fois : une confusion de la livraison de l'ordre,
+		// pas une intention — ni New() ni kwargs() ne doivent trancher pour
+		// l'utilisateur lequel des deux exécuter.
+		"playbook et module à la fois": {
+			Workspace: "/w/src", PrivateDataDir: "/w/pdd",
+			Playbook: "site.yml", Module: "shell", HostPattern: "all",
+		},
+
+		// Ad-hoc incomplet : un module sans motif, ou l'inverse, ne dit pas
+		// assez pour composer une trame `ansible-runner`.
+		"module sans motif": {Workspace: "/w/src", PrivateDataDir: "/w/pdd", Module: "shell"},
+		"motif sans module": {Workspace: "/w/src", PrivateDataDir: "/w/pdd", HostPattern: "all"},
 	}
 	for nom, cfg := range cas {
 		t.Run(nom, func(t *testing.T) {
@@ -254,6 +354,18 @@ func TestNewRefuseUnMontageIncomplet(t *testing.T) {
 				t.Fatal("accepté à tort")
 			}
 		})
+	}
+}
+
+// Un run ad-hoc complet — module et motif renseignés, sans playbook — est
+// accepté.
+func TestNewAccepteUnAdhocComplet(t *testing.T) {
+	cfg := exec.Config{
+		Workspace: "/w/src", PrivateDataDir: "/w/pdd",
+		Module: "shell", HostPattern: "all",
+	}
+	if _, err := exec.New(cfg); err != nil {
+		t.Fatalf("un ad-hoc complet doit être accepté : %v", err)
 	}
 }
 

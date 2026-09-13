@@ -177,3 +177,69 @@ func TestFlagsEnregistresRevalideLeContenu(t *testing.T) {
 		t.Fatal("une ligne écrite avant l'allowlist est repartie telle quelle")
 	}
 }
+
+func TestValiderModuleAccepte(t *testing.T) {
+	for _, nom := range []string{"shell", "command", "ping", "ansible.builtin.shell", "a.b.c"} {
+		t.Run(nom, func(t *testing.T) {
+			if err := ValiderModule(nom); err != nil {
+				t.Fatalf("refusé : %v", err)
+			}
+		})
+	}
+}
+
+func TestValiderModuleRefuse(t *testing.T) {
+	cas := map[string]string{
+		"vide":               "",
+		"espace":             "shell command",
+		"commence par point": ".shell",
+		"segment vide":       "ansible..shell",
+		"caractère de shell": "shell;rm",
+		"trop long":          strings.Repeat("a", longueurMaxModule+1),
+	}
+	for nom, module := range cas {
+		t.Run(nom, func(t *testing.T) {
+			if err := ValiderModule(module); err == nil {
+				t.Fatalf("%q accepté à tort", module)
+			}
+		})
+	}
+}
+
+func TestValiderModuleArgsAccepteVide(t *testing.T) {
+	// Beaucoup de modules de diagnostic (`ping`, `setup`) n'attendent aucun
+	// argument : une chaîne vide est un cas légitime, pas une absence à
+	// rattraper.
+	if err := ValiderModuleArgs(""); err != nil {
+		t.Fatalf("refusé : %v", err)
+	}
+}
+
+func TestValiderModuleArgsRefuseLesCaracteresDeControle(t *testing.T) {
+	if err := ValiderModuleArgs("uptime\x00"); err == nil {
+		t.Fatal("caractère de contrôle accepté à tort")
+	}
+	if err := ValiderModuleArgs(strings.Repeat("a", longueurMaxValeur+1)); err == nil {
+		t.Fatal("valeur trop longue acceptée à tort")
+	}
+}
+
+func TestAdhocTargetValidateAppliqueLesTroisControles(t *testing.T) {
+	valide := AdhocTarget{Module: "shell", ModuleArgs: "uptime", HostPattern: "web"}
+	if err := valide.Validate(); err != nil {
+		t.Fatalf("cible valide refusée : %v", err)
+	}
+
+	cas := map[string]AdhocTarget{
+		"module absent":        {HostPattern: "web"},
+		"motif refusé":         {Module: "shell", HostPattern: "web; rm -rf"},
+		"arguments illisibles": {Module: "shell", ModuleArgs: "x\x00y", HostPattern: "web"},
+	}
+	for nom, cible := range cas {
+		t.Run(nom, func(t *testing.T) {
+			if err := cible.Validate(); err == nil {
+				t.Fatal("cible invalide acceptée à tort")
+			}
+		})
+	}
+}

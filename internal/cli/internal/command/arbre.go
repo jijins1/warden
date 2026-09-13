@@ -22,7 +22,7 @@ func Arbre() *Commande {
 		Sous: []Commande{
 			login(), logout(), whoami(), passwd(),
 			completion(),
-			submit(),
+			submit(), run(),
 			logs(),
 			repo(), utilisateur(), droit(), cle(), hote(), enroler(),
 		},
@@ -147,7 +147,48 @@ func submit() Commande {
 			{Pourquoi: "reprendre une soumission interrompue produit le même commit d'audit",
 				Ligne: "warden submit --playbook play.yml --run-ref 01JZQ..."},
 		},
-		Voir: []string{"warden logs", "warden repo declare"},
+		Voir: []string{"warden logs", "warden repo declare", "warden run"},
+	}
+}
+
+func run() Commande {
+	return Commande{
+		Nom: "run", Rubrique: RubriqueRuns,
+		Resume: "exécute un module Ansible contre un motif de machines, sans playbook",
+		Usage: []string{
+			"run <motif> -m <module> [-a <args>] [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
+			"run <motif> -m <module> [--check] [--diff]",
+			"run <motif> -m <module> [-b] [--become-user <compte>] [-K]",
+			"run <motif> -m <module> [-e <nom>=<valeur>]...",
+		},
+		Details: "L'équivalent de la commande `ansible` — par opposition à\n" +
+			"`ansible-playbook`, que « warden submit » exécute. Utile pour débugger :\n" +
+			"un statut de service, un `uptime`, le contenu d'un fichier, sans écrire\n" +
+			"de playbook jetable.\n\n" +
+			"Le motif est POSITIONNEL, comme chez `ansible` : c'est le premier\n" +
+			"argument, pas un drapeau. -m (ou --module) est requis ; -a (ou --args)\n" +
+			"porte les arguments du module, vides pour un module qui n'en prend pas\n" +
+			"(`ping`, `setup`).\n\n" +
+			"Le reste — dépôt, environnement, inventaire, élévation, extra-vars,\n" +
+			"suivi du run — se comporte exactement comme « warden submit » : un\n" +
+			"ad-hoc capture et pousse un commit d'audit pour résoudre son motif dans\n" +
+			"le même inventaire, et reste donc une action auditée au même titre\n" +
+			"qu'un playbook.\n\n" +
+			"Aucune liste de modules autorisés : un compte qui a accès à un\n" +
+			"environnement exécute déjà du code arbitraire via un playbook\n" +
+			"(`shell`, `command`) ; en refuser certains ici n'ajouterait rien de réel.",
+		Flags: []string{"repo", "module", "m", "args", "a", "env", "inventory", "run-ref",
+			"check", "diff", "e", "extra-vars",
+			"b", "become", "become-user", "no-follow",
+			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
+		Exemples: []Exemple{
+			{Ligne: "warden run all -m ping"},
+			{Pourquoi: "un diagnostic simple sur un groupe",
+				Ligne: "warden run web -m shell -a \"systemctl status nginx\""},
+			{Pourquoi: "élever, et fournir le mot de passe que sudo demandera",
+				Ligne: "warden run web -m shell -a \"tail /var/log/app.log\" -b -K"},
+		},
+		Voir: []string{"warden submit", "warden logs"},
 	}
 }
 
