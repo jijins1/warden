@@ -193,25 +193,31 @@ type HostCatalog interface {
 	ForgetHost(ctx context.Context, environment, name string) error
 }
 
-// --- l'enrôlement comme genre de run ---
+// --- l'enrôlement et l'ad-hoc comme genres de run ---
 
 // RunKind distingue ce qu'un run fait.
 //
-// Les deux sont des runs PARCE QUE les deux sont des actions auditées sur la
-// production : l'un exécute le code d'un utilisateur, l'autre pose une clé
-// d'accès sur une machine. Tout le reste — le pod, le canal, les events, la
-// clôture — leur est commun, et c'est ce qui a décidé de ne pas créer une table
-// parallèle.
+// Les trois sont des runs PARCE QUE les trois sont des actions auditées sur la
+// production : l'un exécute le playbook d'un commit, l'autre pose une clé
+// d'accès sur une machine, le troisième exécute un module Ansible isolé sans
+// playbook. Tout le reste — le pod, le canal, les events, la clôture — leur est
+// commun, et c'est ce qui a décidé de ne pas créer une table parallèle.
 type RunKind string
 
 const (
 	RunPlaybook   RunKind = "playbook"
 	RunEnrollment RunKind = "enrollment"
+	// RunAdhoc exécute un module Ansible contre un motif de machines, sans
+	// playbook — l'équivalent de la commande `ansible` (par opposition à
+	// `ansible-playbook`). Plus proche de RunPlaybook que de RunEnrollment : il
+	// a toujours besoin du dépôt audité et de l'inventaire, seul « quoi
+	// exécuter » diffère.
+	RunAdhoc RunKind = "adhoc"
 )
 
 // Valid dit si le genre fait partie de ceux que le schéma accepte.
 func (k RunKind) Valid() bool {
-	return k == RunPlaybook || k == RunEnrollment
+	return k == RunPlaybook || k == RunEnrollment || k == RunAdhoc
 }
 
 // EnrollTarget est la machine qu'un run d'enrôlement doit joindre.

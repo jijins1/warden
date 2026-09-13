@@ -149,9 +149,18 @@ type NewRun struct {
 	Repo        string          `json:"repo"`
 	Environment string          `json:"environment"`
 	Inventory   string          `json:"inventory"`
-	Playbook    string          `json:"playbook"`
+	Playbook    string          `json:"playbook,omitempty"`
 	BaseSHA     string          `json:"base_sha"`
 	Flags       json.RawMessage `json:"flags,omitempty"`
+
+	// Kind distingue un run ad-hoc d'un run de playbook. Vide vaut `playbook`.
+	Kind string `json:"kind,omitempty"`
+
+	// Module, ModuleArgs et HostPattern ne valent que pour `Kind == "adhoc"`,
+	// mutuellement exclusifs avec Playbook.
+	Module      string `json:"module,omitempty"`
+	ModuleArgs  string `json:"module_args,omitempty"`
+	HostPattern string `json:"host_pattern,omitempty"`
 
 	// BecomePassword ne survit pas à la requête : le serveur le range dans une
 	// consigne éphémère, et la livraison de l'ordre au pod le consomme.

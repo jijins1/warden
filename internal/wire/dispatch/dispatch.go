@@ -98,6 +98,16 @@ type Order struct {
 	Inventory   string `json:"inventory"`
 	Playbook    string `json:"playbook"`
 
+	// Module, ModuleArgs et HostPattern portent un run AD-HOC — mutuellement
+	// exclusifs avec Playbook. Restés sur `Order` plutôt que sur un genre de
+	// message séparé (contrairement à `Enroll` ci-dessous) parce qu'un ad-hoc
+	// partage TOUT le reste de cette structure avec un playbook : jeton git,
+	// clé SSH, mot de passe d'élévation, variables transmises. Seul « quoi
+	// exécuter » diffère.
+	Module      string `json:"module,omitempty"`
+	ModuleArgs  string `json:"module_args,omitempty"`
+	HostPattern string `json:"host_pattern,omitempty"`
+
 	// Flags effectifs (§5.5), tels qu'ils seront journalisés.
 	Flags []string `json:"flags,omitempty"`
 
@@ -134,6 +144,15 @@ func (o Order) String() string {
 	sha := o.AuditSHA
 	if len(sha) > 12 {
 		sha = sha[:12]
+	}
+	// Le nom du module s'imprime en clair, comme Playbook : c'est un
+	// identifiant, pas une valeur. Ses arguments NE S'IMPRIMENT JAMAIS — un
+	// utilisateur qui déboguerait au clavier peut très bien y coller ce qu'il
+	// cherchait justement à masquer, exactement le risque que `Flags` (compté,
+	// jamais recopié) évite déjà.
+	if o.Module != "" {
+		return fmt.Sprintf("order(run=%s sha=%s env=%s module=%s pattern=%s args_set=%t flags=%d env_vars=%d)",
+			o.RunRef, sha, o.Environment, o.Module, o.HostPattern, o.ModuleArgs != "", len(o.Flags), len(o.ForwardEnv))
 	}
 	return fmt.Sprintf("order(run=%s sha=%s env=%s playbook=%s flags=%d env_vars=%d)",
 		o.RunRef, sha, o.Environment, o.Playbook, len(o.Flags), len(o.ForwardEnv))

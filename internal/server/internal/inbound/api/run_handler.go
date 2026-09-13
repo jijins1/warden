@@ -22,8 +22,21 @@ type createRunPayload struct {
 	Repo        string `json:"repo"`
 	Environment string `json:"environment"`
 	Inventory   string `json:"inventory"`
-	Playbook    string `json:"playbook"`
+	Playbook    string `json:"playbook,omitempty"`
 	BaseSHA     string `json:"base_sha"`
+
+	// Kind distingue un run ad-hoc d'un run de playbook. Vide vaut `playbook`,
+	// comme `core.NewRun.Kind` : c'est ce que la CLI envoie depuis toujours par
+	// `warden submit`. L'enrôlement a son propre endpoint
+	// (`enroll_handler.go`) et n'emprunte jamais celui-ci.
+	Kind string `json:"kind,omitempty"`
+
+	// Module, ModuleArgs et HostPattern ne valent que pour `Kind == "adhoc"`,
+	// mutuellement exclusifs avec Playbook — l'équivalent de
+	// `ansible <host_pattern> -m <module> -a <module_args>`.
+	Module      string `json:"module,omitempty"`
+	ModuleArgs  string `json:"module_args,omitempty"`
+	HostPattern string `json:"host_pattern,omitempty"`
 
 	// Flags porte les drapeaux d'`ansible-playbook` du §5.5.
 	//
@@ -117,6 +130,41 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.Repo == "" {
 		http.Error(w, "repo is required", http.StatusBadRequest)
+		return
+	}
+
+	// Le GENRE est décidé ICI, avant tout le reste : c'est lui qui dit si
+	// `payload.Playbook` ou `payload.Module`/`HostPattern` fait autorité, et un
+	// ad-hoc mal formé ne doit pas coûter un rafraîchissement de miroir, pour
+	// la même raison que les flags ci-dessous.
+	genre := core.RunPlaybook
+	if payload.Kind != "" {
+		genre = core.RunKind(payload.Kind)
+	}
+	var adhocTarget *core.AdhocTarget
+	switch genre {
+	case core.RunPlaybook:
+		if payload.Module != "" || payload.HostPattern != "" {
+			http.Error(w, "module and host_pattern only apply to an adhoc run", http.StatusBadRequest)
+			return
+		}
+	case core.RunAdhoc:
+		if payload.Playbook != "" {
+			http.Error(w, "an adhoc run has no playbook: module and host_pattern replace it", http.StatusBadRequest)
+			return
+		}
+		adhocTarget = &core.AdhocTarget{
+			Module: payload.Module, ModuleArgs: payload.ModuleArgs, HostPattern: payload.HostPattern,
+		}
+		if err := adhocTarget.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	default:
+		// L'enrôlement n'est pas créé par ce chemin (`enroll_handler.go` a son
+		// propre endpoint) : un genre qui n'est ni playbook ni adhoc ici est
+		// forcément une erreur du client.
+		http.Error(w, `kind must be "playbook" or "adhoc"`, http.StatusBadRequest)
 		return
 	}
 
@@ -315,6 +363,8 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Environment: effectif.Environment,
 		Inventory:   effectif.Inventory,
 		Playbook:    payload.Playbook,
+		Kind:        genre,
+		AdhocTarget: adhocTarget,
 		// Les flags EFFECTIFS, comme les deux au-dessus (§5.4.2). Ils coïncident
 		// avec les demandés — la composition refuse au lieu d'amputer — et passer
 		// par elle est ce qui garde cette ligne vraie le jour où ce ne serait
@@ -351,6 +401,7 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 			ID: id, RunRef: payload.RunRef, UserID: user.ID, Repo: repo.Name,
 			Environment: effectif.Environment, Inventory: effectif.Inventory,
 			Playbook: payload.Playbook, AuditSHA: auditSHA,
+			Kind: genre, AdhocTarget: adhocTarget,
 		})
 		if err != nil {
 			slog.Error("démarrage du run en échec",

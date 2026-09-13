@@ -386,3 +386,52 @@ func TestUnRunSansFlagDonneUnOrdreSansFlag(t *testing.T) {
 		t.Fatalf("ordre.Flags = %v, voulu vide", ordre.Flags)
 	}
 }
+
+// Un run ad-hoc porte sa cible à la place du playbook : c'est le seul champ
+// qui change, tout le reste — jeton git, origine, commit — se compose
+// exactement comme pour un playbook.
+func TestUnRunAdhocPorteSaCibleEtPasDePlaybook(t *testing.T) {
+	run := runValide()
+	run.Kind = core.RunAdhoc
+	run.Playbook = ""
+	run.AdhocTarget = &core.AdhocTarget{Module: "shell", ModuleArgs: "uptime", HostPattern: "web"}
+
+	b, err := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	if err != nil {
+		t.Fatalf("NewOrderBuilder : %v", err)
+	}
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if ordre.Playbook != "" {
+		t.Errorf("ordre.Playbook = %q, un ad-hoc n'en a pas", ordre.Playbook)
+	}
+	if ordre.Module != "shell" || ordre.ModuleArgs != "uptime" || ordre.HostPattern != "web" {
+		t.Errorf("cible ad-hoc mal reprise : module=%q args=%q motif=%q",
+			ordre.Module, ordre.ModuleArgs, ordre.HostPattern)
+	}
+	// Le reste de l'ordre — jeton, origine, commit — vient de la même
+	// composition que pour un playbook : rien ne le distingue à ce niveau.
+	if ordre.GitURL != "https://git.invalid/depot.git" {
+		t.Errorf("origine %q", ordre.GitURL)
+	}
+}
+
+// Un ad-hoc SANS cible ne saurait pas quoi exécuter : le composeur d'ordres
+// refuse plutôt que de livrer un `module`/`host_pattern` vides.
+func TestUnRunAdhocSansCibleNeProduitPasDOrdre(t *testing.T) {
+	run := runValide()
+	run.Kind = core.RunAdhoc
+	run.Playbook = ""
+	run.AdhocTarget = nil
+
+	b, err := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	if err != nil {
+		t.Fatalf("NewOrderBuilder : %v", err)
+	}
+	if _, err := b.OrderFor(t.Context(), 1); err == nil {
+		t.Fatal("un ordre a été produit pour un ad-hoc sans cible")
+	}
+}

@@ -84,6 +84,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeDroit(ctx, args[1:], os.Stdout)
 	case "submit":
 		return commandeSubmit(ctx, args[1:], os.Stdout)
+	case "run":
+		return commandeRun(ctx, args[1:], os.Stdout)
 	case "logs":
 		return commandeLogs(ctx, args[1:], os.Stdout)
 	case "key":
@@ -229,6 +231,109 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		// Détaché, la commande ne sait RIEN de la suite : elle rend 0 parce que
 		// la soumission a réussi, et c'est tout ce qu'elle peut affirmer.
 		// `warden logs` rattrape le déroulement.
+		_, _ = fmt.Fprintf(sortie, "\n« warden logs %s » pour en suivre le déroulement.\n", res.RunRef)
+		return nil
+	}
+
+	return suivreLeRun(ctx, adresse, res.RunRef, sortie)
+}
+
+// commandeRun soumet un run AD-HOC : un module Ansible contre un motif de
+// machines, sans playbook — l'équivalent de `ansible <motif> -m <module>
+// -a <args>`, par opposition à `warden submit` (`ansible-playbook`).
+//
+// Calquée sur `commandeSubmit`, dont elle réutilise la séquence entière — un
+// ad-hoc capture et pousse un commit d'audit exactement comme un playbook,
+// pour résoudre son motif dans le même inventaire. Seul « quoi exécuter »
+// diffère.
+func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
+	fs, f := fsRun()
+	repo, environnement, inventaire := f.repo, f.environnement, f.inventaire
+	runRef, become, module, moduleArgs := f.runRef, f.become, f.module, f.args
+
+	if err := fs.Parse(args); err != nil {
+		return erreurDrapeaux("run", err)
+	}
+	if fs.NArg() != 1 {
+		//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
+		return errors.New("« warden run » attend un motif de machines, comme `ansible " +
+			"<motif> -m <module>`.\nExemple : « warden run all -m ping ».")
+	}
+	motif := fs.Arg(0)
+	if *module == "" {
+		return errors.New("--module (ou -m) est requis : un run ad-hoc exécute un module")
+	}
+
+	flagsAnsible, err := submit.FlagsAnsible{
+		Check: *f.check, Diff: *f.diff, ExtraVars: *f.extraVars,
+		Become: *f.elever, BecomeUser: *f.eleverVers,
+	}.Composer()
+	if err != nil {
+		return err
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+
+	config, err := projet.Lire(cwd)
+	if err != nil {
+		return err
+	}
+
+	adresse, err := adresseServeurDe(config)
+	if err != nil {
+		return err
+	}
+
+	git := os.Getenv(EnvGit)
+
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	var motDePasseBecome prompt.Secret
+	if become.Fournie() {
+		motDePasseBecome, err = become.Lire(ctx)
+		if err != nil {
+			return err
+		}
+		defer motDePasseBecome.Wipe()
+	}
+
+	nomDuDepot := *repo
+	if nomDuDepot == "" {
+		nomDuDepot = config.Repo
+	}
+
+	res, err := submit.Run(ctx, api, submit.Options{
+		RepoDir:     cwd,
+		Repo:        nomDuDepot,
+		Environment: *environnement,
+		Inventory:   *inventaire,
+		Module:      *module,
+		ModuleArgs:  *moduleArgs,
+		HostPattern: motif,
+		Flags:       flagsAnsible,
+		GitURL:      git,
+		RunRef:      *runRef,
+
+		BecomePassword: motDePasseBecome,
+
+		ForwardEnv:   projet.Valeurs(config.ForwardEnv, os.LookupEnv),
+		AuditInclude: config.AuditInclude,
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(sortie, "run %s\n", res.RunRef)
+	_, _ = fmt.Fprintf(sortie, "  audit   %s\n", res.AuditSHA)
+	_, _ = fmt.Fprintf(sortie, "  contre  %s\n", res.MainlineSHA)
+
+	if *f.sansSuivi {
 		_, _ = fmt.Fprintf(sortie, "\n« warden logs %s » pour en suivre le déroulement.\n", res.RunRef)
 		return nil
 	}

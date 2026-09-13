@@ -96,6 +96,59 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 	return fs, f
 }
 
+// drapeauxRun est le pendant ad-hoc de drapeauxSubmit : même dépôt,
+// environnement, inventaire, élévation, extra-vars et suivi, mais un module et
+// ses arguments à la place d'un playbook, et pas de `--limit` — c'est le motif
+// de machines, PORTÉ EN POSITION comme le premier argument d'`ansible`, qui en
+// tient lieu.
+type drapeauxRun struct {
+	repo, environnement, inventaire, runRef *string
+	become                                  *prompt.Source
+
+	module, args *string
+
+	check, diff *bool
+	extraVars   *submit.Repetable
+
+	elever     *bool
+	eleverVers *string
+
+	sansSuivi *bool
+}
+
+func fsRun() (*flag.FlagSet, drapeauxRun) {
+	fs := neuf("run")
+	f := drapeauxRun{
+		repo:          fs.String("repo", "", "nom du dépôt côté serveur ; inutile si le fichier de projet déclare `repo:`"),
+		environnement: fs.String("env", "", "environnement cible"),
+		inventaire:    fs.String("inventory", "", "inventaire, relatif à la racine du dépôt"),
+		runRef:        fs.String("run-ref", "", "reprendre un run ad-hoc interrompu"),
+
+		module: fs.String("module", "", "module Ansible à exécuter"),
+		args:   fs.String("args", "", "arguments du module, comme -a chez `ansible`"),
+
+		check: fs.Bool("check", false, "simuler : Ansible annonce ce qu'il ferait sans le faire"),
+		diff:  fs.Bool("diff", false, "montrer le contenu de ce qui change"),
+
+		eleverVers: fs.String("become-user", "", "compte visé par l'élévation ; root par défaut"),
+
+		sansSuivi: fs.Bool("no-follow", false,
+			"rendre la main dès le run déclaré, sans afficher son déroulement"),
+	}
+	fs.StringVar(f.module, "m", "", "abréviation de --module, comme `ansible`")
+	fs.StringVar(f.args, "a", "", "abréviation de --args, comme `ansible`")
+
+	f.elever = fs.Bool("become", false, "élever sur toutes les tâches ; se combine avec -K")
+	fs.BoolVar(f.elever, "b", false, "abréviation d'--become, comme ansible-playbook")
+
+	f.extraVars = &submit.Repetable{}
+	fs.Var(f.extraVars, "e", "poser une variable, sous la forme nom=valeur ; répétable")
+	fs.Var(f.extraVars, "extra-vars", "identique à -e")
+	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
+	f.become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	return fs, f
+}
+
 type drapeauxEnroler struct {
 	env, hote, adresse, login, runRef, groupe *string
 	port                                      *int
@@ -233,6 +286,8 @@ func flagsPour(chemin []string) *flag.FlagSet {
 	switch chemin[0] {
 	case "submit":
 		fs, _ = fsSubmit()
+	case "run":
+		fs, _ = fsRun()
 	case "enroll":
 		fs, _ = fsEnroler()
 	case "host":

@@ -30,6 +30,14 @@ type Options struct {
 	Inventory   string
 	Playbook    string
 
+	// Module, ModuleArgs et HostPattern décrivent un run AD-HOC — l'équivalent
+	// de `ansible <host-pattern> -m <module> -a <args>` — mutuellement
+	// exclusifs avec Playbook. `warden run` les renseigne ; `warden submit` ne
+	// les renseigne jamais.
+	Module      string
+	ModuleArgs  string
+	HostPattern string
+
 	// Flags sont les drapeaux d'`ansible-playbook` du §5.5, déjà composés par
 	// `FlagsAnsible.Composer`.
 	//
@@ -220,6 +228,11 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		return nil, err
 	}
 
+	genre := ""
+	if opts.Module != "" {
+		genre = "adhoc"
+	}
+
 	cree, err := api.CreateRun(ctx, client.NewRun{
 		RunRef:      runRef,
 		Repo:        opts.Repo,
@@ -228,6 +241,10 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		Playbook:    opts.Playbook,
 		BaseSHA:     base.String(),
 		Flags:       flags,
+		Kind:        genre,
+		Module:      opts.Module,
+		ModuleArgs:  opts.ModuleArgs,
+		HostPattern: opts.HostPattern,
 		// `Reveal` : le seul endroit où le mot de passe d'élévation sort de son
 		// enveloppe masquée, et il doit se voir en revue.
 		BecomePassword: string(opts.BecomePassword.Reveal()),
@@ -255,9 +272,22 @@ func valider(o Options) error {
 	if o.Repo == "" {
 		manquants = append(manquants, "nom du dépôt côté serveur")
 	}
-	if o.Playbook == "" {
+
+	adhoc := o.Module != "" || o.HostPattern != ""
+	switch {
+	case o.Playbook != "" && adhoc:
+		return errors.New("playbook et module ad-hoc à la fois : les deux disent quoi exécuter")
+	case adhoc:
+		if o.Module == "" {
+			manquants = append(manquants, "module")
+		}
+		if o.HostPattern == "" {
+			manquants = append(manquants, "motif de machines")
+		}
+	case o.Playbook == "":
 		manquants = append(manquants, "playbook")
 	}
+
 	if len(manquants) > 0 {
 		return fmt.Errorf("configuration incomplète : %s", strings.Join(manquants, ", "))
 	}

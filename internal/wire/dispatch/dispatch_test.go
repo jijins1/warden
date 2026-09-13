@@ -147,6 +147,30 @@ func TestSecretsMasquesDansLesImpressions(t *testing.T) {
 	}
 }
 
+// Un ad-hoc n'a pas de secret de plus qu'un playbook, mais ses ARGUMENTS de
+// module sont exactement le genre de chaîne libre qu'un utilisateur qui
+// déboggue au clavier peut coller sans y penser — le même risque que
+// `Flags`, qui n'est jamais recopié en clair.
+func TestModuleArgsJamaisImprimeEnClair(t *testing.T) {
+	o := ordre()
+	o.Playbook = ""
+	o.Module = "shell"
+	o.ModuleArgs = "curl https://exemple.net -H 'Authorization: Bearer s3cr3t-token'"
+	o.HostPattern = "web"
+
+	resume := fmt.Sprintf("%v", o)
+	if strings.Contains(resume, "s3cr3t-token") {
+		t.Errorf("les arguments du module apparaissent en clair : %s", resume)
+	}
+	// Le nom du module et le motif, eux, sont de simples identifiants : ils
+	// restent utiles au diagnostic, comme Playbook l'est pour un run classique.
+	for _, attendu := range []string{"shell", "web"} {
+		if !strings.Contains(resume, attendu) {
+			t.Errorf("le résumé ne porte pas %q: %s", attendu, resume)
+		}
+	}
+}
+
 func TestDecodeurIgnoreCommentairesEtTramesDeMaintien(t *testing.T) {
 	o := ordre()
 	var buf bytes.Buffer

@@ -145,7 +145,12 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		PrivateDataDir: filepath.Join(filepath.Dir(espace), "pdd"),
 		Playbook:       ordre.Playbook,
 		Inventory:      ordre.Inventory,
-		Flags:          ordre.Flags,
+		// Renseignés seulement pour un run ad-hoc ; vides sinon, ce qui laisse
+		// `exec.New` reconnaître le mode playbook comme avant.
+		Module:      ordre.Module,
+		ModuleArgs:  ordre.ModuleArgs,
+		HostPattern: ordre.HostPattern,
+		Flags:       ordre.Flags,
 		// `Reveal` et non un passage implicite : le nom inconfortable doit se
 		// voir ici, c'est le seul endroit du runner où la clé d'accès sort de
 		// son enveloppe masquée.
@@ -165,8 +170,14 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 			fmt.Errorf("run %s : %w", ordre.RunRef, err))
 	}
 
-	slog.Info("exécution du playbook", slog.String("run_ref", ordre.RunRef),
-		slog.String("playbook", ordre.Playbook), slog.String("inventaire", ordre.Inventory))
+	if ordre.Playbook != "" {
+		slog.Info("exécution du playbook", slog.String("run_ref", ordre.RunRef),
+			slog.String("playbook", ordre.Playbook), slog.String("inventaire", ordre.Inventory))
+	} else {
+		slog.Info("exécution ad-hoc", slog.String("run_ref", ordre.RunRef),
+			slog.String("module", ordre.Module), slog.String("motif", ordre.HostPattern),
+			slog.String("inventaire", ordre.Inventory))
+	}
 
 	statut, err := moteur.Run(ctx, rapporteur.Send)
 

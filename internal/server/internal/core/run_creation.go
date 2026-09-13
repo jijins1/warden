@@ -36,6 +36,9 @@ type NewRun struct {
 	// porte JAMAIS le mot de passe.
 	EnrollTarget *EnrollTarget
 
+	// AdhocTarget est exigée pour un run ad-hoc, et refusée sinon.
+	AdhocTarget *AdhocTarget
+
 	AuditSHA string // le commit d'audit poussé par la CLI (§5.2)
 	BaseSHA  string // son parent (ADR-0003)
 
