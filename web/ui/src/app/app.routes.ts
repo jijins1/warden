@@ -1,5 +1,5 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './core/auth/auth.guard';
+import { authGuard, adminGuard } from './core/auth/auth.guard';
 
 export const routes: Routes = [
   {
@@ -19,6 +19,19 @@ export const routes: Routes = [
         path: 'runs',
         title: 'My runs — warden',
         loadComponent: () => import('./features/runs/run-list').then((m) => m.RunList),
+      },
+      {
+        // AVANT `runs/:runRef` : un segment statique doit être essayé avant le
+        // paramétré, sinon `/runs/new` s'y ferait lire comme `runRef == 'new'`.
+        //
+        // `authGuard` seul, hérité de la coquille — PAS `adminGuard`. Lancer un
+        // run demande un droit d'accès sur l'ENVIRONNEMENT (ADR-0042), la même
+        // autorisation que `warden submit` ; ce n'est pas une action
+        // d'administrateur, contrairement à `repos` et `environments`
+        // ci-dessous, qui exposent une vue de l'organisation entière.
+        path: 'runs/new',
+        title: 'Launch a run — warden',
+        loadComponent: () => import('./features/runs/run-launch').then((m) => m.RunLaunch),
       },
       {
         // `runRef` est lié par `withComponentInputBinding` : c'est ce qui rend
@@ -44,6 +57,24 @@ export const routes: Routes = [
         path: 'account',
         title: 'Account — warden',
         loadComponent: () => import('./features/account/account').then((m) => m.Account),
+      },
+      {
+        // `adminGuard` en plus de la garde de la coquille : `GET /admin/repos`
+        // rend une carte de l'organisation (voir HandleListRepos), pas une vue
+        // restreinte à l'appelant comme le reste de l'UI.
+        path: 'repos',
+        title: 'Repos — warden',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/repos/repo-list').then((m) => m.RepoList),
+      },
+      {
+        // Même raisonnement que `repos` : `GET /admin/keys` est réservé aux
+        // administrateurs côté serveur (ADR-0020).
+        path: 'environments',
+        title: 'Environments — warden',
+        canActivate: [adminGuard],
+        loadComponent: () =>
+          import('./features/environments/environment-list').then((m) => m.EnvironmentList),
       },
       { path: '', pathMatch: 'full', redirectTo: 'runs' },
     ],

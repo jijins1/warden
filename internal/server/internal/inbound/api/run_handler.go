@@ -101,6 +101,13 @@ const tailleMaxRun = 16 << 10
 // l'`audit_sha` d'un autre lisait donc le code de cet autre à travers le diff de
 // SON PROPRE run — auquel il a légitimement droit. Trois contrôles fermaient
 // déjà cette lecture côté git ; celui-ci ferme la porte de derrière.
+//
+// La partie qui suit la résolution d'`audit_sha` — lecture de la configuration
+// du commit, composition, autorisation de l'environnement effectif, consigne
+// des secrets, création et démarrage — vit dans deux fonctions partagées avec
+// `HandleLaunchRun` (ADR-0042) : `resoudreEffectif` et `enregistrerEtDemarrer`,
+// dans `run_pipeline.go`. Leur ORDRE INTERNE est celui d'origine de cette
+// fonction, inchangé ; `run_handler_test.go` l'asserte pour les deux chemins.
 func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 	user := ContextUser(r.Context())
 	if user == nil || user.Disabled {
@@ -237,54 +244,18 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// La configuration est lue DANS L'ARBRE DU COMMIT qu'on vient de résoudre
-	// (ADR-0009). Ce qui s'applique et ce qui est audité deviennent le même
-	// octet, sans rien devoir à la discipline du client.
-	projet, err := core.ProjectConfigFor(r.Context(), a.deps.ProjectConfig, repo.Name, auditSHA,
-		a.deps.ExigenceConfig)
-	if err != nil {
-		// Le message de `config.Parse` nomme déjà la clé ou la construction
-		// refusée : il est rendu à l'utilisateur, qui est le seul à pouvoir
-		// corriger son fichier.
-		slog.Warn("configuration de projet refusée",
-			slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	effectif, err := core.Composer(projet, core.Requete{
+	// La configuration du commit, sa composition, la forme de l'environnement
+	// effectif et la seconde autorisation vivent dans resoudreEffectif : c'est
+	// aussi ce que fait HandleLaunchRun pour un run lancé depuis le navigateur
+	// (ADR-0042), et dupliquer cette décision est la manière dont les deux
+	// finiraient par diverger.
+	effectif, ok := a.resoudreEffectif(w, r, user, repo.Name, auditSHA, payload.RunRef, core.Requete{
 		Environment: payload.Environment,
 		Inventory:   payload.Inventory,
 		ForwardEnv:  payload.ForwardEnv,
 		Flags:       flags,
 	})
-	if err != nil {
-		slog.Warn("composition de la configuration refusée",
-			slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// La FORME de l'environnement est vérifiée ici, et pas seulement son
-	// autorisation. Elle ne l'était nulle part sur ce chemin : seuls le magasin
-	// de clés, les droits et l'enrôlement l'appelaient. Ce qui fermait la porte
-	// jusqu'ici était INDIRECT — un nom tordu n'a pas de droit associé, donc le
-	// run est refusé — et s'appuyer sur une jointure en base pour garantir la
-	// forme d'une valeur qui compose un CHEMIN D'INVENTAIRE serait fragile.
-	//
-	// Vide reste légitime : un playbook en `connection: local` n'a pas
-	// d'environnement, et `VerifierLAcces` le laisse passer depuis toujours.
-	if effectif.Environment != "" {
-		if err := core.ValidateEnvironment(effectif.Environment); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Second temps de l'autorisation. Il ne mord que lorsque l'environnement
-	// vient du fichier : sinon il porte sur la valeur déjà contrôlée plus haut.
-	if effectif.Environment != payload.Environment &&
-		!a.autoriserLEnvironnement(w, r, user, effectif.Environment) {
+	if !ok {
 		return
 	}
 
@@ -302,144 +273,15 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Les consignes AVANT la création, et pour la même raison que sur un
-	// enrôlement : si un secret n'arrive pas à destination, rien n'a été créé.
-	// L'inverse laisserait un run qui démarre sans pouvoir s'élever, et
-	// échouerait tâche par tâche sur la production.
-	if payload.BecomePassword != "" {
-		if a.deps.Stash == nil {
-			http.Error(w, "become password is not supported on this deployment",
-				http.StatusNotImplemented)
-			return
-		}
-		if err := a.deps.Stash.Stash(r.Context(), core.CleBecome(payload.RunRef),
-			[]byte(payload.BecomePassword)); err != nil {
-			slog.Error("consigne du mot de passe d'élévation en échec",
-				slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Les VALEURS des variables suivent le même chemin que le mot de passe :
-	// consigne éphémère, consommée à la livraison de l'ordre, jamais écrites en
-	// base. C'est ce qui tient la promesse du §5.4 — les noms sont auditables,
-	// les valeurs ne le sont pas, et le journal ci-dessous ne porte que les noms.
-	if len(effectif.ForwardEnv) > 0 {
-		if a.deps.Stash == nil {
-			http.Error(w, "forwarded environment variables are not supported on this deployment",
-				http.StatusNotImplemented)
-			return
-		}
-		brut, err := json.Marshal(effectif.ForwardEnv)
-		if err != nil {
-			// Le message ne cite JAMAIS les valeurs.
-			slog.Error("encodage des variables transmises en échec",
-				slog.String("run_ref", payload.RunRef))
-			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
-			return
-		}
-		if err := a.deps.Stash.Stash(r.Context(), core.CleForwardEnv(payload.RunRef), brut); err != nil {
-			slog.Error("consigne des variables transmises en échec",
-				slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
-			return
-		}
-		// LE RÉSULTAT EFFECTIF est journalisé (§5.4.2), et seulement les noms.
-		slog.Info("variables transmises au run",
-			slog.String("run_ref", payload.RunRef),
-			slog.Any("noms", core.NomsTransmis(effectif.ForwardEnv)))
-	}
-
-	id, err := a.deps.Creator.CreateRun(r.Context(), core.NewRun{
-		RunRef: payload.RunRef,
-		UserID: user.ID,
-		Repo:   repo.Name,
-		// Les valeurs EFFECTIVES, et non ce que le client a demandé (§5.4.2).
-		// C'est cette ligne qui rend l'audit fidèle : `run.inventory` porte le
-		// chemin résolu, tandis que le commit garde le template. Les deux
-		// questions — « quelle convention » et « qu'a-t-elle donné ce jour-là » —
-		// se lisent alors séparément.
-		Environment: effectif.Environment,
-		Inventory:   effectif.Inventory,
-		Playbook:    payload.Playbook,
-		Kind:        genre,
-		AdhocTarget: adhocTarget,
-		// Les flags EFFECTIFS, comme les deux au-dessus (§5.4.2). Ils coïncident
-		// avec les demandés — la composition refuse au lieu d'amputer — et passer
-		// par elle est ce qui garde cette ligne vraie le jour où ce ne serait
-		// plus le cas.
-		Flags:       effectif.Flags,
-		AuditSHA:    auditSHA,
-		BaseSHA:     payload.BaseSHA,
-		MainlineRef: repo.MainlineRef,
-		MainlineSHA: mainlineSHA,
-		// L'image vient du COMMIT, et de lui seul (ADR-0014). Elle ne transite
-		// plus par la requête : `runner_image` y était accepté sans qu'aucun
-		// client ne l'envoie, ce qui contredisait l'ADR-0009 en laissant une
-		// porte ouverte que personne n'empruntait.
-		RunnerImage: effectif.RunnerImage,
+	// La consigne des secrets, la création et le démarrage vivent dans
+	// enregistrerEtDemarrer, pour la même raison que resoudreEffectif ci-dessus.
+	a.enregistrerEtDemarrer(w, r, runADemarrer{
+		User: user, RepoName: repo.Name, RunRef: payload.RunRef,
+		Playbook: payload.Playbook, Kind: genre, AdhocTarget: adhocTarget,
+		AuditSHA: auditSHA, BaseSHA: payload.BaseSHA,
+		MainlineRef: repo.MainlineRef, MainlineSHA: mainlineSHA,
+		Effectif: effectif, BecomePassword: payload.BecomePassword,
 	})
-	if err != nil {
-		slog.Error("création du run en échec",
-			slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-		http.Error(w, "could not create the run", http.StatusInternalServerError)
-		return
-	}
-
-	slog.Info("run créé",
-		slog.String("run_ref", payload.RunRef), slog.Int64("id", id),
-		slog.String("repo", repo.Name), slog.Int64("user", user.ID))
-
-	// Le démarrage vient APRÈS l'enregistrement, et l'ordre porte une garantie :
-	// le run naît `interrupted` / `unknown` (§6.4), donc un échec ici laisse une
-	// ligne qui dit la vérité — le run existe, il n'a pas tourné. L'inverse —
-	// lancer puis enregistrer — laisserait un pod en vie que rien ne référence.
-	pod := ""
-	if a.deps.Starter != nil {
-		pod, err = a.deps.Starter.Start(r.Context(), core.Run{
-			ID: id, RunRef: payload.RunRef, UserID: user.ID, Repo: repo.Name,
-			Environment: effectif.Environment, Inventory: effectif.Inventory,
-			Playbook: payload.Playbook, AuditSHA: auditSHA,
-			Kind: genre, AdhocTarget: adhocTarget,
-		})
-		if err != nil {
-			slog.Error("démarrage du run en échec",
-				slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-			// Le run est ENREGISTRÉ, et son état dit déjà qu'il n'a pas tourné.
-			// Le message nomme les deux faits et l'identifiant : sans lui,
-			// l'utilisateur croit que rien ne s'est passé et cherche un artefact
-			// qu'il ne sait pas nommer.
-			http.Error(w, "run "+payload.RunRef+" is recorded but could not be started",
-				http.StatusBadGateway)
-			return
-		}
-
-		// Le pod existe : le run passe `running`, avec le nom du pod pour la
-		// corrélation avec les logs d'infrastructure (§6.4). Un échec ici ne
-		// remet PAS le run en cause — le pod tourne, il exécutera et se clôra
-		// lui-même. Faire échouer la réponse laisserait l'utilisateur croire
-		// que rien ne s'est passé alors que son playbook est parti.
-		if a.deps.Running != nil {
-			if err := a.deps.Running.MarkRunning(r.Context(), id, pod); err != nil {
-				slog.Error("run non marqué courant",
-					slog.String("run_ref", payload.RunRef), slog.String("error", err.Error()))
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(createRunResponse{
-		RunRef:      payload.RunRef,
-		AuditSHA:    auditSHA,
-		MainlineRef: repo.MainlineRef,
-		MainlineSHA: mainlineSHA,
-		Pod:         pod,
-	}); err != nil {
-		slog.Error("réponse non écrite", slog.String("error", err.Error()))
-	}
 }
 
 // pushGrantResponse porte de quoi pousser, et rien de plus.

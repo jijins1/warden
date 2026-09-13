@@ -51,6 +51,11 @@ func (c Code) HTTPStatus() int {
 		// distinction est ce qui évite qu'un opérateur passe une heure dans les
 		// journaux du rôle `git` alors que c'est le dépôt amont qui répond mal.
 		return 502
+	case CodeRefExists:
+		// 409 : ni un défaut de l'appelant ni une panne du moteur — un
+		// identifiant de run réutilisé sur un commit différent de celui déjà
+		// enregistré. Une collision, pas une erreur.
+		return 409
 	default:
 		return 500
 	}
@@ -67,6 +72,8 @@ func CodeFromStatus(status int) Code {
 		return CodeUnknownObject
 	case 502:
 		return CodeMirrorFailed
+	case 409:
+		return CodeRefExists
 	default:
 		return CodeInternal
 	}

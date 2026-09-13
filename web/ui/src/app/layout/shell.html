@@ -5,6 +5,10 @@
     <a routerLink="/runs" routerLinkActive="actif">Runs</a>
     <a routerLink="/hosts" routerLinkActive="actif">Machines</a>
     <a routerLink="/account" routerLinkActive="actif">Account</a>
+    @if (auth.admin()) {
+      <a routerLink="/repos" routerLinkActive="actif">Repos</a>
+      <a routerLink="/environments" routerLinkActive="actif">Environments</a>
+    }
   </nav>
 
   <span class="espace"></span>

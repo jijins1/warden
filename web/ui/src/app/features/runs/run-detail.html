@@ -19,6 +19,19 @@
       <span class="sur">on</span>
       <w-env-badge [env]="r.environment" />
       <span class="espace"></span>
+      @if (r.playbook) {
+        <a
+          mat-button
+          [routerLink]="['/runs/new']"
+          [queryParams]="{
+            repo: r.repo,
+            environment: r.environment,
+            inventory: r.inventory,
+            playbook: r.playbook,
+          }">
+          <mat-icon>replay</mat-icon><span>Relaunch</span>
+        </a>
+      }
       <w-state-chip [state]="r.state" [cause]="r.termination_cause" />
     </header>
 

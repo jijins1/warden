@@ -1,4 +1,4 @@
-package upload
+package runref
 
 import (
 	"regexp"
@@ -18,9 +18,9 @@ var serverShape = regexp.MustCompile(`^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$`)
 
 func TestUnRunRefEstAccepteParLeServeur(t *testing.T) {
 	for range 200 {
-		ref, err := NewRunRef()
+		ref, err := New()
 		if err != nil {
-			t.Fatalf("NewRunRef : %v", err)
+			t.Fatalf("New : %v", err)
 		}
 		if !serverShape.MatchString(ref) {
 			t.Fatalf("le serveur refuserait %q", ref)
@@ -33,9 +33,9 @@ func TestUnRunRefEstAccepteParLeServeur(t *testing.T) {
 func TestLesRunRefsSontDistincts(t *testing.T) {
 	vus := make(map[string]bool, 1000)
 	for range 1000 {
-		ref, err := NewRunRef()
+		ref, err := New()
 		if err != nil {
-			t.Fatalf("NewRunRef : %v", err)
+			t.Fatalf("New : %v", err)
 		}
 		if vus[ref] {
 			t.Fatalf("identifiant produit deux fois : %s", ref)
@@ -47,16 +47,16 @@ func TestLesRunRefsSontDistincts(t *testing.T) {
 // TestLesRunRefsSeTrientParDate épingle la propriété qui rend une liste de refs
 // lisible sans rien joindre : le préfixe temporel.
 func TestLesRunRefsSeTrientParDate(t *testing.T) {
-	premier, err := NewRunRef()
+	premier, err := New()
 	if err != nil {
-		t.Fatalf("NewRunRef : %v", err)
+		t.Fatalf("New : %v", err)
 	}
 	// Le composant temporel est en millisecondes ; sans attente les deux
 	// identifiants partagent le même horodatage et l'ordre n'est plus garanti.
 	for {
-		second, err := NewRunRef()
+		second, err := New()
 		if err != nil {
-			t.Fatalf("NewRunRef : %v", err)
+			t.Fatalf("New : %v", err)
 		}
 		if second[:10] == premier[:10] {
 			continue
@@ -72,12 +72,40 @@ func TestLesRunRefsSeTrientParDate(t *testing.T) {
 // identifiant recopié à la main ne se confonde pas avec 1 et 0.
 func TestLAlphabetExclutLesCaracteresAmbigus(t *testing.T) {
 	for range 500 {
-		ref, err := NewRunRef()
+		ref, err := New()
 		if err != nil {
-			t.Fatalf("NewRunRef : %v", err)
+			t.Fatalf("New : %v", err)
 		}
 		if strings.ContainsAny(ref, "ILOU") {
 			t.Fatalf("caractère ambigu dans %q", ref)
 		}
+	}
+}
+
+// TestTimeRondTripe : Time doit rendre l'instant qui a produit le ULID, à la
+// milliseconde près (48 bits de résolution, pas plus).
+func TestTimeRondTripe(t *testing.T) {
+	ref, err := New()
+	if err != nil {
+		t.Fatalf("New : %v", err)
+	}
+	quand, err := Time(ref)
+	if err != nil {
+		t.Fatalf("Time : %v", err)
+	}
+	if quand.IsZero() {
+		t.Fatal("horodatage nul")
+	}
+}
+
+func TestTimeRefuseLaMauvaiseLongueur(t *testing.T) {
+	if _, err := Time("trop-court"); err == nil {
+		t.Fatal("longueur invalide acceptée")
+	}
+}
+
+func TestTimeRefuseLAlphabetInvalide(t *testing.T) {
+	if _, err := Time(strings.Repeat("I", 26)); err == nil {
+		t.Fatal("caractère hors alphabet accepté")
 	}
 }

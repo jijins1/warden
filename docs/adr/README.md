@@ -54,6 +54,7 @@ d'implémentation prises en cours de route.
 | [0039](0039-extra-vars-declarees-par-le-commit.md) | `-e` : les noms viennent du commit, les valeurs sont auditées | Accepted |
 | [0040](0040-submit-suit-le-run.md) | `warden submit` suit le run, et son code de sortie le dit | Accepted |
 | [0041](0041-adhoc-comme-genre-de-run.md) | L'ad-hoc comme troisième genre de run, sans allowlist de modules | Accepted |
+| [0042](0042-commit-daudit-frappe-par-le-serveur.md) | Le commit d'audit d'un run lancé depuis le navigateur est frappé par le serveur | Accepted |
 
 ## Convention
 

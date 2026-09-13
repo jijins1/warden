@@ -103,6 +103,73 @@ export interface ChangementMotDePasse {
   new_password: string;
 }
 
+/**
+ * `GET /admin/repos` et `PUT /admin/repos/{repo}` — api/repo_handler.go.
+ *
+ * Réservé aux administrateurs côté serveur (404 sinon, pas 403 : voir le
+ * commentaire de `HandleListRepos`) — la garde `adminGuard` évite juste un
+ * écran qui répondrait 404 de toute façon.
+ */
+export interface Repo {
+  name: string;
+  remote_url: string;
+  mainline_ref: string;
+}
+
+/** `core.KeyOrigin` — internal/server/internal/core/keys.go:101. */
+export type KeyOrigin = 'generated' | 'imported';
+
+/**
+ * `GET /admin/keys` et `GET /admin/keys/{environment}` — api/key_handler.go.
+ *
+ * La partie PRIVÉE de la clé n'y figure jamais — elle descend vers le pod par
+ * le canal de dispatch, un chemin distinct (ADR-0018). Réservé aux
+ * administrateurs côté serveur, comme les dépôts.
+ */
+export interface KeyDescriptor {
+  environment: string;
+  public_key: string;
+  fingerprint: string;
+  origin: KeyOrigin;
+  created_at: string;
+  rotated_at?: string;
+}
+
+/**
+ * `POST /repos/{repo}/runs` — api/run_launch_handler.go, `launchRunPayload`.
+ *
+ * Ni `run_ref` ni `base_sha` : le serveur tire l'un et résout l'autre. Ni
+ * `kind` ni `module` : un run lancé depuis une page est toujours un playbook
+ * (ADR-0042), et le serveur REFUSE les champs inconnus — en envoyer un ici
+ * donne un 400.
+ *
+ * `environment` est obligatoire ici alors qu'il est facultatif sur
+ * `POST /runs` : voir le commentaire de `launchRunPayload` côté serveur — il
+ * faut la principale pour lire la configuration, donc le `default_env` du
+ * commit obligerait à travailler AVANT toute autorisation.
+ */
+export interface LancementRun {
+  environment: string;
+  inventory?: string;
+  playbook: string;
+  /** Déjà validés côté serveur par `core.FlagsDemandes` (ADR-0038, ADR-0039). */
+  flags?: string[];
+  /** Ne survit pas à la requête : consigne éphémère, jamais en base (ADR-0018). */
+  become_password?: string;
+  /** Les VALEURS seules ; les NOMS viennent du commit (ADR-0009). */
+  forward_env?: Record<string, string>;
+}
+
+/** `createRunResponse` — api/run_handler.go. Partagée par `POST /runs` et `POST /repos/{repo}/runs`. */
+export interface RunCree {
+  run_ref: string;
+  audit_sha: string;
+  mainline_ref: string;
+  mainline_sha: string;
+  /** Vide quand le run est enregistré sans être démarré. */
+  pod?: string;
+}
+
 /** `GET /auth/whoami` — api/auth_handler.go. */
 export interface Whoami {
   subject: string;
