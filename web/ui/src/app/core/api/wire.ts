@@ -116,6 +116,25 @@ export interface Repo {
   mainline_ref: string;
 }
 
+/** `core.KeyOrigin` — internal/server/internal/core/keys.go:101. */
+export type KeyOrigin = 'generated' | 'imported';
+
+/**
+ * `GET /admin/keys` et `GET /admin/keys/{environment}` — api/key_handler.go.
+ *
+ * La partie PRIVÉE de la clé n'y figure jamais — elle descend vers le pod par
+ * le canal de dispatch, un chemin distinct (ADR-0018). Réservé aux
+ * administrateurs côté serveur, comme les dépôts.
+ */
+export interface KeyDescriptor {
+  environment: string;
+  public_key: string;
+  fingerprint: string;
+  origin: KeyOrigin;
+  created_at: string;
+  rotated_at?: string;
+}
+
 /** `GET /auth/whoami` — api/auth_handler.go. */
 export interface Whoami {
   subject: string;

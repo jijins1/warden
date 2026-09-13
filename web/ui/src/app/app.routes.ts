@@ -54,6 +54,15 @@ export const routes: Routes = [
         canActivate: [adminGuard],
         loadComponent: () => import('./features/repos/repo-list').then((m) => m.RepoList),
       },
+      {
+        // Même raisonnement que `repos` : `GET /admin/keys` est réservé aux
+        // administrateurs côté serveur (ADR-0020).
+        path: 'environments',
+        title: 'Environments — warden',
+        canActivate: [adminGuard],
+        loadComponent: () =>
+          import('./features/environments/environment-list').then((m) => m.EnvironmentList),
+      },
       { path: '', pathMatch: 'full', redirectTo: 'runs' },
     ],
   },
