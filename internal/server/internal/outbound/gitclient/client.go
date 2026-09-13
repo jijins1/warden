@@ -165,6 +165,11 @@ func (c *Client) erreur(resp *http.Response) error {
 		// Les deux extrémités sont du même produit : c'est notre défaut.
 		return fmt.Errorf("requête refusée par le rôle git: %s", e.Message)
 
+	case gitwire.CodeRefExists:
+		// PAS ErrArtifactGone, PAS une erreur interne : la ref est là, elle
+		// désigne autre chose. L'appelant en fait un 409, pas une panne.
+		return fmt.Errorf("%s: %w", e.Message, core.ErrAuditRefConflict)
+
 	default:
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Jamais le jeton dans le message, même tronqué.
@@ -317,6 +322,52 @@ func (c *Client) CreateRunNamespace(ctx context.Context, repo, namespace, sha st
 	if resp.StatusCode != http.StatusNoContent {
 		return c.erreur(resp)
 	}
+	return nil
+}
+
+// RecordAuditRef fait pointer par le rôle `git` la ref d'audit d'un run lancé
+// depuis le navigateur, sur le commit que l'appelant a déjà résolu.
+//
+// L'appelant a déjà tout décidé : la ref vient de l'identité authentifiée
+// (core.AuditRefFor), le commit vient de la réponse de RefreshMirror. AUCUNE
+// valeur de ce message ne vient d'un client, et c'est ce qui dispense ce chemin
+// du contrôle de fraîcheur de l'ADR-0027 : il n'y a pas de push, pas d'objet
+// transmis, et pas de SHA à croire sur parole.
+//
+// Idempotente : errors.Is(err, core.ErrAuditRefConflict) distingue un rejeu
+// réussi (err == nil) d'un identifiant réutilisé sur un autre commit.
+func (c *Client) RecordAuditRef(ctx context.Context, a core.AuditRef) error {
+	if a.Repo == "" || a.Ref == "" || a.CommitSHA == "" {
+		return fmt.Errorf("frappe de ref d'audit : dépôt, ref et commit sont obligatoires")
+	}
+
+	ctx, annuler := context.WithTimeout(ctx, c.timeout)
+	defer annuler()
+
+	corps, err := json.Marshal(gitwire.AuditRefRequest{Repo: a.Repo, Ref: a.Ref, CommitSHA: a.CommitSHA})
+	if err != nil {
+		return fmt.Errorf("encodage de la requête: %w", err)
+	}
+
+	cible := c.base.JoinPath(gitwire.AuditRefPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cible.String(), bytes.NewReader(corps))
+	if err != nil {
+		return fmt.Errorf("construction de la requête: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return fmt.Errorf("appel du rôle git: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.erreur(resp)
+	}
+	// Le corps (Created) n'a d'usage que pour la journalisation côté appelant ;
+	// le succès HTTP est déjà toute l'information dont ce client a besoin.
 	return nil
 }
 

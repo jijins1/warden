@@ -235,6 +235,12 @@ type Deps struct {
 	// Vide, la réponse ne la porte pas et la CLI se rabat sur sa variable
 	// d'environnement — ce qui rend le déploiement progressif.
 	GitPushURL string
+
+	// Audits pointe la ref d'audit d'un run lancé depuis le navigateur, sans
+	// push (ADR-0042). Facultatif : sans lui, `POST /repos/{repo}/runs` répond
+	// 501 et la CLI continue de fonctionner — c'est un déploiement où l'on
+	// soumet depuis un poste, pas depuis une page.
+	Audits core.AuditRecorder
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -341,6 +347,12 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
 	router.HandleFunc("POST /runs", a.HandleCreateRun)
 	router.HandleFunc("POST /repos/{repo}/push-grant", a.HandleIssuePushGrant)
+	// POST /repos/{repo}/runs — lancer depuis le navigateur (ADR-0042). Sous
+	// /repos comme le jeton de push, et JAMAIS sous /admin : lancer un run n'est
+	// pas une action d'administrateur, c'est la même action que
+	// `warden submit` par un autre transport, autorisée par les mêmes droits
+	// par environnement (ADR-0033) — jamais a.adminOuRien.
+	router.HandleFunc("POST /repos/{repo}/runs", a.HandleLaunchRun)
 
 	// Administration. Sous un préfixe distinct pour que la NetworkPolicy et
 	// l'ingress puissent la traiter à part — l'autorisation est portée par la

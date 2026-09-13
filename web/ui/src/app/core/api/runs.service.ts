@@ -2,7 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG } from '../config/app-config';
-import { RunDetail, RunListResult, RunsParMachine } from './wire';
+import { LancementRun, RunCree, RunDetail, RunListResult, RunsParMachine } from './wire';
 
 /**
  * Les filtres que le SERVEUR sait appliquer.
@@ -77,6 +77,19 @@ export class RunsService {
   async parReference(runRef: string): Promise<RunDetail> {
     return firstValueFrom(
       this.#http.get<RunDetail>(`${this.#base}/runs/${encodeURIComponent(runRef)}`),
+    );
+  }
+
+  /**
+   * `POST /repos/{repo}/runs` — lance un run sur la branche protégée, sans
+   * arbre local à pousser (ADR-0042).
+   *
+   * Le dépôt est dans le CHEMIN et non dans le corps, comme pour le jeton de
+   * push : c'est la ressource sous laquelle le run est créé.
+   */
+  async lancer(repo: string, demande: LancementRun): Promise<RunCree> {
+    return firstValueFrom(
+      this.#http.post<RunCree>(`${this.#base}/repos/${encodeURIComponent(repo)}/runs`, demande),
     );
   }
 }

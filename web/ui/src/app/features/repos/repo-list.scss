@@ -1,6 +1,6 @@
 @use '../../../styles/table' as t;
 
-@include t.table-de-runs(minmax(140px, 1fr) minmax(220px, 2fr) minmax(120px, auto));
+@include t.table-de-runs(minmax(140px, 1fr) minmax(220px, 2fr) minmax(120px, auto) minmax(120px, auto));
 @include t.encarts;
 
 .entete {

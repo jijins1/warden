@@ -116,6 +116,46 @@ type RefResolver interface {
 	ResolveRef(ctx context.Context, repo, ref string) (string, error)
 }
 
+// AuditRef décrit la ref d'audit que le SERVEUR pointe lui-même sur un commit
+// existant, sans qu'aucun client ne pousse (ADR-0042).
+type AuditRef struct {
+	Repo string
+	// Ref est composée par AuditRefFor, jamais par l'adaptateur : savoir à qui
+	// appartient une ref d'audit est une règle de run, pas une règle git.
+	Ref string
+	// CommitSHA vient de MirrorRefresher, jamais d'un client — c'est ce qui
+	// dispense ce chemin du contrôle de fraîcheur de l'ADR-0027.
+	CommitSHA string
+}
+
+// AuditRecorder pointe une ref d'audit sur un commit existant, sans push.
+//
+// Il existe pour un appelant qui n'a rien à capturer : une page ne lance que la
+// branche protégée telle quelle, donc son artefact d'audit est une SECONDE REF
+// sur le commit déjà résolu par MirrorRefresher — pas un nouveau commit. Rien en
+// aval ne distingue « commit fraîchement frappé » de « commit existant référencé
+// une seconde fois ».
+//
+// SÉPARÉ de RefResolver et de MirrorRefresher bien que le même adaptateur les
+// serve tous les trois : lire une position et ÉCRIRE une ref d'audit ne sont pas
+// la même capacité, et les réunir donnerait le droit d'écrire à tout ce qui a
+// besoin de lire.
+//
+// Idempotent : un rejeu pour la même ref et le même commit ne rend pas d'erreur.
+// Une ref déjà écrite sur un AUTRE commit en rend une — ErrAuditRefConflict —
+// et l'appelant doit la distinguer d'une panne.
+type AuditRecorder interface {
+	RecordAuditRef(ctx context.Context, a AuditRef) error
+}
+
+// ErrAuditRefConflict : cette ref d'audit existe et désigne un autre commit.
+//
+// Un identifiant de run réutilisé sur un autre commit, donc une demande de
+// réécrire un enregistrement d'audit — la seule chose qu'un journal d'audit ne
+// doit jamais permettre (ADR-0027). Nommée ici parce que l'appelant y répond par
+// un 409 et non par un 500 : ce n'est pas une panne.
+var ErrAuditRefConflict = errors.New("cette ref d'audit désigne déjà un autre commit")
+
 // AuditRefFor compose la ref d'audit d'un run.
 //
 // Les deux composants viennent du SERVEUR : l'identifiant numérique de

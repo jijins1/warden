@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatButtonModule } from '@angular/material/button';
@@ -15,7 +16,7 @@ import { ApiError } from '../../core/http/api-error';
  */
 @Component({
   selector: 'w-repo-list',
-  imports: [MatIconModule, MatProgressBarModule, MatButtonModule],
+  imports: [RouterLink, MatIconModule, MatProgressBarModule, MatButtonModule],
   templateUrl: './repo-list.html',
   styleUrl: './repo-list.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

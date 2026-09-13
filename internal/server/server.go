@@ -537,6 +537,7 @@ func runAPI(ctx context.Context) error {
 		makers  core.RepoMaterializer
 		grants  core.PushGrantIssuer
 		creator core.RunCreator
+		audits  core.AuditRecorder
 	)
 	if adresse := os.Getenv(EnvGitInternalURL); adresse != "" {
 		jeton := os.Getenv(EnvGitInternalToken)
@@ -550,7 +551,7 @@ func runAPI(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("client du rôle git: %w", err)
 		}
-		repo, mirrors, refs, makers = gc, gc, gc, gc
+		repo, mirrors, refs, makers, audits = gc, gc, gc, gc, gc
 		// La configuration de projet suit le MÊME client : elle est lue dans
 		// l'arbre du commit par le rôle `git` (ADR-0009). Sans rôle `git`
 		// configuré, elle reste nil et `core.ProjectConfigFor` rend une
@@ -701,6 +702,7 @@ func runAPI(ctx context.Context) error {
 		Creator:       creator,
 		Mirrors:       mirrors,
 		Refs:          refs,
+		Audits:        audits,
 		ProjectConfig: projet,
 		// Annoncée à la CLI avec son jeton de push (ADR-0028). Vide, la CLI se
 		// rabat sur sa propre variable d'environnement.

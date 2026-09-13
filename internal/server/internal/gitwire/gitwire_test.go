@@ -45,6 +45,7 @@ func TestStatutsDesCodes(t *testing.T) {
 		{gitwire.CodeBadRequest, 400},
 		{gitwire.CodeUnknownRepo, 404},
 		{gitwire.CodeUnknownObject, 404},
+		{gitwire.CodeRefExists, 409},
 		{gitwire.CodeInternal, 500},
 	}
 	for _, c := range cas {
@@ -72,5 +73,8 @@ func TestRepliDeStatut(t *testing.T) {
 	}
 	if got := gitwire.CodeFromStatus(503); got != gitwire.CodeInternal {
 		t.Errorf("503 -> %s", got)
+	}
+	if got := gitwire.CodeFromStatus(409); got != gitwire.CodeRefExists {
+		t.Errorf("409 -> %s", got)
 	}
 }

@@ -30,6 +30,7 @@
         <span role="columnheader">Name</span>
         <span role="columnheader">Remote URL</span>
         <span role="columnheader">Mainline</span>
+        <span role="columnheader"></span>
       </div>
 
       @for (repo of items(); track repo.name) {
@@ -37,6 +38,11 @@
           <span role="cell" class="w-mono nom">{{ repo.name }}</span>
           <span role="cell" class="w-mono url">{{ repo.remote_url }}</span>
           <span role="cell" class="w-mono">{{ repo.mainline_ref }}</span>
+          <span role="cell">
+            <a mat-button [routerLink]="['/runs/new']" [queryParams]="{ repo: repo.name }">
+              Launch a run
+            </a>
+          </span>
         </div>
       }
     </div>

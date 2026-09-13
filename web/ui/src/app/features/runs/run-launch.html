@@ -1,0 +1,106 @@
+<section class="page">
+  <a class="retour" routerLink="/runs">
+    <mat-icon>arrow_back</mat-icon><span>My runs</span>
+  </a>
+
+  <form class="carte" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+    <h1>Launch a run</h1>
+    <p class="sous-titre">
+      Runs the protected branch as it stands — no local changes, nothing to
+      capture. Requires access to the named environment.
+    </p>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Repository</mat-label>
+      <input matInput formControlName="repo" class="w-mono" />
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Environment</mat-label>
+      <input matInput formControlName="environment" class="w-mono" />
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Inventory</mat-label>
+      <input matInput formControlName="inventory" class="w-mono" />
+      <mat-hint>Left empty, the project's configured inventory is used.</mat-hint>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Playbook</mat-label>
+      <input matInput formControlName="playbook" class="w-mono" />
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Limit</mat-label>
+      <input matInput formControlName="limit" class="w-mono" />
+      <mat-hint>Same pattern syntax as --limit on the command line.</mat-hint>
+    </mat-form-field>
+
+    <div class="drapeaux">
+      <mat-checkbox formControlName="check">--check (dry run)</mat-checkbox>
+      <mat-checkbox formControlName="diff">--diff</mat-checkbox>
+      <mat-checkbox formControlName="become">--become</mat-checkbox>
+    </div>
+
+    @if (formulaire.controls.become.value) {
+      <mat-form-field appearance="outline">
+        <mat-label>Become user</mat-label>
+        <input matInput formControlName="becomeUser" class="w-mono" />
+      </mat-form-field>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Become password</mat-label>
+        <input
+          matInput
+          type="password"
+          formControlName="becomePassword"
+          autocomplete="new-password" />
+      </mat-form-field>
+    }
+
+    <div class="variables">
+      <h2>Extra vars</h2>
+      @for (ligne of extraVars.controls; track ligne; let i = $index) {
+        <div class="ligne-variable" [formGroup]="ligne">
+          <mat-form-field appearance="outline">
+            <mat-label>Name</mat-label>
+            <input matInput formControlName="cle" class="w-mono" />
+          </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Value</mat-label>
+            <input matInput formControlName="valeur" class="w-mono" />
+          </mat-form-field>
+          <button
+            mat-icon-button
+            type="button"
+            (click)="retirerVariable(i)"
+            aria-label="Remove variable">
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+      }
+      <button mat-button type="button" (click)="ajouterVariable()">
+        <mat-icon>add</mat-icon><span>Add variable</span>
+      </button>
+    </div>
+
+    @if (erreur(); as message) {
+      <p class="erreur" role="alert">
+        <mat-icon>error_outline</mat-icon>
+        <span>{{ message }}</span>
+      </p>
+    }
+
+    <button
+      mat-flat-button
+      type="submit"
+      [disabled]="formulaire.invalid || enCours()">
+      {{ enCours() ? 'Launching…' : 'Launch' }}
+    </button>
+
+    @if (enCours()) {
+      <mat-progress-bar mode="indeterminate" />
+    }
+  </form>
+</section>
