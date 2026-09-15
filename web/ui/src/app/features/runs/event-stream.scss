@@ -209,6 +209,23 @@
 .reprise .trait { flex: 1; height: 1px; background: var(--mat-sys-outline-variant); }
 .reprise .texte { font-size: 10.5px; color: var(--mat-sys-on-surface-variant); }
 
+// Le motif d'un run qui n'a rien exécuté. Aux couleurs d'échec, parce que c'en
+// est un — et sur toute la largeur, parce que c'est souvent la SEULE ligne de
+// la page.
+.diagnostic {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-2);
+  margin: 0;
+  min-height: var(--w-row-dense);
+  padding: var(--w-gap-2) var(--w-gap-3);
+  background: var(--w-failed-bg);
+  color: var(--w-failed);
+  font-size: 12.5px;
+
+  mat-icon { flex: none; font-size: 18px; width: 18px; height: 18px; }
+}
+
 .rattraper {
   position: absolute;
   right: var(--w-gap-4);

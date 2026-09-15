@@ -48,11 +48,31 @@ func fauxRunner(t *testing.T, fixture string, suffixe string) string {
 func config(t *testing.T) exec.Config {
 	t.Helper()
 	base := t.TempDir()
-	return exec.Config{
+	cfg := exec.Config{
 		Workspace:      filepath.Join(base, "src"),
 		PrivateDataDir: filepath.Join(base, "pdd"),
 		Playbook:       "site.yml",
 		Inventory:      "inv/staging",
+	}
+
+	// Les deux fichiers existent RÉELLEMENT, parce que le pilote les vérifie
+	// avant de lancer quoi que ce soit — et parce qu'un arbre matérialisé
+	// depuis le commit audité les contient toujours. Les déclarer sans les
+	// poser décrivait un état que la production n'atteint jamais.
+	poser(t, cfg.Workspace, cfg.Playbook, "- hosts: all\n  tasks: []\n")
+	poser(t, cfg.Workspace, cfg.Inventory, "[all]\nlocalhost\n")
+	return cfg
+}
+
+// poser écrit un fichier de l'arbre audité, répertoires compris.
+func poser(t *testing.T, racine, rel, contenu string) {
+	t.Helper()
+	chemin := filepath.Join(racine, rel)
+	if err := os.MkdirAll(filepath.Dir(chemin), 0o750); err != nil {
+		t.Fatalf("préparation de %s : %v", rel, err)
+	}
+	if err := os.WriteFile(chemin, []byte(contenu), 0o600); err != nil {
+		t.Fatalf("écriture de %s : %v", rel, err)
 	}
 }
 
@@ -199,6 +219,9 @@ func TestLaTrameDEntreeDitQuoiExecuterEnAdhoc(t *testing.T) {
 		ModuleArgs:     "uptime",
 		HostPattern:    "web",
 	}
+	// Pas de playbook à poser — un ad-hoc n'en a pas — mais l'inventaire, lui,
+	// est bien un chemin de l'arbre audité, et le pilote le vérifie.
+	poser(t, cfg.Workspace, cfg.Inventory, "[web]\nweb-01\n")
 	if _, _, err := lancer(t, cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

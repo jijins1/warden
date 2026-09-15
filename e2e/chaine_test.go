@@ -20,7 +20,9 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -402,6 +404,31 @@ RETURNING id`, sujet).Scan(&id)
 	return id
 }
 
+// amorcerDroit accorde à un utilisateur le droit d'un environnement.
+//
+// En SQL directement dans `environment_grant`, et non via un document de droits
+// (ADR-0033) : ce document n'est réconcilié en base que par le rôle
+// CONTRÔLEUR, que ce test ne fait volontairement pas tourner (aucune exigence
+// git à porter, alors que RoleAPI seul suffit à tout ce qu'il vérifie). Écrire
+// la ligne directement fait ce que le contrôleur aurait fait, sans avoir à le
+// démarrer pour autant.
+func amorcerDroit(t *testing.T, dsn string, userID int64, environment string) {
+	t.Helper()
+	ctx := context.Background()
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connexion : %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	if _, err := conn.Exec(ctx,
+		`INSERT INTO environment_grant (user_id, environment) VALUES ($1, $2)`,
+		userID, environment); err != nil {
+		t.Fatalf("amorçage du droit sur %s : %v", environment, err)
+	}
+}
+
 // --- le test ----------------------------------------------------------------
 
 // TestLaChaineComplete conduit un run de bout en bout, avec le VRAI code de la
@@ -492,7 +519,11 @@ func TestLaChaineComplete(t *testing.T) {
 	if err := server.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrations : %v", err)
 	}
-	amorcerAdministrateur(t, dsn)
+	idAlice := amorcerAdministrateur(t, dsn)
+	// Sans cette ligne, `core.VerifierLAcces` refuse tout par défaut (ADR-0033)
+	// et `sujet` n'aurait jamais accès à `prod`, quel que soit le reste de la
+	// chaîne.
+	amorcerDroit(t, dsn, idAlice, "prod")
 
 	ctxServeurs, arreter := context.WithCancel(context.Background())
 	t.Cleanup(arreter)
@@ -531,9 +562,12 @@ func TestLaChaineComplete(t *testing.T) {
 	t.Setenv("WARDEN_SUBJECT", sujet)
 	t.Chdir(poste)
 
+	// --no-follow : ce test ne va PAS jusqu'à l'exécution (l'image du runner est
+	// `pause`, qui ne rapporte jamais de clôture). Sans ce drapeau, `submit`
+	// suit le run par défaut et bloque jusqu'au timeout de `go test`.
 	if err := cli.Run(t.Context(), []string{
 		"submit", "--repo", depot, "--playbook", "site.yml", "--env", "prod",
-		"--inventory", "inventory.ini",
+		"--inventory", "inventory.ini", "--no-follow",
 	}); err != nil {
 		t.Fatalf("warden submit : %v", err)
 	}
@@ -576,6 +610,171 @@ func TestLaChaineComplete(t *testing.T) {
 	if _, err := client.CoreV1().Secrets(nsE2E).Get(t.Context(), pod.Name, metav1.GetOptions{}); err != nil {
 		t.Errorf("le jeton d'amorçage du pod n'existe pas : %v", err)
 	}
+}
+
+// TestLancementDepuisLeNavigateur conduit un run de bout en bout par le chemin
+// SANS PUSH (ADR-0042) : POST /repos/{repo}/runs, comme le ferait la page
+// `/runs/new` de l'UI. Aucun dépôt local, aucune capture, aucun jeton de push —
+// c'est précisément ce que cette route existe pour rendre possible.
+//
+// Elle partage toute l'infrastructure de TestLaChaineComplete (vrai PostgreSQL,
+// vraie forge, vrai rôle `git` DEPUIS L'IMAGE, vrai cluster) et n'en diverge
+// qu'à partir de la déclaration du run : ici, un appel HTTP direct plutôt que
+// `cli.Run(submit)`.
+func TestLancementDepuisLeNavigateur(t *testing.T) {
+	client := clientCluster(t)
+	namespaceJetable(t, client)
+
+	dsn := postgres(t)
+	urlForgeHote, portForge, mainSHA := forge(t)
+
+	racineDepots := t.TempDir()
+	preparerVolume(t, racineDepots)
+
+	adresseGitInterne, _, adresseGitLecture := roleGitEnConteneur(t, racineDepots, portForge)
+
+	urlForgePourGitd := strings.Replace(urlForgeHote, "127.0.0.1",
+		testcontainers.HostInternal, 1)
+
+	adresseAPI := portLibre(t)
+	adresseDispatch := portLibre(t)
+	adresseIngestion := portLibre(t)
+
+	env := map[string]string{
+		"WARDEN_DATABASE_URL":       dsn,
+		"WARDEN_INSECURE_DEV_AUTH":  "1",
+		"WARDEN_API_ADDR":           adresseAPI,
+		"WARDEN_GIT_INTERNAL_URL":   "http://" + adresseGitInterne,
+		"WARDEN_GIT_INTERNAL_TOKEN": secretGit,
+		"WARDEN_GIT_RUNNER_URL":     "http://" + adresseGitLecture,
+
+		"WARDEN_DISPATCH_ADDR":       adresseDispatch,
+		"WARDEN_POD_NAMESPACE":       nsE2E,
+		"WARDEN_DISPATCH_RUNNER_URL": "http://" + adresseDispatch,
+		"WARDEN_INGEST_ADDR":         adresseIngestion,
+		"WARDEN_INGEST_RUNNER_URL":   "http://" + adresseIngestion,
+		"WARDEN_INSECURE_KUBECONFIG": "1",
+		"WARDEN_RUNNER_IMAGE":        "registry.k8s.io/pause:3.10",
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+
+	if err := server.Migrate(t.Context()); err != nil {
+		t.Fatalf("migrations : %v", err)
+	}
+	idAlice := amorcerAdministrateur(t, dsn)
+	amorcerDroit(t, dsn, idAlice, "prod")
+
+	ctxServeurs, arreter := context.WithCancel(context.Background())
+	t.Cleanup(arreter)
+
+	go func() {
+		if err := server.Run(ctxServeurs, server.RoleAPI); err != nil &&
+			ctxServeurs.Err() == nil {
+			t.Errorf("rôle api : %v", err)
+		}
+	}()
+	attendre(t, adresseAPI, 30*time.Second)
+
+	configurerDepot(t, "http://"+adresseAPI, urlForgePourGitd)
+
+	// AUCUN dépôt local, AUCUN push : la branche protégée porte déjà `site.yml`
+	// et `.ansibleproxy.yml` depuis `forge(t)`. C'est tout ce dont ce chemin a
+	// besoin — il lance la principale telle quelle.
+	out := lancerRun(t, "http://"+adresseAPI, launchRunRequest{
+		Environment: "prod",
+		Playbook:    "site.yml",
+		// Non résolue par `.ansibleproxy.yml` de ce test (pas d'`inventory:`
+		// gabarit) : le champ est donc OBLIGATOIRE ici, comme `--inventory`
+		// l'est pour `warden submit` sans gabarit. `run_playbook_complet`
+		// (migration 00009) exige `inventory IS NOT NULL` pour ce genre de run.
+		Inventory: "inventory.ini",
+	})
+
+	// LE test de sécurité de cette fonctionnalité (ADR-0042) : aucun nouveau
+	// commit n'est créé, et les trois SHA du run coïncident tous les trois avec
+	// le sommet de la principale que la forge sert.
+	if out.AuditSHA != mainSHA {
+		t.Errorf("audit_sha = %s, attendu %s (le sommet de la principale)", out.AuditSHA, mainSHA)
+	}
+	if out.MainlineSHA != mainSHA {
+		t.Errorf("mainline_sha = %s, attendu %s", out.MainlineSHA, mainSHA)
+	}
+	runRef, auditSHA, mainlineSHA := lireLeRun(t, dsn)
+	if runRef != out.RunRef {
+		t.Fatalf("run enregistré sous %q, attendu %q", runRef, out.RunRef)
+	}
+	if auditSHA != mainSHA || mainlineSHA != mainSHA {
+		t.Errorf("en base : audit_sha=%s mainline_sha=%s, attendus tous deux %s",
+			auditSHA, mainlineSHA, mainSHA)
+	}
+
+	// La ref d'audit est une SECONDE ref sur le commit de la principale — pas un
+	// nouveau commit dans le dépôt bare.
+	refs := gitDansLeVolume(t, racineDepots, "for-each-ref", "--format=%(refname) %(objectname)")
+	if !strings.Contains(refs, "refs/audit/") {
+		t.Errorf("aucune ref d'audit :\n%s", refs)
+	}
+	if !strings.Contains(refs, mainSHA) {
+		t.Errorf("aucune ref ne pointe sur le commit de la principale :\n%s", refs)
+	}
+
+	pod := attendrePod(t, client, out.RunRef, 2*time.Minute)
+	if pod.Labels["app.kubernetes.io/name"] != "warden-runner" {
+		t.Errorf("étiquettes du pod : %v", pod.Labels)
+	}
+}
+
+// launchRunRequest et launchRunResponse sont des copies volontaires du contrat
+// HTTP de `POST /repos/{repo}/runs` (api/run_launch_handler.go), pas un import :
+// l'étage 3 vérifie l'artefact déployé par son API PUBLIQUE, comme le ferait un
+// navigateur — importer les types internes du serveur testerait sa mémoire, pas
+// son contrat.
+type launchRunRequest struct {
+	Environment string `json:"environment"`
+	Inventory   string `json:"inventory,omitempty"`
+	Playbook    string `json:"playbook"`
+}
+
+type launchRunResponse struct {
+	RunRef      string `json:"run_ref"`
+	AuditSHA    string `json:"audit_sha"`
+	MainlineRef string `json:"mainline_ref"`
+	MainlineSHA string `json:"mainline_sha"`
+}
+
+func lancerRun(t *testing.T, api string, demande launchRunRequest) launchRunResponse {
+	t.Helper()
+	corps, err := json.Marshal(demande)
+	if err != nil {
+		t.Fatalf("encodage : %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		api+"/repos/"+depot+"/runs", bytes.NewReader(corps))
+	if err != nil {
+		t.Fatalf("requête : %v", err)
+	}
+	req.Header.Set("X-User-Subject", sujet)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("lancement du run : %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	brut, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("lancement du run : statut %d — %s", resp.StatusCode, brut)
+	}
+
+	var out launchRunResponse
+	if err := json.Unmarshal(brut, &out); err != nil {
+		t.Fatalf("réponse illisible : %v\n%s", err, brut)
+	}
+	return out
 }
 
 func configurerDepot(t *testing.T, api, urlForge string) {

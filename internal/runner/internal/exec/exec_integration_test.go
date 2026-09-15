@@ -218,3 +218,77 @@ func TestLeMotDePasseDElevationEleveVraimentSansCasserLeFlux(t *testing.T) {
 		}
 	}
 }
+
+// playbookInvalide est syntaxiquement cassé : la clé `tasks` porte une chaîne
+// là où Ansible attend une liste.
+//
+// Il EXISTE, contrairement au cas que le pré-contrôle attrape — c'est tout
+// l'intérêt : il éprouve le repli, celui qui doit fonctionner pour tout ce que
+// warden ne sait pas vérifier lui-même.
+const playbookInvalide = "- name: casse\n  hosts: all\n  tasks: ceci n'est pas une liste\n"
+
+// TestUnEchecSansTacheEstExpliqueParLeVraiRunner est la mesure qui protège la
+// fonctionnalité d'une évolution d'`ansible-runner`.
+//
+// L'étage 1 rejoue une fixture : il dit ce que le binaire produisait un jour.
+// Celui-ci dit que le message fatal d'Ansible arrive ENCORE là où on va le
+// chercher — dans les trames `verbose`, et non sur `stderr`, qui est vide dans
+// ce cas (MESURÉ). Le jour où ça change, c'est ici que ça parlera, plutôt que
+// sur un run de production muet.
+func TestUnEchecSansTacheEstExpliqueParLeVraiRunner(t *testing.T) {
+	if _, err := exec.LookPath(wexec.Binaire); err != nil {
+		t.Skipf("%s absent de ce poste", wexec.Binaire)
+	}
+
+	base := "/workspace"
+	if _, err := os.Stat(base); err != nil {
+		base = t.TempDir()
+	}
+	espace := filepath.Join(base, "src-invalide")
+	if err := os.MkdirAll(espace, 0o750); err != nil {
+		t.Fatalf("préparation de l'arbre : %v", err)
+	}
+	ecrire(t, filepath.Join(espace, "casse.yml"), playbookInvalide)
+	ecrire(t, filepath.Join(espace, "hosts"), "localhost ansible_connection=local\n")
+
+	r, err := wexec.New(wexec.Config{
+		Workspace:      espace,
+		PrivateDataDir: filepath.Join(base, "pdd-invalide"),
+		Playbook:       "casse.yml",
+		Inventory:      "hosts",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var evs []events.Event
+	statut, err := r.Run(t.Context(), func(e events.Event) { evs = append(evs, e) })
+	// Un playbook invalide n'est PAS une panne de pilotage : le run échoue.
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if statut != wexec.StatutEchoue {
+		t.Fatalf("statut = %q, attendu %q", statut, wexec.StatutEchoue)
+	}
+
+	var diagnostic string
+	for _, e := range evs {
+		if msg := events.Diagnostic(e.Payload); msg != "" {
+			diagnostic = msg
+		}
+	}
+	if diagnostic == "" {
+		t.Fatal("aucun diagnostic : le run est muet, c'est le défaut d'origine")
+	}
+	t.Logf("diagnostic rendu : %s", diagnostic)
+
+	// Chaque event doit franchir la validation du schéma, diagnostic compris :
+	// un event produit ici et refusé à l'ingestion serait perdu au dernier
+	// mètre, c'est-à-dire exactement là où il a le plus de valeur.
+	for i := range evs {
+		evs[i].Seq = int64(i)
+		if err := evs[i].Validate(); err != nil {
+			t.Errorf("event %d refusé par le schéma : %v", i, err)
+		}
+	}
+}

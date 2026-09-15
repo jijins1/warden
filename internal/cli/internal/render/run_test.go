@@ -117,6 +117,32 @@ func TestUnEventSansHoteNeProduitAucuneLigne(t *testing.T) {
 	}
 }
 
+// Un run qui échoue sans qu'AUCUNE tâche ne démarre doit quand même dire
+// pourquoi.
+//
+// C'est le défaut constaté en production : un playbook introuvable ne produit
+// que des events sans hôte, tous écartés par le filtre ci-dessus, et la sortie
+// se réduisait à `run <ref> : failed`. Le diagnostic écrit par warden passe
+// désormais, et lui seul — les trames `verbose` d'Ansible restent du bruit.
+func TestUnEchecSansTacheDitPourquoi(t *testing.T) {
+	diagnostic := frame(0, 0, "", "", "", events.StateFailed)
+	diagnostic.Payload = json.RawMessage(
+		`{"` + events.CleErreur + `":"playbook introuvable dans le commit audité : site.yml"}`)
+
+	s := &suiveurFactice{
+		frames: []ws.EventFrame{diagnostic},
+		fin:    stream.Fin{Status: render.IssueEchec},
+	}
+
+	var out strings.Builder
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+	if !strings.Contains(out.String(), "site.yml") {
+		t.Errorf("le motif de l'échec n'apparaît pas :\n%s", out.String())
+	}
+}
+
 // Le bilan est trié : l'ordre d'itération d'une map varie d'un run à l'autre, et
 // un récapitulatif dont les lignes bougent sans que rien n'ait changé se relit
 // mal.

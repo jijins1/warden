@@ -91,6 +91,19 @@ func (r *rendu) event(e ws.EventFrame) {
 		}
 	}
 
+	// Le DIAGNOSTIC passe avant le filtre ci-dessous, et c'est tout son objet :
+	// un run qui échoue sans qu'aucune tâche ne démarre — playbook introuvable,
+	// erreur de syntaxe — ne produit que des events sans hôte. Ils étaient donc
+	// tous écartés, et `warden logs` n'avait plus qu'un `failed` nu à imprimer.
+	//
+	// Seule la clé que WARDEN écrit passe : les trames `verbose` d'Ansible
+	// restent du bruit, y compris sur un run qui réussit.
+	if msg := events.Diagnostic(e.Payload); msg != "" {
+		r.clorreTache()
+		_, _ = fmt.Fprintf(r.sortie, "\n%s %s\n", marqueur(events.StateFailed), msg)
+		return
+	}
+
 	hote := e.Host
 	if hote == "" {
 		// Un event sans hôte vient du play lui-même, pas d'une machine : rien
