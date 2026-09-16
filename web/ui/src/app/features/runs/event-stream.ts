@@ -52,8 +52,38 @@ export interface GroupeTache {
  */
 export type LigneGroupee =
   | { readonly kind: 'resume'; readonly seq: number }
+  | { readonly kind: 'erreur'; readonly seq: number; readonly message: string }
   | { readonly kind: 'tache'; readonly groupe: GroupeTache }
   | { readonly kind: 'event'; readonly event: EventFrame };
+
+/**
+ * `events.CleErreur` — internal/events/diagnostic.go.
+ *
+ * Miroir manuel d'une constante Go, comme les types de `wire.ts` : c'est la clé
+ * qu'un payload porte quand le message a été écrit par WARDEN et non recopié
+ * d'`ansible-runner`.
+ */
+const CLE_ERREUR = 'warden_error';
+
+/**
+ * Le message de diagnostic d'un event, vide s'il n'en porte pas.
+ *
+ * Ce discriminant est ce qui permet d'afficher CE message sans rouvrir la porte
+ * au bruit : un run qui RÉUSSIT émet déjà des events `verbose` sans hôte —
+ * mesuré : cinq, rien que pour l'avertissement de découverte d'interpréteur
+ * Python — et c'est précisément ce que le filtre ci-dessous écarte.
+ *
+ * Tolérante : un payload d'une autre forme rend une chaîne vide. Elle est
+ * appelée sur chaque event, y compris ceux d'un pod hostile.
+ */
+function diagnostic(e: EventFrame): string {
+  const p = e.payload as Record<string, unknown> | null | undefined;
+  if (!p || typeof p !== 'object') {
+    return '';
+  }
+  const msg = p[CLE_ERREUR];
+  return typeof msg === 'string' ? msg : '';
+}
 
 /**
  * Regroupe le flux par tâche, à plat.
@@ -63,8 +93,10 @@ export type LigneGroupee =
  * regroupement suit `task_number`, le même identifiant que `warden logs`
  * utilise déjà côté CLI pour la même raison.
  */
-function grouperParTache(lignes: readonly LigneFlux[]): (GroupeTache | { seq: number })[] {
-  const resultat: (GroupeTache | { seq: number })[] = [];
+function grouperParTache(
+  lignes: readonly LigneFlux[],
+): (GroupeTache | { seq: number } | { seq: number; erreur: string })[] {
+  const resultat: (GroupeTache | { seq: number } | { seq: number; erreur: string })[] = [];
   let courant: {
     cle: string;
     taskName: string;
@@ -82,6 +114,21 @@ function grouperParTache(lignes: readonly LigneFlux[]): (GroupeTache | { seq: nu
     }
 
     const e = ligne.event;
+
+    // Le DIAGNOSTIC passe AVANT le filtre, et c'est tout son objet : un run qui
+    // échoue sans qu'aucune tâche ne démarre — playbook introuvable, erreur de
+    // syntaxe — ne produit que des events sans hôte. Ils étaient donc tous
+    // écartés, et la page restait muette sur un run `failed`.
+    //
+    // Il ne rejoint aucun groupe : il n'appartient à aucune tâche, puisqu'il
+    // n'y en a pas eu. Comme une marque de reprise, il coupe le groupe courant.
+    const message = diagnostic(e);
+    if (message) {
+      courant = null;
+      resultat.push({ seq: e.seq, erreur: message });
+      continue;
+    }
+
     // Un event SANS hôte vient du play lui-même, pas d'une machine : rien à
     // compter par tâche, et l'afficher ne serait que du bruit — une ligne
     // vide répétée à chaque event de cycle de vie d'Ansible.
@@ -127,6 +174,10 @@ export function aplatir(
 ): LigneGroupee[] {
   const resultat: LigneGroupee[] = [];
   for (const l of grouperParTache(lignes)) {
+    if ('erreur' in l) {
+      resultat.push({ kind: 'erreur', seq: l.seq, message: l.erreur });
+      continue;
+    }
     if (!('cle' in l)) {
       resultat.push({ kind: 'resume', seq: l.seq });
       continue;
@@ -333,6 +384,8 @@ export class EventStream {
     switch (ligne.kind) {
       case 'resume':
         return `r${ligne.seq}`;
+      case 'erreur':
+        return `x${ligne.seq}`;
       case 'tache':
         return `t${ligne.groupe.cle}`;
       case 'event':

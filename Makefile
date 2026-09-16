@@ -67,7 +67,12 @@ test-integration: ## Étage 2 — intégration, PostgreSQL via testcontainers
 .PHONY: test-e2e
 test-e2e: images ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée des namespaces jetables)
 	@echo "Cluster visé : $$(kubectl config current-context)"
-	go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/ ./e2e/
+	# WARDEN_E2E_IMAGE, sans quoi chaine_test.go retombe sur son défaut distant
+	# (gitea.ruokki.ovh/ruokki/wardend:dev) et teste un binaire sans rapport avec
+	# ce que `images` vient de construire — exactement le symptôme trompeur que
+	# le commentaire ci-dessus décrit.
+	WARDEN_E2E_IMAGE=$(IMAGE_BASE)/wardend:$(IMAGE_TAG) \
+	  go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/ ./e2e/
 
 # ---------------------------------------------------------------------------
 # Images.
@@ -137,7 +142,7 @@ test-runner-image: images ## Vérifie le pilotage d'ansible-runner dans l'image 
 	  --tmpfs /workspace:rw,uid=65534,gid=65534 --tmpfs /tmp:rw \
 	  -v $(EXEC_TEST):/t/exec.test:ro --entrypoint /t/exec.test \
 	  $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) \
-	  -test.run 'TestLeVraiAnsibleRunnerEstPilote|TestLeMotDePasseDElevation' -test.v
+	  -test.run 'TestLeVraiAnsibleRunnerEstPilote|TestLeMotDePasseDElevation|TestUnEchecSansTacheEstExpliqueParLeVraiRunner' -test.v
 	rm -f $(EXEC_TEST)
 
 # Multi-arch et pas seulement pour l'amd64 des runners GitHub : le rôle `git`

@@ -225,6 +225,23 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 		return "", err
 	}
 
+	// Le PRÉ-CONTRÔLE, avant d'avoir lancé quoi que ce soit.
+	//
+	// Un playbook absent de l'arbre audité est l'échec le plus banal — une
+	// faute de frappe — et c'est celui qu'`ansible-runner` explique le plus
+	// mal : il rend `failed` sans qu'aucune tâche n'ait tourné, et le message
+	// ne vit que dans une trame `verbose` que personne n'affichait. Le
+	// constater ici donne un message ÉCRIT PAR NOUS, qui nomme le chemin
+	// fautif, et évite de payer le démarrage d'un interpréteur pour rien.
+	//
+	// Ce n'est PAS une erreur au sens de cette fonction : le pilotage n'a pas
+	// échoué, c'est le run qui n'a rien à exécuter. D'où `StatutEchoue` et un
+	// event, comme pour n'importe quel run qui échoue.
+	if manque := r.verifierLesChemins(); manque != "" {
+		emettre(EventErreur(manque))
+		return StatutEchoue, nil
+	}
+
 	kwargs, err := r.kwargs()
 	if err != nil {
 		return "", err
@@ -275,7 +292,8 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 	_ = ecriture.Close()
 
 	fini := r.debloquer(ctx, lecture)
-	statut := r.lire(lecture, emettre)
+	b := r.lire(lecture, emettre)
+	statut := b.statut
 
 	// Le flux utile est terminé — sur la trame d'archive, le plus souvent. Le
 	// RESTE doit quand même être consommé : l'archive d'artefacts suit, et un
@@ -293,7 +311,49 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 	if statut == "" {
 		return "", fmt.Errorf("%s s'est terminé sans rapporter de statut", Binaire)
 	}
+
+	// Le REPLI : un échec dont aucune tâche n'a tourné.
+	//
+	// Le run est `failed` et pas une seule machine n'a été touchée — erreur de
+	// syntaxe, variable indéfinie, inventaire vide. Ansible l'a dit, mais dans
+	// des trames `verbose` que rien ne montrait : elles deviennent des events
+	// `unknown`, et l'interface les écarte à juste titre, puisqu'un run qui
+	// RÉUSSIT en produit déjà (MESURÉ : cinq, pour un simple avertissement
+	// d'interpréteur). D'où cette condition étroite — `failed` ET zéro tâche —
+	// qui ne peut pas se déclencher sur un run ordinaire.
+	//
+	// `stderr` n'est PAS la source, et c'est contre-intuitif : MESURÉ, il est
+	// VIDE dans ce cas. Le bornage de `borne` ne sert donc toujours qu'à la
+	// panne de pilotage traitée juste au-dessus.
+	if statut == StatutEchoue && b.executes == 0 && len(b.verbeux) > 0 {
+		emettre(EventErreur(strings.Join(b.verbeux, " ")))
+	}
 	return statut, nil
+}
+
+// verifierLesChemins rend le message d'un chemin manquant, vide si tout est là.
+//
+// Les chemins sont RELATIFS au workspace, et `New` a déjà refusé qu'ils en
+// sortent : il ne reste qu'à constater leur présence. Un run ad-hoc n'a pas de
+// playbook — `Module` remplace le fichier — donc il n'y a rien à vérifier de
+// ce côté.
+//
+// Le message NOMME le chemin demandé : c'est la seule chose que l'utilisateur
+// puisse corriger, et la comparer à ce qu'il a tapé est tout le diagnostic.
+func (r *Runner) verifierLesChemins() string {
+	chemins := []struct{ quoi, rel string }{
+		{"playbook", r.cfg.Playbook},
+		{"inventaire", r.cfg.Inventory},
+	}
+	for _, c := range chemins {
+		if c.rel == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(r.cfg.Workspace, c.rel)); err != nil {
+			return fmt.Sprintf("%s introuvable dans le commit audité : %s", c.quoi, c.rel)
+		}
+	}
+	return ""
 }
 
 // debloquer arme la sortie de secours de la lecture.
@@ -318,13 +378,31 @@ func (r *Runner) debloquer(ctx context.Context, lecture *os.File) chan struct{} 
 	return fini
 }
 
+// bilan retient, en plus du statut, de quoi EXPLIQUER un échec sans tâche.
+//
+// Les deux champs ajoutés ne servent qu'à ce cas : un run qui exécute quelque
+// chose se raconte par ses events, et le diagnostic n'a alors rien à dire.
+type bilan struct {
+	statut Statut
+
+	// executes compte les events porteurs d'un HÔTE, c'est-à-dire le travail
+	// réel. Le reste — cycle de vie du play, `verbose` — n'est pas une tâche
+	// qui a tourné sur une machine, et c'est la distinction qui décide si un
+	// diagnostic est nécessaire.
+	executes int
+
+	// verbeux garde les textes des trames `verbose`, dans l'ordre. Ansible y
+	// écrit ses erreurs fatales, découpées en fragments.
+	verbeux []string
+}
+
 // lire consomme le flux JSONL et rend le dernier statut annoncé.
-func (r *Runner) lire(sortie io.Reader, emettre Emetteur) Statut {
+func (r *Runner) lire(sortie io.Reader, emettre Emetteur) bilan {
 	tr := NewTraducteur()
 	sc := bufio.NewScanner(sortie)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLigne)
 
-	var statut Statut
+	var b bilan
 	for sc.Scan() {
 		ligne := sc.Bytes()
 
@@ -335,10 +413,18 @@ func (r *Runner) lire(sortie io.Reader, emettre Emetteur) Statut {
 			break
 		}
 		if s := Status(ligne); s != "" {
-			statut = Statut(s)
+			b.statut = Statut(s)
 			continue
 		}
+		// Relu AVANT la traduction, et sans la remplacer : la trame `verbose`
+		// part dans le flux d'events comme avant.
+		if txt := TexteVerbeux(ligne); txt != "" {
+			b.verbeux = append(b.verbeux, txt)
+		}
 		if e, ok := tr.Traduire(ligne); ok {
+			if e.Host != "" {
+				b.executes++
+			}
 			emettre(e)
 		}
 	}
@@ -352,7 +438,7 @@ func (r *Runner) lire(sortie io.Reader, emettre Emetteur) Statut {
 			Payload:    json.RawMessage(`{"warden_flux":"lecture du flux d'events interrompue"}`),
 		})
 	}
-	return statut
+	return b
 }
 
 // poserLaCle écrit la clé d'accès là où `ansible-runner` la cherche.

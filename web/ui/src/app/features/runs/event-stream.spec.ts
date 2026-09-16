@@ -82,6 +82,14 @@ const event = (
 const jamaisDeplie = () => false;
 const toujoursDeplie = () => true;
 
+/** Le diagnostic d'un run qui n'a rien exécuté : sans hôte, sans tâche. */
+const diagnostic = (seq: number, message: string): LigneFlux =>
+  event(seq, 0, '', 'failed', {
+    task_name: '',
+    role: '',
+    payload: { warden_error: message },
+  });
+
 describe('aplatir', () => {
   // LE point du regroupement : la question posée sur une flotte est « combien
   // ont changé sur cette tâche », pas le détail machine par machine.
@@ -122,6 +130,33 @@ describe('aplatir', () => {
 
     expect(plat.map((l) => l.kind)).toEqual(['tache', 'event']);
     expect(plat[0].groupe?.comptes).toEqual({ changed: 1 });
+  });
+
+  // Un run qui échoue sans qu'AUCUNE tâche ne démarre ne produit que des events
+  // sans hôte — tous écartés par le filtre ci-dessus, ce qui laissait la page
+  // muette sur un `failed`. Le diagnostic écrit par warden doit passer.
+  //
+  // Ce test échouerait si le filtre se remettait à l'avaler : c'est sa raison
+  // d'être.
+  it('garde le diagnostic d’un run qui n’a rien exécuté', () => {
+    const plat = aplatir([diagnostic(0, 'playbook introuvable : site.yml')], jamaisDeplie);
+
+    expect(plat.map((l) => l.kind)).toEqual(['erreur']);
+    expect(plat[0]).toMatchObject({ message: 'playbook introuvable : site.yml' });
+  });
+
+  // …mais LUI SEUL. Un run qui RÉUSSIT émet déjà des events `verbose` sans hôte
+  // — mesuré : cinq, rien que pour l'avertissement d'interpréteur Python. Les
+  // laisser passer noierait chaque run sous du bruit.
+  it('écarte toujours les events sans hôte qui ne portent pas de diagnostic', () => {
+    const lignes = [
+      event(0, 0, '', 'unknown', { payload: { stdout: '[WARNING]: Platform linux…' } }),
+      event(1, 1, 'kodi', 'changed'),
+    ];
+
+    const plat = aplatir(lignes, jamaisDeplie);
+
+    expect(plat.map((l) => l.kind)).toEqual(['tache']);
   });
 
   // Une marque de reprise garde sa place chronologique et n'appartient à

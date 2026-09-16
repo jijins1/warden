@@ -56,6 +56,18 @@
           <span class="trait"></span>
         </div>
       }
+      @case ('erreur') {
+        <!-- Pourquoi le run n'a rien exécuté. Écrit par warden, pas recopié
+             d'Ansible : c'est ce qui le distingue du bruit de cycle de vie,
+             écarté juste à côté.
+
+             Interpolation, JAMAIS `innerHTML` : le message peut reprendre la
+             sortie d'`ansible-runner`, qui tourne dans le domaine hostile. -->
+        <p class="diagnostic" role="alert">
+          <mat-icon>error_outline</mat-icon>
+          <span>{{ ligne.message }}</span>
+        </p>
+      }
       @case ('tache') {
         <button
           type="button"

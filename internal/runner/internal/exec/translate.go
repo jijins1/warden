@@ -22,6 +22,11 @@ const (
 	evUnreachable = "runner_on_unreachable"
 	evFileDiff    = "runner_on_file_diff"
 	evTaskStart   = "playbook_on_task_start"
+
+	// evVerbose reste rangé dans la soupape `unknown` par `etat` — il n'est PAS
+	// un résultat de tâche. Il est nommé ici parce qu'un diagnostic a besoin de
+	// le reconnaître, pas parce que le traducteur le traiterait à part.
+	evVerbose = "verbose"
 )
 
 // trame est la partie d'une ligne du flux dont le traducteur a besoin.
@@ -38,6 +43,16 @@ type trame struct {
 	Status    string          `json:"status"`
 	Zipfile   *int64          `json:"zipfile"`
 	Brut      json.RawMessage `json:"-"`
+
+	// Stdout est le texte d'une trame `verbose`, et le seul endroit où Ansible
+	// dit pourquoi il n'a RIEN exécuté.
+	//
+	// MESURÉ sur l'image du runner : un playbook introuvable laisse `stderr`
+	// VIDE et rend `{"event":"verbose","stdout":"ERROR! the playbook: x.yml
+	// could not be found"}`. C'est ce qui rend ce champ nécessaire : sans lui,
+	// l'échec le plus banal — une faute de frappe — ne peut être expliqué par
+	// rien.
+	Stdout string `json:"stdout"`
 }
 
 type donnees struct {
@@ -123,6 +138,26 @@ func Status(ligne []byte) string {
 		return ""
 	}
 	return t.Status
+}
+
+// TexteVerbeux rend le texte d'une trame `verbose`, vide pour tout le reste.
+//
+// Ansible y écrit ce qu'il aurait imprimé sur un terminal, y compris ses
+// erreurs fatales — et c'est le SEUL endroit où elles apparaissent quand rien
+// ne s'exécute (voir le champ `Stdout`).
+//
+// Il ne change RIEN au sort de la trame : elle reste traduite en event
+// `unknown` avec son payload intact, comme avant. Cette fonction ne fait que la
+// relire, pour qu'un échec sans tâche puisse être expliqué.
+func TexteVerbeux(ligne []byte) string {
+	var t trame
+	if err := json.Unmarshal(bytes.TrimSpace(ligne), &t); err != nil {
+		return ""
+	}
+	if t.Event != evVerbose {
+		return ""
+	}
+	return t.Stdout
 }
 
 // FinDeFlux dit si la trame annonce l'archive d'artefacts qui termine le flux.
