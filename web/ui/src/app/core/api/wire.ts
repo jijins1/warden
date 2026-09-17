@@ -136,6 +136,18 @@ export interface KeyDescriptor {
 }
 
 /**
+ * `GET /environments/protected` — api/protected_handler.go.
+ *
+ * Un avertissement visuel, PAS un contrôle d'accès (ADR-0044) — voir
+ * `EnvironmentGrant` pour ça. Ouvert à tout compte authentifié, pas
+ * seulement aux administrateurs : le nom d'un environnement n'est pas
+ * sensible, et le badge doit se colorer partout où il apparaît.
+ */
+export interface ProtectedEnvironments {
+  environments: string[];
+}
+
+/**
  * `POST /repos/{repo}/runs` — api/run_launch_handler.go, `launchRunPayload`.
  *
  * Ni `run_ref` ni `base_sha` : le serveur tire l'un et résout l'autre. Ni

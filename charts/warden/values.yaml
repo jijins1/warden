@@ -158,6 +158,13 @@ controller:
   # à republier un ConfigMap modifié, et c'est lui qui domine le délai total.
   grantsSeconds: 10
 
+  # Les options par environnement (ADR-0044) ne coûtent, elles aussi, qu'une
+  # lecture de fichier. Alignées sur le rythme des DROITS et non sur celui des
+  # pods : `allowRun` est un gel qu'un exploitant pose pendant un incident, et
+  # ce qu'il borne est le délai de sa PRISE D'EFFET — la même urgence qu'une
+  # révocation de droit.
+  protectedSeconds: 10
+
   resources:
     requests: { cpu: 10m, memory: 32Mi }
     limits: { memory: 128Mi }
@@ -187,6 +194,39 @@ grants:
   # environments:
   #   prod:
   #     - ruokki
+
+# Les options par environnement (ADR-0044) — NI L'UNE NI L'AUTRE n'est un
+# contrôle d'accès à un credential. Voir `grants` ci-dessus pour ça.
+#
+#   protected : un AVERTISSEMENT VISUEL. Avant cet ADR, seul le nom `prod`
+#     était reconnu, câblé en dur dans le badge du navigateur. Cette option le
+#     remplace : un environnement qui s'appelle autrement peut mériter la
+#     même prudence.
+#
+#   allowRun : un GEL du lancement de run, INDÉPENDANT des droits
+#     ci-dessus — `false` refuse tout nouveau run sur cet environnement même
+#     pour un compte qui y a droit, sans lui retirer ce droit. Utile pour un
+#     gel temporaire (maintenance, incident) qu'on lève sans avoir à
+#     réaccorder quoi que ce soit ensuite. Omis, ou `true` : autorisé — le
+#     défaut ne bloque jamais silencieusement.
+#
+# Fichier SÉPARÉ des droits, bien que le mécanisme de réconciliation soit
+# identique — les notions sont distinctes, et les mélanger ferait d'un simple
+# avertissement ou d'un gel quelque chose qui ressemble à un contrôle de
+# sécurité de premier plan.
+#
+# Contrairement aux droits, une carte VIDE ici est un état accepté : oublier
+# de déclarer un environnement ne retire aucun accès, ça laisse juste
+# `protected: false` et `allowRun: true` — aucun badge, aucun gel.
+protected:
+  enabled: true
+  environments: {}
+  # environments:
+  #   prod:
+  #     protected: true
+  #     allowRun: false   # gel temporaire, ex. pendant une maintenance
+  #   preprod:
+  #     protected: true
 
 # PostgreSQL par l'opérateur CNPG.
 #

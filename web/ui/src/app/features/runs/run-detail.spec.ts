@@ -5,6 +5,8 @@ import { RunDetail } from './run-detail';
 import { RunsService } from '../../core/api/runs.service';
 import { APP_CONFIG } from '../../core/config/app-config';
 import { provideRouter } from '@angular/router';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 
 @Component({ imports: [RunDetail], template: '<w-run-detail [runRef]="ref" />' })
 class Hote {
@@ -25,6 +27,10 @@ function monter(parReference: (r: string) => Promise<unknown>) {
       { provide: RunsService, useValue: service },
       { provide: APP_CONFIG, useValue: { apiUrl: 'https://api.invalid' } },
       provideRouter([]),
+      // `w-env-badge` demande désormais `ProtectedEnvironmentsService`, qui
+      // demande `HttpClient` (ADR-0044).
+      provideHttpClient(),
+      provideHttpClientTesting(),
     ],
   });
   return { service, fixture: TestBed.createComponent(Hote) };

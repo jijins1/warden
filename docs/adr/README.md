@@ -56,6 +56,7 @@ d'implémentation prises en cours de route.
 | [0041](0041-adhoc-comme-genre-de-run.md) | L'ad-hoc comme troisième genre de run, sans allowlist de modules | Accepted |
 | [0042](0042-commit-daudit-frappe-par-le-serveur.md) | Le commit d'audit d'un run lancé depuis le navigateur est frappé par le serveur | Accepted |
 | [0043](0043-diagnostic-dun-run-sans-tache.md) | Dire pourquoi un run n'a rien exécuté | Accepted |
+| [0044](0044-environnements-proteges.md) | Options par environnement : un avertissement déclaré, et un gel indépendant des droits | Accepted |
 
 ## Convention
 
