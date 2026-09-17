@@ -554,6 +554,60 @@ func TestLeDroitEstLuSurLAppelantAuthentifie(t *testing.T) {
 	}
 }
 
+// gelFactice double le magasin des options par environnement (ADR-0044),
+// indexé par nom : présent = gelé (`allowRun: false`).
+type gelFactice map[string]struct{}
+
+func (g gelFactice) ListOptions(context.Context) ([]core.EnvironmentOptions, error) { return nil, nil }
+func (g gelFactice) ReplaceOptions(context.Context, []core.EnvironmentOptions) error { return nil }
+func (g gelFactice) RunAutorise(_ context.Context, env string) (bool, error) {
+	_, gele := g[env]
+	return !gele, nil
+}
+
+// LE test de l'ADR-0044 : le gel refuse un run MÊME quand les droits
+// l'autorisent, parce que les deux contrôles sont volontairement
+// indépendants — c'est ce qui permet de geler `prod` sans toucher à qui y a
+// droit.
+func TestUnRunSurUnEnvironnementGeleEstRefuseMalgreLeDroit(t *testing.T) {
+	s, err := New(&Config{Addr: "127.0.0.1:0"}, Deps{
+		Runs: stubPort{}, Users: stubPort{}, Diffs: stubPort{}, Events: stubPort{},
+		Repos: &magasinFactice{repos: []core.Repo{{
+			Name: "depot", RemoteURL: "https://forge.invalid/x.git", MainlineRef: "refs/heads/main",
+		}}},
+		Creator: &creatorFactice{}, Mirrors: &gitFactice{mainline: shaMain},
+		Refs: &gitFactice{parRef: map[string]string{
+			core.AuditRefFor(1, runAlice): shaAlice,
+		}},
+		Grants:    &frappeurFactice{},
+		Access:    droitsFactices{"1/prod": {}}, // Alice a le droit...
+		Protected: gelFactice{"prod": {}},       // ...mais prod est gelé.
+	})
+	if err != nil {
+		t.Fatalf("api.New : %v", err)
+	}
+
+	w := posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot",`+
+		`"environment":"prod","playbook":"site.yml","base_sha":"`+shaMain+`"}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("statut %d, attendu 403 : prod est gelé : %s", w.Code, w.Body.String())
+	}
+}
+
+// Un magasin de gel ABSENT n'empêche rien : c'est l'inverse d'Access, voir
+// core.VerifierRunAutorise.
+func TestSansMagasinDeGelLeRunPasseSiLeDroitLAutorise(t *testing.T) {
+	s, _, c, _ := monterEcriture(t) // Deps.Protected n'est pas monté.
+
+	posterRun(t, s, administrateur(), `{"run_ref":"`+runAlice+`","repo":"depot",`+
+		`"environment":"prod","playbook":"site.yml","base_sha":"`+shaMain+`"}`)
+
+	if len(c.recus) != 1 {
+		t.Errorf("run non créé alors qu'aucun gel n'est monté : %+v", c.recus)
+	}
+}
+
 // Les flags acceptés sont enregistrés TELS QUELS : l'allowlist refuse, elle
 // n'ampute pas. Sans cette propriété, `run.flags` cesserait de dire ce que
 // l'utilisateur a demandé, et l'audit mentirait de la manière la plus discrète

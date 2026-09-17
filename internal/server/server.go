@@ -36,6 +36,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/grantfile"
 	"github.com/jijins1/warden/internal/server/internal/outbound/keyinventory"
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
+	"github.com/jijins1/warden/internal/server/internal/outbound/protectedfile"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
 )
 
@@ -200,6 +201,11 @@ func runController(ctx context.Context) error {
 	// tourner N réconciliateurs sur le même document.
 	droits := grantfile.New(os.Getenv(EnvGrantsFile))
 
+	// Les environnements PROTÉGÉS (ADR-0044) suivent le même principe : c'est
+	// le rôle dont le métier est de faire correspondre la base à un fichier,
+	// et il tourne à UN réplica.
+	proteges := protectedfile.New(os.Getenv(EnvProtectedFile))
+
 	// DEUX boucles, DEUX rythmes, et c'est une correction d'un couplage initial.
 	//
 	// Les avoir liés paraissait économe — un seul minuteur, un seul endroit où se
@@ -217,6 +223,7 @@ func runController(ctx context.Context) error {
 	// Kubernetes toutes les dix secondes pour rien.
 	intervallePods := secondesOuDefaut(EnvReconcileSeconds, core.IntervalleReconciliation)
 	intervalleDroits := secondesOuDefaut(EnvGrantsSeconds, IntervalleDesDroits)
+	intervalleProteges := secondesOuDefaut(EnvProtectedSeconds, IntervalleDesProteges)
 
 	slog.Info("contrôleur démarré",
 		slog.String("namespace", ns),
@@ -227,6 +234,11 @@ func runController(ctx context.Context) error {
 			slog.Duration("intervalle", intervalleDroits),
 			slog.String("note", "c'est la seule source ; aucune commande ne les modifie"))
 	}
+	if proteges != nil {
+		slog.Info("environnements protégés lus depuis un fichier",
+			slog.String("chemin", proteges.Chemin()),
+			slog.Duration("intervalle", intervalleProteges))
+	}
 
 	err = servirTous(ctx,
 		func(ctx context.Context) error {
@@ -234,6 +246,9 @@ func runController(ctx context.Context) error {
 		},
 		func(ctx context.Context) error {
 			return boucleDesDroits(ctx, droits, st, intervalleDroits)
+		},
+		func(ctx context.Context) error {
+			return boucleDesProteges(ctx, proteges, st, intervalleProteges)
 		},
 	)
 	if errors.Is(err, context.Canceled) {
@@ -440,6 +455,96 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 	slog.Info("droits réconciliés",
 		slog.Int("accordés", len(plan.Accorder)), slog.Int("révoqués", len(plan.Revoquer)),
 		slog.Int("inchangés", plan.Inchanges))
+}
+
+// IntervalleDesProteges est le rythme de relecture du fichier des options par
+// environnement.
+//
+// Aligné sur celui des DROITS (dix secondes), pas sur celui des pods : depuis
+// l'ADR-0044, ce document ne porte plus seulement le badge — `allowRun` est
+// un gel qu'un exploitant pose pendant un incident, et ce que l'intervalle
+// borne est le délai de sa PRISE D'EFFET, la même urgence qu'une révocation
+// de droit.
+const IntervalleDesProteges = 10 * time.Second
+
+// boucleDesProteges relit le fichier et réconcilie, jusqu'à l'annulation.
+//
+// Même charpente que boucleDesDroits, et pour la même raison : sans source
+// configurée, un déploiement qui ne protège aucun environnement reste valide.
+func boucleDesProteges(ctx context.Context, source *protectedfile.Source, st *store.Store, intervalle time.Duration) error {
+	if source == nil {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if intervalle <= 0 {
+		intervalle = IntervalleDesProteges
+	}
+
+	t := time.NewTicker(intervalle)
+	defer t.Stop()
+
+	for {
+		reconcilierLesProteges(ctx, source, st)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+// reconcilierLesProteges applique le document des environnements protégés
+// s'il a changé.
+//
+// Aucune erreur n'est REMONTÉE, même raison que reconcilierLesDroits : un
+// YAML cassé ici ne doit arrêter ni la réconciliation des pods ni celle des
+// droits, qui n'ont rien à voir.
+func reconcilierLesProteges(ctx context.Context, source *protectedfile.Source, st *store.Store) {
+	if source == nil {
+		return
+	}
+
+	doc, change, err := source.Lire()
+	switch {
+	case errors.Is(err, protectedfile.ErrAbsent):
+		// NE RIEN FAIRE : un contrôleur démarré avant que le ConfigMap soit posé
+		// ne doit pas conclure « rien n'est protégé » et retirer le badge de
+		// tout le monde.
+		return
+	case err != nil:
+		slog.Error("document des environnements protégés illisible",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	case !change:
+		return
+	}
+
+	options, err := core.ValiderLesProteges(doc)
+	if err != nil {
+		slog.Error("document des environnements protégés refusé",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	}
+
+	if err := st.ReplaceOptions(ctx, options); err != nil {
+		source.Oublier()
+		slog.Error("application des environnements protégés en échec",
+			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
+		return
+	}
+
+	var geles []string
+	for _, o := range options {
+		if !o.AllowRun {
+			geles = append(geles, o.Environment)
+		}
+	}
+	if len(geles) > 0 {
+		slog.Warn("environnements gelés par le document", slog.Any("environnements", geles))
+	}
+
+	slog.Info("options par environnement réconciliées", slog.Int("total", len(options)))
 }
 
 func valeurOuDefaut(nom, defaut string) string {
@@ -723,9 +828,14 @@ func runAPI(ctx context.Context) error {
 		// Les droits par environnement ne demandent que PostgreSQL : branchés
 		// toujours, comme l'authentification. Un déploiement dégradé doit rester
 		// un déploiement où l'autorisation s'applique.
-		Access:   st,
-		KeyStore: keyStore,
-		Stash:    consigne,
+		Access: st,
+		// Les environnements protégés ne demandent que PostgreSQL, comme les
+		// droits : branchés toujours, et facultatifs au sens du montage —
+		// aucune conséquence de sécurité s'ils manquent, contrairement à
+		// `Access` (ADR-0044).
+		Protected: st,
+		KeyStore:  keyStore,
+		Stash:     consigne,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
@@ -838,6 +948,21 @@ const (
 	//
 	// Absente, le contrôleur ne réconcilie aucun droit — et n'en révoque aucun.
 	EnvGrantsFile = "WARDEN_GRANTS_FILE"
+
+	// EnvProtectedSeconds est le rythme de relecture des options par
+	// environnement, en secondes (ADR-0044). Aligné sur celui des droits :
+	// `allowRun` est un gel dont la prise d'effet est aussi urgente qu'une
+	// révocation.
+	EnvProtectedSeconds = "WARDEN_PROTECTED_SECONDS"
+
+	// EnvProtectedFile est le document des options par environnement
+	// (ADR-0044) — badge visuel et gel de lancement — monté depuis un
+	// ConfigMap versionné distinct de celui des droits : ces notions sont
+	// séparées, l'une contrôle un accès à un credential, les deux autres non.
+	//
+	// Absente, le contrôleur ne déclare aucune option par environnement — et
+	// n'en retire aucune : aucun badge, aucun gel.
+	EnvProtectedFile = "WARDEN_PROTECTED_FILE"
 
 	// EnvInsecureKubeconfig autorise le kubeconfig local au lieu de la
 	// configuration in-cluster. Développement et tests d'étage 3 UNIQUEMENT : il

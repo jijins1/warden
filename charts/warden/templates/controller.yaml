@@ -48,6 +48,14 @@ spec:
             # l'absence du fichier comme « ne rien faire » — surtout pas comme un
             # document vide, qui révoquerait tous les droits du produit.
             optional: true
+        # Les environnements protégés (ADR-0044), même raison de montage que
+        # les droits — mais un fichier SÉPARÉ, dans un dossier séparé : les
+        # deux notions sont distinctes, l'une contrôle un accès, l'autre
+        # avertit.
+        - name: protected
+          configMap:
+            name: {{ $fullname }}-protected
+            optional: true
       securityContext:
         {{- include "warden.podSecurityContext" . | nindent 8 }}
       {{- include "warden.imagePullSecrets" . | nindent 6 }}
@@ -68,15 +76,22 @@ spec:
               value: {{ .Release.Namespace }}
             - name: WARDEN_GRANTS_FILE
               value: /etc/warden/grants.yaml
+            - name: WARDEN_PROTECTED_FILE
+              value: /etc/warden-protected/protected.yaml
 
-            # DEUX rythmes, et ils sont séparés exprès — voir `values.yaml`.
+            # TROIS rythmes, et ils sont séparés exprès — voir `values.yaml`.
             - name: WARDEN_RECONCILE_SECONDS
               value: {{ .Values.controller.reconcileSeconds | quote }}
             - name: WARDEN_GRANTS_SECONDS
               value: {{ .Values.controller.grantsSeconds | quote }}
+            - name: WARDEN_PROTECTED_SECONDS
+              value: {{ .Values.controller.protectedSeconds | quote }}
           volumeMounts:
             - name: grants
               mountPath: /etc/warden
+              readOnly: true
+            - name: protected
+              mountPath: /etc/warden-protected
               readOnly: true
           {{- with .Values.controller.resources }}
           resources:

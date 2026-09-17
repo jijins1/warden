@@ -372,34 +372,59 @@ func (a *Server) HandleIssuePushGrant(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// autoriserLEnvironnement rend false et A DÉJÀ RÉPONDU quand l'accès est refusé.
+// autoriserLEnvironnement rend false et A DÉJÀ RÉPONDU quand le run est refusé.
 //
-// Extrait parce qu'il est appelé deux fois (voir HandleCreateRun) et que
-// dupliquer la traduction d'un refus d'autorisation est la manière dont les deux
-// copies finissent par diverger — l'une rendant 403 et l'autre 500 sur la même
-// cause.
+// Extrait parce qu'il est appelé à TROIS endroits (`POST /runs`,
+// `POST /repos/{repo}/runs`, `run_pipeline.go`) et que dupliquer la traduction
+// d'un refus est la manière dont les copies finissent par diverger — l'une
+// rendant 403 et l'autre 500 sur la même cause.
 //
-// Ce que ce contrôle achète exactement : la clé d'accès est délivrée PAR
-// ENVIRONNEMENT (ADR-0020), donc sans droit il n'y a pas de credential. Ce qu'il
-// n'achète pas : qu'un run légitime reste dans son périmètre — l'egress est
-// ouvert, et le §10.2 pose que le périmètre est appliqué par le réseau ou ne
-// l'est pas.
+// DEUX contrôles distincts, dans cet ordre :
+//
+//  1. les DROITS (ADR-0033) : la clé d'accès est délivrée PAR ENVIRONNEMENT
+//     (ADR-0020), donc sans droit il n'y a pas de credential. Ce qu'ils
+//     n'achètent pas : qu'un run légitime reste dans son périmètre — l'egress
+//     est ouvert, et le §10.2 pose que le périmètre est appliqué par le
+//     réseau ou ne l'est pas.
+//  2. le GEL (ADR-0044) : indépendant des droits, et qui peut refuser un run
+//     que les droits autorisent — c'est tout son intérêt, geler `prod` sans
+//     retoucher qui y a droit.
 func (a *Server) autoriserLEnvironnement(w http.ResponseWriter, r *http.Request, user *core.User, env string) bool {
 	err := core.VerifierLAcces(r.Context(), a.deps.Access, user.ID, env)
-	if err == nil {
-		return true
-	}
-	if errors.Is(err, core.ErrEnvironnementInterdit) {
-		slog.Warn("run refusé : environnement interdit",
-			slog.String("sujet", user.Subject), slog.String("environnement", env))
-		// 403 et non 404 : contrairement à `/admin`, l'existence d'un
-		// environnement n'est pas un secret — l'utilisateur en a lu le nom dans
-		// son propre inventaire. Le taire l'enverrait chercher une faute de
-		// frappe au lieu de demander un accès.
-		http.Error(w, "you have no access to environment "+env, http.StatusForbidden)
+	if err != nil {
+		if errors.Is(err, core.ErrEnvironnementInterdit) {
+			slog.Warn("run refusé : environnement interdit",
+				slog.String("sujet", user.Subject), slog.String("environnement", env))
+			// 403 et non 404 : contrairement à `/admin`, l'existence d'un
+			// environnement n'est pas un secret — l'utilisateur en a lu le nom
+			// dans son propre inventaire. Le taire l'enverrait chercher une
+			// faute de frappe au lieu de demander un accès.
+			http.Error(w, "you have no access to environment "+env, http.StatusForbidden)
+			return false
+		}
+		slog.Error("vérification des droits en échec", slog.String("error", err.Error()))
+		http.Error(w, "could not verify your access", http.StatusInternalServerError)
 		return false
 	}
-	slog.Error("vérification des droits en échec", slog.String("error", err.Error()))
-	http.Error(w, "could not verify your access", http.StatusInternalServerError)
-	return false
+
+	// Le GEL (ADR-0044) est vérifié APRÈS les droits, et refusé de la même
+	// manière : les deux sont des raisons de refuser un run, et l'appelant n'a
+	// pas à les distinguer pour corriger sa demande — le message le fait.
+	if err := core.VerifierRunAutorise(r.Context(), a.deps.Protected, env); err != nil {
+		if errors.Is(err, core.ErrRunBloque) {
+			slog.Warn("run refusé : environnement gelé",
+				slog.String("sujet", user.Subject), slog.String("environnement", env))
+			http.Error(w, "runs are currently frozen on environment "+env, http.StatusForbidden)
+			return false
+		}
+		// Une panne de LECTURE du gel ne bloque PAS, contrairement à une panne de
+		// lecture des droits — voir le commentaire de VerifierRunAutorise. Le gel
+		// est une option, pas le contrôle de sécurité par défaut du produit ; elle
+		// est seulement journalisée, pour que l'exploitant sache qu'elle n'a pas
+		// pu être vérifiée.
+		slog.Warn("vérification du gel en échec, le run est autorisé par défaut",
+			slog.String("environnement", env), slog.String("error", err.Error()))
+	}
+
+	return true
 }

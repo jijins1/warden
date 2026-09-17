@@ -208,6 +208,17 @@ type Deps struct {
 	// pas montée n'est pas un contrôle.
 	Access core.EnvironmentGrants
 
+	// Protected sert les options par environnement (ADR-0044) : le badge
+	// visuel, ET le gel de lancement (`allowRun`) vérifié par
+	// `autoriserLEnvironnement`.
+	//
+	// Facultatif comme Access au sens du montage, mais SANS sa conséquence pour
+	// le badge : `GET /environments/protected` rend une liste vide plutôt
+	// qu'un 501. Le gel, lui, se comporte à l'INVERSE d'Access quand il est
+	// monté mais en échec de lecture — voir `core.VerifierRunAutorise` — parce
+	// que ce n'est pas le contrôle de sécurité par défaut du produit.
+	Protected core.ProtectedEnvironments
+
 	// ProjectConfig lit `.ansibleproxy.yml` dans l'arbre du commit (ADR-0009).
 	//
 	// Facultatif, et son absence est TOLÉRANTE plutôt qu'interdisante —
@@ -353,6 +364,16 @@ func (a *Server) Handler() http.Handler {
 	// `warden submit` par un autre transport, autorisée par les mêmes droits
 	// par environnement (ADR-0033) — jamais a.adminOuRien.
 	router.HandleFunc("POST /repos/{repo}/runs", a.HandleLaunchRun)
+
+	// Les environnements PROTÉGÉS (ADR-0044), en lecture seule et ouverts à
+	// TOUT compte authentifié — pas sous `/admin`, et jamais `adminOuRien`.
+	//
+	// Ce n'est pas une carte de l'organisation comme les clés ou les
+	// machines : c'est un avertissement visuel qui doit s'afficher partout où
+	// un nom d'environnement apparaît dans l'interface — liste de runs, détail
+	// de run — donc pour tout utilisateur, pas seulement les administrateurs.
+	// Ça ne révèle rien que le nom de l'environnement, déjà visible ailleurs.
+	router.HandleFunc("GET /environments/protected", a.HandleListProtectedEnvironments)
 
 	// Administration. Sous un préfixe distinct pour que la NetworkPolicy et
 	// l'ingress puissent la traiter à part — l'autorisation est portée par la

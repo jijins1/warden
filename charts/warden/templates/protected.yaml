@@ -1,0 +1,34 @@
+{{- if and .Values.protected.enabled .Values.protected.environments }}
+# Les options par environnement (ADR-0044) : un badge visuel (`protected`) et
+# un gel du lancement de run (`allowRun`) — NI L'UN NI L'AUTRE n'est un
+# contrôle d'accès à un credential. Voir `grants.yaml` pour ça.
+#
+# Fichier SÉPARÉ du document des droits, bien que le mécanisme soit le même :
+# les trois notions (droits, badge, gel) sont distinctes, et les mélanger
+# ferait d'un simple avertissement ou d'un gel opérationnel quelque chose qui
+# ressemble à un contrôle de sécurité.
+#
+# LE CONFIGMAP N'EST PAS RENDU QUAND LA CARTE EST VIDE, même raison que
+# `grants.yaml` : ça laisse le fichier ABSENT plutôt que vide, ce que le
+# contrôleur traite comme « ne rien faire » plutôt que « rien n'est déclaré ».
+# La différence compte moins ici qu'aux droits — une carte vide déclarée EST
+# un état accepté (voir ADR-0044) — mais autant garder les deux mécanismes
+# symétriques.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "warden.fullname" . }}-protected
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "protected" "root" .) | nindent 4 }}
+data:
+  protected.yaml: |
+    environments:
+      {{- range $env, $opts := .Values.protected.environments }}
+      {{ $env }}:
+        protected: {{ $opts.protected | default false }}
+        {{- if hasKey ($opts | default dict) "allowRun" }}
+        allowRun: {{ $opts.allowRun }}
+        {{- end }}
+      {{- end }}
+{{- end }}
