@@ -558,7 +558,7 @@ func TestLeDroitEstLuSurLAppelantAuthentifie(t *testing.T) {
 // indexé par nom : présent = gelé (`allowRun: false`).
 type gelFactice map[string]struct{}
 
-func (g gelFactice) ListOptions(context.Context) ([]core.EnvironmentOptions, error) { return nil, nil }
+func (g gelFactice) ListOptions(context.Context) ([]core.EnvironmentOptions, error)  { return nil, nil }
 func (g gelFactice) ReplaceOptions(context.Context, []core.EnvironmentOptions) error { return nil }
 func (g gelFactice) RunAutorise(_ context.Context, env string) (bool, error) {
 	_, gele := g[env]
