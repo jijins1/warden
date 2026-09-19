@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"io"
+	"strings"
 
 	"github.com/jijins1/warden/internal/cli/internal/command"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
@@ -31,6 +32,44 @@ func neuf(nom string) *flag.FlagSet {
 	return fs
 }
 
+// verbosite porte les quatre drapeaux `-v`…`-vvvv` d'un FlagSet.
+//
+// QUATRE booléens et non un compteur, parce que `flag` ne sait pas répéter :
+// `-v -v` ne compterait rien, il réaffecterait le même booléen. Les quatre noms
+// sont donc déclarés séparément — ce sont d'ailleurs ceux qu'`ansible-playbook`
+// accepte — et `niveau` les réduit à l'unique réglage qu'ils désignent.
+type verbosite [submit.VerbositeMax]*bool
+
+func declarerVerbosite(fs *flag.FlagSet) verbosite {
+	aides := [submit.VerbositeMax]string{
+		"détailler la sortie d'Ansible, comme ansible-playbook -v",
+		"comme -v, en ajoutant le détail de chaque résultat de tâche",
+		"comme -vv, en ajoutant les arguments des tâches et la commande de connexion",
+		"comme -vvv, en ajoutant le debug de connexion ; très volumineux",
+	}
+	var v verbosite
+	for i := range v {
+		v[i] = fs.Bool(strings.Repeat("v", i+1), false, aides[i])
+	}
+	return v
+}
+
+// niveau rend le PLUS ÉLEVÉ des niveaux demandés.
+//
+// Le plus élevé, et non un refus comme côté serveur : `-v -vvv` tapé à la main
+// est une hésitation, pas une contradiction, et ce qui part vers le serveur
+// reste UN drapeau. Le refus a sa place là-bas, où deux niveaux simultanés ne
+// peuvent venir que d'un client qui les a composés exprès.
+func (v verbosite) niveau() int {
+	n := 0
+	for i, demande := range v {
+		if *demande {
+			n = i + 1
+		}
+	}
+	return n
+}
+
 type drapeauxSubmit struct {
 	repo, playbook, environnement, inventaire, runRef *string
 	become                                            *prompt.Source
@@ -42,6 +81,7 @@ type drapeauxSubmit struct {
 	check, diff *bool
 	limit       *string
 	extraVars   *submit.Repetable
+	verbeux     verbosite
 
 	// elever et eleverVers sont `--become` et `--become-user`, à ne pas confondre
 	// avec `become` ci-dessus, qui est la SAISIE du mot de passe d'élévation.
@@ -85,6 +125,8 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 
 	// Répétable, et déclaré sous ses DEUX noms comme `ansible-playbook` : `-e` est
 	// celui qu'on tape, `--extra-vars` celui qu'on écrit dans un script.
+	f.verbeux = declarerVerbosite(fs)
+
 	f.extraVars = &submit.Repetable{}
 	fs.Var(f.extraVars, "e", "poser une variable, sous la forme nom=valeur ; répétable")
 	fs.Var(f.extraVars, "extra-vars", "identique à -e")
@@ -109,6 +151,7 @@ type drapeauxRun struct {
 
 	check, diff *bool
 	extraVars   *submit.Repetable
+	verbeux     verbosite
 
 	elever     *bool
 	eleverVers *string
@@ -140,6 +183,8 @@ func fsRun() (*flag.FlagSet, drapeauxRun) {
 
 	f.elever = fs.Bool("become", false, "élever sur toutes les tâches ; se combine avec -K")
 	fs.BoolVar(f.elever, "b", false, "abréviation d'--become, comme ansible-playbook")
+
+	f.verbeux = declarerVerbosite(fs)
 
 	f.extraVars = &submit.Repetable{}
 	fs.Var(f.extraVars, "e", "poser une variable, sous la forme nom=valeur ; répétable")

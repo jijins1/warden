@@ -30,8 +30,20 @@ export interface ValeursFormulaire {
   become: boolean;
   becomeUser: string;
   limit: string;
+  /** Le NOMBRE de `v` demandés — 0 à VERBOSITE_MAX, comme `-v` à `-vvvv`. */
+  verbosity: number;
   extraVars: { cle: string; valeur: string }[];
 }
+
+/**
+ * Le niveau de verbosité le plus élevé que le serveur accepte.
+ *
+ * Miroir manuel de `core.familleVerbosite` et de ses quatre entrées
+ * (`internal/server/internal/core/flags.go`), comme les types de `wire.ts` le
+ * sont de leurs structures Go. Ansible accepte `-vvvvv` et au-delà ;
+ * l'allowlist s'arrête à quatre, et un cinquième `v` serait refusé en 400.
+ */
+export const VERBOSITE_MAX = 4;
 
 /**
  * Compose les drapeaux tels que `core.FlagsDemandes` les attend.
@@ -53,6 +65,13 @@ export function composerFlags(v: ValeursFormulaire): string[] {
   if (v.become) flags.push('--become');
   if (v.become && v.becomeUser.trim()) {
     flags.push(`--become-user=${v.becomeUser.trim()}`);
+  }
+  // Les `v` se répètent dans UN SEUL drapeau : l'allowlist nomme `-v`, `-vv`,
+  // `-vvv` et `-vvvv`, et les range sous une clé d'unicité commune — deux
+  // niveaux envoyés ensemble sont refusés, pas fusionnés.
+  const niveau = Math.min(Math.max(Math.trunc(v.verbosity) || 0, 0), VERBOSITE_MAX);
+  if (niveau > 0) {
+    flags.push(`-${'v'.repeat(niveau)}`);
   }
   if (v.limit.trim()) {
     flags.push(`--limit=${v.limit.trim()}`);
@@ -120,6 +139,7 @@ export class RunLaunch {
     become: [false],
     becomeUser: [''],
     limit: [''],
+    verbosity: [0],
     becomePassword: [''],
     extraVars: this.#fb.array<LigneVariable>([]),
   });

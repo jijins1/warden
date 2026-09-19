@@ -44,6 +44,15 @@ type FlagsAnsible struct {
 	// Limit est la valeur de `--limit`, vide quand il n'a pas été demandé.
 	Limit string
 
+	// Verbosite est le NOMBRE de `v` demandés — 0 quand rien ne l'a été, 4 au
+	// plus, comme `-v` à `-vvvv` chez `ansible-playbook`.
+	//
+	// Un entier et non quatre booléens jusqu'ici : la ligne de commande en
+	// expose quatre parce que c'est ainsi qu'on les tape, mais ce qui descend
+	// est UN réglage, et le serveur le traite comme tel — ses quatre noms
+	// partagent une clé d'unicité (`core.familleVerbosite`).
+	Verbosite int
+
 	// ExtraVars porte les `nom=valeur` de `-e`, dans l'ordre où ils ont été
 	// donnés.
 	//
@@ -57,6 +66,15 @@ type FlagsAnsible struct {
 	// valeurs ne sont jamais journalisées.
 	ExtraVars []string
 }
+
+// VerbositeMax borne le niveau de verbosité.
+//
+// Quatre, comme l'allowlist du serveur : `ansible-playbook` accepte `-vvvvv` et
+// au-delà, mais `-vvvv` est déjà le niveau du debug de connexion, et rien
+// au-dessus n'ajoute d'information — seulement du volume dans une table d'events
+// qui ne s'élague pas. Le serveur reste l'autorité ; refuser ici évite de payer
+// une capture d'arbre et un push pour l'apprendre (§5.7).
+const VerbositeMax = 4
 
 // motifLimit borne la valeur de `--limit`.
 //
@@ -99,6 +117,13 @@ func (f FlagsAnsible) Composer() ([]string, error) {
 			return nil, fmt.Errorf("--become-user %q : un nom de compte est attendu", f.BecomeUser)
 		}
 		flags = append(flags, "--become-user="+f.BecomeUser)
+	}
+	if f.Verbosite > 0 {
+		if f.Verbosite > VerbositeMax {
+			return nil, fmt.Errorf("-%s : le niveau le plus élevé est -%s",
+				strings.Repeat("v", f.Verbosite), strings.Repeat("v", VerbositeMax))
+		}
+		flags = append(flags, "-"+strings.Repeat("v", f.Verbosite))
 	}
 	if f.Limit != "" {
 		if !motifLimit.MatchString(f.Limit) {

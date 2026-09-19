@@ -82,6 +82,10 @@ Le §5.5 en nomme sept, et le schéma de l'ADR-0021 en annonçait quatre
 `--tags`, `--skip-tags` et `-v` sont absents faute de demande, et s'ajouteront par une ligne dans la table — c'est la forme retenue
 pour que l'ajout suivant soit assez peu coûteux pour être fait.
 
+> **Suite (2026-09-19)** : la demande est venue pour `-v`, et l'amendement plus
+> bas l'ajoute. Il a coûté quatre lignes et un champ, pas une — voir pourquoi.
+> `--tags` et `--skip-tags` restent en attente d'une demande.
+
 `-e/--extra-vars` est différent, et son absence est une **décision** : il
 déplacerait la source de vérité hors du commit d'audit, ce que le produit vend
 précisément de ne pas faire. Il demande sa propre ADR, pas une ligne de plus.
@@ -125,6 +129,51 @@ Le cadrage est celui que l'ADR-0034 a déjà tranché pour le fichier de projet 
 une liste fixe câblée dans le produit est un choix de **périmètre** — « la
 compatibilité exhaustive avec `ansible-playbook` est un gouffre » — et non un
 contrôle de sécurité.
+
+### Amendement (2026-09-19) : `-v`, quatre noms pour un seul réglage
+
+`-v`, `-vv`, `-vvv` et `-vvvv` s'ajoutent à la table, sur demande d'usage :
+*« sur l'UI l'option -v n'est pas disponible »*. Elle est ouverte **partout à la
+fois** — allowlist serveur, `warden submit`, `warden run`, et le formulaire de
+lancement du navigateur (ADR-0042) — parce qu'un drapeau ouvert d'un seul côté
+est exactement le genre de demi-mécanisme que l'amendement `--become` a coûté.
+
+**Ce n'était pas « une ligne dans la table ».** Cette ADR l'annonçait, et elle se
+trompait, pour une raison que ni `--check` ni `--limit` n'avaient fait
+rencontrer : `ansible-playbook` donne **quatre noms à un seul réglage**. L'unicité
+de la table portait jusqu'ici sur le nom du drapeau ; ici, `-v` et `-vvv` sont
+des noms *différents* qui règlent la *même* chose. Sans rien, `-v -vvv` passait :
+Ansible n'aurait appliqué que le dernier et `run.flags` en aurait enregistré deux
+— le run aurait cessé de dire ce qu'il a fait, qui est la seule propriété que
+cette allowlist protège réellement. D'où un champ `famille`, qui range les quatre
+sous une clé d'unicité commune, et un refus nommant les deux drapeaux en conflit.
+
+**La borne est quatre, et c'est un choix.** Ansible accepte `-vvvvv` et au-delà ;
+rien au-dessus de `-vvvv` n'ajoute d'information, seulement du volume dans une
+table d'events qui ne s'élague pas (ADR-0013).
+
+**Ce que `-v` change est ce que le run ENREGISTRE, pas ce qu'il exécute.** Il
+n'ouvre aucun chemin, ne déplace aucune source hors du commit d'audit, et c'est
+pourquoi il peut être admis nu. La conséquence à énoncer est de l'autre côté :
+la sortie détaillée d'Ansible arrive dans le flux d'events, **donc dans
+l'audit**, qui est persistant et servi par l'API. À partir de `-vvv`, Ansible
+imprime les arguments de chaque tâche et la commande de connexion. Le rédacteur
+de l'ADR-0017 masque les valeurs injectées par warden, et Ansible respecte
+`no_log` à tous les niveaux ; ce qui devient lisible est ce qu'un playbook met
+lui-même en clair dans ses tâches. C'est dit dans l'aide de la CLI et sous le
+champ du formulaire, plutôt que laissé à découvrir.
+
+**L'asymétrie CLI/serveur est délibérée.** Le serveur **refuse** deux niveaux
+simultanés ; la CLI garde le **plus élevé**. Ce n'est pas une allowlist qui fuit
+— la CLI ne compose qu'un seul drapeau, et c'est celui-là que le serveur
+revalide. `-v -vvv` tapé à la main est une main qui hésite ; deux niveaux
+arrivant *dans une requête* ne peuvent venir que d'un client qui les a composés
+exprès, et là le refus est le bon mode de panne.
+
+**`--verbose` n'est pas accepté**, bien qu'Ansible le reconnaisse comme synonyme
+de `-v`. Un second nom pour la même entrée de famille n'ajoute rien à ce qui se
+tape (`-vv` n'a pas de forme longue de toute façon) et allongerait la liste que
+le message de refus publie.
 
 ### Pourquoi ces flags voyagent dans la requête sans contredire l'ADR-0009
 

@@ -99,7 +99,7 @@ func submit() Commande {
 		Resume: "lance un playbook depuis le dépôt courant",
 		Usage: []string{
 			"submit --playbook <fichier> [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
-			"submit --playbook <fichier> [--check] [--diff] [--limit <motif>]",
+			"submit --playbook <fichier> [--check] [--diff] [--limit <motif>] [-v|-vv|-vvv|-vvvv]",
 			"submit --playbook <fichier> [-b] [--become-user <compte>] [-K]",
 			"submit --playbook <fichier> [-e <nom>=<valeur>]...",
 		},
@@ -115,9 +115,18 @@ func submit() Commande {
 			"Ctrl-C DÉTACHE la sortie, il n'annule pas le run : celui-ci continue\n" +
 			"côté serveur. L'annulation demande un endpoint que le serveur n'expose\n" +
 			"pas encore.\n\n" +
-			"--check, --diff, --limit, -e et -b portent le nom qu'ansible-playbook\n" +
+			"--check, --diff, --limit, -v, -e et -b portent le nom qu'ansible-playbook\n" +
 			"leur donne et font la même chose. Ce sont les SEULS acceptés : le\n" +
 			"serveur refuse tout autre drapeau, en nommant ceux qu'il prend.\n\n" +
+			"-v à -vvvv règlent la verbosité, et ils s'écrivent comme chez\n" +
+			"ansible-playbook : les `v` se répètent dans UN drapeau, `-v -v` ne fait\n" +
+			"pas -vv. Donnés plusieurs fois, le niveau le plus élevé l'emporte. Ce\n" +
+			"qu'ils changent est ce que le run ENREGISTRE, pas ce qu'il exécute :\n" +
+			"la sortie détaillée d'Ansible arrive dans le flux d'events, donc dans\n" +
+			"l'audit. À partir de -vvv, Ansible imprime les arguments de chaque\n" +
+			"tâche et la commande de connexion ; les valeurs injectées par warden\n" +
+			"restent masquées, et `no_log` est respecté, mais ce qu'un playbook met\n" +
+			"en clair dans ses tâches devient lisible.\n\n" +
 			"-b demande l'élévation, -K en fournit le mot de passe : les deux vont\n" +
 			"ensemble quand la machine en demande un. -b s'applique à TOUTES les\n" +
 			"tâches, y compris celles que le playbook avait laissées non élevées ;\n" +
@@ -129,7 +138,7 @@ func submit() Commande {
 			"enregistrées sur le run et servies par l'API. N'y mettez pas de secret ;\n" +
 			"`forward_env` est le chemin dont les valeurs ne sont jamais journalisées.",
 		Flags: []string{"repo", "playbook", "env", "inventory", "run-ref",
-			"check", "diff", "limit", "e", "extra-vars",
+			"check", "diff", "limit", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
 			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
 		Exemples: []Exemple{
@@ -138,6 +147,8 @@ func submit() Commande {
 				Ligne: "warden submit --playbook play.yml --env prod --check --diff"},
 			{Pourquoi: "n'agir que sur une machine, ou un groupe de l'inventaire",
 				Ligne: "warden submit --playbook play.yml --env prod --limit web-01"},
+			{Pourquoi: "comprendre ce qu'une tâche a réellement fait",
+				Ligne: "warden submit --playbook play.yml --env prod -vv"},
 			{Pourquoi: "poser des variables, déclarées par `extra_vars:` dans le projet",
 				Ligne: "warden submit --playbook play.yml --env prod -e version=1.2.3 -e couleur=bleu"},
 			{Pourquoi: "élever, et fournir le mot de passe que sudo demandera",
@@ -157,7 +168,7 @@ func run() Commande {
 		Resume: "exécute un module Ansible contre un motif de machines, sans playbook",
 		Usage: []string{
 			"run <motif> -m <module> [-a <args>] [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
-			"run <motif> -m <module> [--check] [--diff]",
+			"run <motif> -m <module> [--check] [--diff] [-v|-vv|-vvv|-vvvv]",
 			"run <motif> -m <module> [-b] [--become-user <compte>] [-K]",
 			"run <motif> -m <module> [-e <nom>=<valeur>]...",
 		},
@@ -170,7 +181,7 @@ func run() Commande {
 			"porte les arguments du module, vides pour un module qui n'en prend pas\n" +
 			"(`ping`, `setup`).\n\n" +
 			"Le reste — dépôt, environnement, inventaire, élévation, extra-vars,\n" +
-			"suivi du run — se comporte exactement comme « warden submit » : un\n" +
+			"verbosité, suivi du run — se comporte exactement comme « warden submit » : un\n" +
 			"ad-hoc capture et pousse un commit d'audit pour résoudre son motif dans\n" +
 			"le même inventaire, et reste donc une action auditée au même titre\n" +
 			"qu'un playbook.\n\n" +
@@ -178,7 +189,7 @@ func run() Commande {
 			"environnement exécute déjà du code arbitraire via un playbook\n" +
 			"(`shell`, `command`) ; en refuser certains ici n'ajouterait rien de réel.",
 		Flags: []string{"repo", "module", "m", "args", "a", "env", "inventory", "run-ref",
-			"check", "diff", "e", "extra-vars",
+			"check", "diff", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
 			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
 		Exemples: []Exemple{

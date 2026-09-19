@@ -37,6 +37,27 @@
       <mat-hint>Same pattern syntax as --limit on the command line.</mat-hint>
     </mat-form-field>
 
+    <!-- Un <select> NATIF plutôt qu'un mat-select : c'est le seul contrôle de
+         choix de tout le produit, et MatInputModule le prend déjà en charge via
+         matNativeControl. [ngValue] et non [value] pour que la valeur reste un
+         NOMBRE — `composerFlags` compte des `v`, il ne concatène pas une
+         chaîne. -->
+    <mat-form-field appearance="outline">
+      <mat-label>Verbosity</mat-label>
+      <select matNativeControl formControlName="verbosity">
+        <option [ngValue]="0">Default</option>
+        <option [ngValue]="1">-v — more detail on what Ansible did</option>
+        <option [ngValue]="2">-vv — full result of every task</option>
+        <option [ngValue]="3">-vvv — task arguments and connection command</option>
+        <option [ngValue]="4">-vvvv — connection debug; very large</option>
+      </select>
+      <mat-hint>
+        Recorded in the run's event stream, so it lands in the audit. From -vvv
+        on, whatever a playbook puts in plain text in its tasks becomes readable
+        there.
+      </mat-hint>
+    </mat-form-field>
+
     <div class="drapeaux">
       <mat-checkbox formControlName="check">--check (dry run)</mat-checkbox>
       <mat-checkbox formControlName="diff">--diff</mat-checkbox>

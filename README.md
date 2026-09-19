@@ -232,6 +232,7 @@ These flags reach `ansible-playbook`, under the name it gives them:
 ```sh
 warden submit --playbook play.yml --env prod --check --diff
 warden submit --playbook play.yml --env prod --limit web-01
+warden submit --playbook play.yml --env prod -vv           # -v to -vvvv, as in Ansible
 warden submit --playbook play.yml --env prod -e version=1.2.3 -e colour=blue
 warden submit --playbook play.yml --env prod -b -K          # escalate, and supply the password
 warden submit --playbook play.yml --env prod -b --become-user postgres
@@ -284,6 +285,13 @@ changes under `--check` does not read like zero changes without it.
 a pod with open egress and an access key valid for the whole environment.
 `--check` is not a guarantee either: Ansible honours it module by module, and a
 `command` without `check_mode:` still runs.
+
+Verbosity (`-v` to `-vvvv`) writes to the **audit trail**, not just to your
+screen: Ansible's detailed output lands in the run's event stream. From `-vvv`
+on it prints every task's arguments and the connection command. Values injected
+by warden stay masked ([ADR-0017](docs/adr/0017-redaction-des-diffs-par-substitution-exacte.md)) and
+`no_log` is honoured; what becomes readable is whatever a playbook itself puts
+in plain text in its tasks.
 
 ---
 

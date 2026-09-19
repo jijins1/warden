@@ -355,7 +355,21 @@ warden submit --repo mon-depot --playbook play.yml --env prod --check --diff
 
 # N'agir que sur une machine, ou sur un groupe de l'inventaire.
 warden submit --repo mon-depot --playbook play.yml --env prod --limit web-01
+
+# Détailler la sortie d'Ansible : -v, -vv, -vvv, -vvvv.
+warden submit --repo mon-depot --playbook play.yml --env prod -vv
 ```
+
+> ⚠ **La verbosité écrit dans l'audit, pas seulement à l'écran.** La sortie
+> détaillée d'Ansible arrive dans le flux d'events du run, qui est persistant et
+> servi par l'API. À partir de `-vvv`, Ansible imprime les arguments de chaque
+> tâche et la commande de connexion. Les valeurs injectées par warden restent
+> masquées (ADR-0017) et `no_log` est respecté ; ce qui devient lisible est ce
+> qu'un playbook met lui-même en clair dans ses tâches.
+>
+> Les `v` se répètent **dans** le drapeau : `-v -v` ne fait pas `-vv`. Le serveur
+> refuse deux niveaux envoyés ensemble ; en ligne de commande, le plus élevé
+> l'emporte.
 
 Le serveur n'accepte que ceux-là et refuse le reste en nommant la liste
 (ADR-0038). Ils sont enregistrés dans le run, et `GET /runs/{run_ref}` les rend :
@@ -550,7 +564,8 @@ de le respecter, module par module, et un `command` ou un `shell` sans
 `check_mode:` s'exécute quand même.
 
 Les flags passés à `submit` sont en revanche **filtrés** depuis l'ADR-0038 : le
-serveur n'accepte que `--check`, `--diff` et `--limit`, et refuse le reste en le
-disant. Ce filtre protège l'audit — un `-e @/chemin` ferait exécuter autre chose
+serveur n'accepte que `--check`, `--diff`, `--limit`, `-b/--become`,
+`--become-user`, `-e/--extra-vars` et `-v` à `-vvvv`, et refuse le reste en
+nommant la liste. Ce filtre protège l'audit — un `-e @/chemin` ferait exécuter autre chose
 que ce que le commit dit — et non les machines cibles, sur lesquelles le playbook
 exécute déjà du code arbitraire.
