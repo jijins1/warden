@@ -55,9 +55,10 @@ const longueurMaxValeur = 1024
 
 // drapeau décrit une forme acceptée sur la ligne de commande d'ansible-playbook.
 //
-// Une table et non une suite de `if` : les trois autres du §5.5 — `--tags`,
-// `--skip-tags`, `-v` — s'ajouteront par une ligne, ce qui est la seule façon de
-// rendre l'ajout suivant assez peu coûteux pour être fait.
+// Une table et non une suite de `if` : `-v` s'y est ajouté par quatre lignes et
+// un champ, et les deux derniers du §5.5 — `--tags`, `--skip-tags` — s'y
+// ajouteront par une ligne. C'est la seule façon de rendre l'ajout suivant assez
+// peu coûteux pour être fait.
 type drapeau struct {
 	nom string
 
@@ -76,7 +77,21 @@ type drapeau struct {
 	// s'écrit `-e a=1 -e b=2 -e c=3` et pas autrement. L'unicité porte alors sur
 	// le NOM DE VARIABLE, pas sur le drapeau — voir `cle`.
 	repetable bool
+
+	// famille range sous UNE clé d'unicité des drapeaux qui règlent la même
+	// chose. Vide, le drapeau est seul de sa famille et sa clé est son nom.
+	//
+	// Elle n'existe que pour la verbosité, où `ansible-playbook` donne QUATRE
+	// noms à UN réglage. Sans elle, `-v -vvv` passerait l'allowlist : Ansible
+	// n'appliquerait que le dernier et `run.flags` garderait les deux, donc le
+	// run cesserait de dire ce qu'il a fait. C'est exactement ce que `repetable:
+	// false` refuse déjà pour deux `--limit`, à ceci près que la collision porte
+	// ici sur des noms DIFFÉRENTS.
+	famille string
 }
+
+// familleVerbosite est la clé d'unicité partagée par `-v`…`-vvvv`.
+const familleVerbosite = "verbosité"
 
 var drapeauxAcceptes = []drapeau{
 	// Le dry-run d'Ansible : le premier réflexe avant de toucher à la prod.
@@ -99,6 +114,24 @@ var drapeauxAcceptes = []drapeau{
 	// n'apparaît dans aucun résultat de module.
 	{nom: "--diff"},
 	{nom: "--limit", verifier: verifierLimit},
+	// La verbosité, sous les quatre noms qu'`ansible-playbook` lui donne, et pas
+	// un de plus : Ansible accepte `-vvvvv` et au-delà, mais `-vvvv` est déjà le
+	// niveau où il rend le debug de la connexion, et rien au-dessus n'ajoute de
+	// l'information — seulement du volume dans une table d'events qui ne
+	// s'élague pas.
+	//
+	// Ce qu'elle change ici est ce qui est ÉCRIT dans le journal du run, pas ce
+	// qui s'exécute : elle n'ouvre aucun chemin, ne déplace aucune source, et
+	// c'est pourquoi elle peut être admise nue. Elle mérite quand même d'être
+	// lue avant d'être demandée en prod — à partir de `-vvv`, Ansible imprime
+	// les arguments de chaque tâche et la commande de connexion. Le rédacteur de
+	// l'ADR-0017 masque les valeurs injectées dans le run, et Ansible respecte
+	// `no_log` à tous les niveaux ; ce qui reste exposé est ce que le playbook
+	// lui-même met en clair dans ses tâches.
+	{nom: "-v", famille: familleVerbosite},
+	{nom: "-vv", famille: familleVerbosite},
+	{nom: "-vvv", famille: familleVerbosite},
+	{nom: "-vvvv", famille: familleVerbosite},
 	// `--extra-vars` est le seul dont l'allowlist ne vit PAS dans ce fichier :
 	// les noms autorisés sont déclarés par `extra_vars:` dans le commit, et
 	// croisés par `composerFlags`. Ce qui est vérifié ici est la FORME, qui ne
@@ -172,7 +205,11 @@ func FlagsEnregistres(brut []byte) ([]string, error) {
 // noms viennent du commit, que cette fonction n'a pas. C'est `composerFlags` qui
 // s'en charge, une fois la configuration lue.
 func ValiderFlags(flags []string) error {
-	vus := make(map[string]bool, len(flags))
+	// La valeur est l'ÉTIQUETTE du premier drapeau vu sous cette clé, et non un
+	// booléen : pour une famille, les deux drapeaux en conflit portent des noms
+	// différents, et un message qui ne nommerait que la clé enverrait chercher
+	// dans ce fichier ce que `-v` et `-vvv` ont en commun.
+	vus := make(map[string]string, len(flags))
 	for _, f := range flags {
 		nom, valeur, avecValeur := strings.Cut(f, "=")
 
@@ -203,17 +240,28 @@ func ValiderFlags(flags []string) error {
 		// dernier et l'audit garderait les deux, donc le run cesserait de dire
 		// ce qu'il a fait.
 		k := cle(*d, valeur)
-		if vus[k] {
-			return fmt.Errorf("flag %s donné deux fois", k)
+		etiquette := k
+		if d.famille != "" {
+			etiquette = nom
 		}
-		vus[k] = true
+		if premier, deja := vus[k]; deja {
+			if premier == etiquette {
+				return fmt.Errorf("flag %s donné deux fois", etiquette)
+			}
+			return fmt.Errorf("flags %s et %s : ils règlent la même chose et s'excluent — "+
+				"Ansible n'appliquerait que le dernier, et le run en enregistrerait deux",
+				premier, etiquette)
+		}
+		vus[k] = etiquette
 	}
 
 	// `--become-user` SEUL n'élève rien : Ansible ne bascule que si `become` est
 	// demandé, ici ou dans le playbook. Le laisser passer produirait un run qui
 	// tourne sous le mauvais compte sans qu'aucun message ne le dise — et
 	// l'audit enregistrerait un drapeau sans effet, ce qui est pire que rien.
-	if vus["--become-user"] && !vus["--become"] {
+	_, avecCompte := vus["--become-user"]
+	_, avecElevation := vus["--become"]
+	if avecCompte && !avecElevation {
 		return errors.New("--become-user sans --become ne fait rien : Ansible n'élève " +
 			"que si l'élévation est demandée")
 	}
@@ -222,6 +270,9 @@ func ValiderFlags(flags []string) error {
 
 // cle rend ce dont l'unicité est exigée pour un drapeau donné.
 func cle(d drapeau, valeur string) string {
+	if d.famille != "" {
+		return d.famille
+	}
 	if !d.repetable {
 		return d.nom
 	}

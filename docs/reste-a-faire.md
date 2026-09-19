@@ -157,9 +157,20 @@ est le PÉRIMÈTRE de la liste, plus son absence.
   partait, arrivait dans `env/extravars`, et ne servait à rien tant que le
   playbook ne déclarait pas `become: true` lui-même.
 
-- [ ] **Les trois derniers flags du §5.5.** `--tags`, `--skip-tags` et `-v`
-  s'ajoutent par une ligne dans `drapeauxAcceptes` — c'est la forme retenue pour
-  ça — et attendent une demande.
+- [ ] **Les deux derniers flags du §5.5.** `--tags` et `--skip-tags` s'ajoutent
+  par une ligne dans `drapeauxAcceptes` — c'est la forme retenue pour ça — et
+  attendent une demande.
+
+- [x] ~~**`-v` n'était disponible nulle part.**~~ Résolu le 2026-09-19
+  (amendement de l'[ADR-0038](adr/0038-flags-ansible-check-diff-limit.md)).
+  Ouvert des quatre côtés à la fois : allowlist serveur, `warden submit`,
+  `warden run` et le formulaire du navigateur.
+
+  Cette ligne annonçait « une ligne dans la table » et se trompait :
+  `ansible-playbook` donne QUATRE noms à un seul réglage, et l'unicité de la
+  table portait sur le nom du drapeau. `-v -vvv` serait passé — Ansible
+  n'appliquant que le dernier, `run.flags` en gardant deux. D'où le champ
+  `famille`, qui n'existe que pour ça.
 
 - [ ] **Ansible Vault n'a aucune réponse.** `--vault-password-file`, `--vault-id`
   et `--ask-vault-pass` sont refusés parce qu'ils feraient venir le secret d'un

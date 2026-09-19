@@ -33,6 +33,14 @@ func TestValiderFlagsAccepteLesTrois(t *testing.T) {
 		{"--become", "--become-user=www-data"},
 		{"--become", "--become-user=deploy.ci"},
 		{"--check", "--become", "--limit=web-01"},
+		// La verbosité, sous ses quatre noms. Ils sont NUS : `-v=3` n'existe pas
+		// chez `ansible-playbook`, les `v` se répètent dans le drapeau.
+		{"-v"},
+		{"-vv"},
+		{"-vvv"},
+		{"-vvvv"},
+		{"--check", "--diff", "-vv"},
+		{"-vvv", "--limit=web-01", "--extra-vars=version=1"},
 	}
 	for _, flags := range cas {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
@@ -87,6 +95,17 @@ func TestValiderFlagsRefuse(t *testing.T) {
 		{"compte avec métacaractère", []string{"--become", "--become-user=a;id"}, "nom de compte"},
 		{"compte vide", []string{"--become", "--become-user="}, "attend une valeur"},
 		{"deux become", []string{"--become", "--become"}, "deux fois"},
+
+		// La verbosité s'arrête à quatre : `-vvvvv` est accepté par Ansible, pas
+		// par l'allowlist, et le message doit nommer le drapeau refusé.
+		{"cinq v", []string{"-vvvvv"}, "-vvvvv"},
+		{"v avec valeur", []string{"-v=3"}, "n'attend pas de valeur"},
+		{"verbosité en long", []string{"--verbose"}, "--verbose"},
+		// DEUX NOMS DIFFÉRENTS pour un même réglage : sans la famille, ceci
+		// passerait l'allowlist, Ansible n'appliquerait que le dernier et
+		// `run.flags` en garderait deux.
+		{"deux niveaux", []string{"-v", "-vvv"}, "s'excluent"},
+		{"deux fois le même niveau", []string{"-vv", "-vv"}, "deux fois"},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {

@@ -138,7 +138,7 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	// revalide (ADR-0038).
 	flagsAnsible, err := submit.FlagsAnsible{
 		Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
-		Become: *f.elever, BecomeUser: *f.eleverVers,
+		Become: *f.elever, BecomeUser: *f.eleverVers, Verbosite: f.verbeux.niveau(),
 	}.Composer()
 	if err != nil {
 		return err
@@ -266,7 +266,7 @@ func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
 
 	flagsAnsible, err := submit.FlagsAnsible{
 		Check: *f.check, Diff: *f.diff, ExtraVars: *f.extraVars,
-		Become: *f.elever, BecomeUser: *f.eleverVers,
+		Become: *f.elever, BecomeUser: *f.eleverVers, Verbosite: f.verbeux.niveau(),
 	}.Composer()
 	if err != nil {
 		return err

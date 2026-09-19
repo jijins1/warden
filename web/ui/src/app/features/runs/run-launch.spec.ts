@@ -3,7 +3,12 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router } from '@angular/router';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
-import { RunLaunch, ValeursFormulaire, composerFlags } from './run-launch';
+import {
+  RunLaunch,
+  VERBOSITE_MAX,
+  ValeursFormulaire,
+  composerFlags,
+} from './run-launch';
 import { RunsService } from '../../core/api/runs.service';
 
 const videForm: ValeursFormulaire = {
@@ -12,6 +17,7 @@ const videForm: ValeursFormulaire = {
   become: false,
   becomeUser: '',
   limit: '',
+  verbosity: 0,
   extraVars: [],
 };
 
@@ -59,6 +65,27 @@ describe('composerFlags', () => {
 
   it('--limit vide ou blanc ne produit rien', () => {
     expect(composerFlags({ ...videForm, limit: '   ' })).toEqual([]);
+  });
+
+  // Les `v` se répètent DANS le drapeau : l'allowlist du serveur nomme `-vv`,
+  // elle n'accepte pas deux `-v`.
+  it('la verbosité sort en un seul drapeau', () => {
+    expect(composerFlags({ ...videForm, verbosity: 1 })).toEqual(['-v']);
+    expect(composerFlags({ ...videForm, verbosity: 2 })).toEqual(['-vv']);
+    expect(composerFlags({ ...videForm, verbosity: VERBOSITE_MAX })).toEqual(['-vvvv']);
+  });
+
+  it('une verbosité nulle ne produit rien', () => {
+    expect(composerFlags({ ...videForm, verbosity: 0 })).toEqual([]);
+  });
+
+  // Le <select> ne propose que 0 à 4, mais `composerFlags` est exportée et
+  // testée seule : elle ne doit pas composer un drapeau que le serveur
+  // refuserait en 400, ni un `-` nu sur une valeur négative.
+  it('la verbosité est bornée des deux côtés', () => {
+    expect(composerFlags({ ...videForm, verbosity: 99 })).toEqual(['-vvvv']);
+    expect(composerFlags({ ...videForm, verbosity: -3 })).toEqual([]);
+    expect(composerFlags({ ...videForm, verbosity: 1.7 })).toEqual(['-v']);
   });
 });
 

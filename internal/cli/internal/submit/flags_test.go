@@ -21,6 +21,13 @@ func TestComposerRendUnOrdreStable(t *testing.T) {
 		// s'y lire identiques.
 		{"les trois", FlagsAnsible{Check: true, Diff: true, Limit: "prod:!web-01"},
 			"--check --diff --limit=prod:!web-01"},
+		// Les `v` se répètent DANS le drapeau, ils ne se répètent pas EN
+		// drapeaux : le serveur nomme `-vv`, pas deux `-v`.
+		{"sans verbosité", FlagsAnsible{Verbosite: 0}, ""},
+		{"un v", FlagsAnsible{Verbosite: 1}, "-v"},
+		{"quatre v", FlagsAnsible{Verbosite: VerbositeMax}, "-vvvv"},
+		{"verbosité et le reste", FlagsAnsible{Check: true, Verbosite: 2, Limit: "web"},
+			"--check -vv --limit=web"},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
@@ -51,6 +58,20 @@ func TestComposerRefuseUnLimitMalForme(t *testing.T) {
 				t.Fatal("accepté")
 			}
 		})
+	}
+}
+
+// Au-delà de quatre, Ansible accepterait et l'allowlist du serveur refuserait :
+// le dire ici évite de payer une capture d'arbre et un push pour l'apprendre.
+func TestComposerRefuseUneVerbositeHorsBornes(t *testing.T) {
+	for _, n := range []int{VerbositeMax + 1, 9} {
+		_, err := (FlagsAnsible{Verbosite: n}).Composer()
+		if err == nil {
+			t.Fatalf("verbosité %d acceptée", n)
+		}
+		if !strings.Contains(err.Error(), "-vvvv") {
+			t.Errorf("message %q ne nomme pas le niveau le plus élevé", err)
+		}
 	}
 }
 
