@@ -382,3 +382,56 @@ jobs:
 
       - name: Version publiée
         run: echo "### Publié en \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+
+  release-cli:
+    name: Publication de la CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Même porte que `publish` : main seulement, après tout le reste. La CLI est
+    # le seul binaire de ce dépôt destiné au poste de l'utilisateur (ADR-0006) —
+    # wardend et warden-runner restent des images, tirées par le déploiement, pas
+    # des exécutables à télécharger.
+    if: github.ref == 'refs/heads/main'
+    needs: [build, lint, test, integration, web, web-image, chart]
+
+    # `contents: write` uniquement ici, pour créer la release — le workflow est
+    # en lecture seule par défaut, et `publish` n'a besoin que de `packages`.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Même version que les images de ce run (§ job `publish`) : les deux
+      # jobs dérivent indépendamment le même calcul depuis `run_number`, qui ne
+      # revient jamais en arrière — pas de risque de désaccord entre eux.
+      - name: Version du build
+        run: echo "VERSION=0.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      # Les 5 cibles déjà éprouvées par « Compilation croisée de la CLI » du job
+      # `build` — celle-ci les publie, elle ne les découvre pas.
+      - name: Compilation croisée
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            out="dist/warden_${os}_${arch}"
+            [ "$os" = "windows" ] && out="${out}.exe"
+            echo "→ $target"
+            GOOS="$os" GOARCH="$arch" go build -trimpath -o "$out" ./cmd/warden
+          done
+
+      # Un tag PAR build, immuable comme la version des images : `v0.0.N` ne se
+      # republie jamais, et une release GitHub exige un tag pour exister.
+      - name: Publication de la release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" dist/warden_* \
+            --title "v$VERSION" \
+            --notes "Build continu depuis main, commit ${{ github.sha }}."
