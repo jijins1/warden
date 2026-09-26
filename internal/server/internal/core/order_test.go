@@ -419,6 +419,112 @@ func TestUnRunAdhocPorteSaCibleEtPasDePlaybook(t *testing.T) {
 	}
 }
 
+// --- la clé de vault (ADR-0045) ---
+
+// emetteurVaultFactice retient ce qu'on lui a demandé d'émettre.
+type emetteurVaultFactice struct {
+	envs []string
+	cle  string
+	err  error
+}
+
+func (e *emetteurVaultFactice) Issue(_ context.Context, env string) (core.VaultKey, error) {
+	e.envs = append(e.envs, env)
+	if e.err != nil {
+		return core.VaultKey{}, e.err
+	}
+	return core.NewVaultKey([]byte(e.cle)), nil
+}
+
+func TestLOrdrePorteLaCleDeVaultDeSonEnvironnement(t *testing.T) {
+	v := &emetteurVaultFactice{cle: "un-mot-de-passe-de-vault"}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
+	b = b.AvecVault(v)
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if string(ordre.VaultPassword.Reveal()) != v.cle {
+		t.Errorf("clé de vault de l'ordre = %q", ordre.VaultPassword.Reveal())
+	}
+	if len(v.envs) != 1 || v.envs[0] != "prod" {
+		t.Errorf("environnements demandés = %v, attendu [prod]", v.envs)
+	}
+}
+
+// Un environnement sans clé de vault n'est PAS une erreur : la plupart des
+// playbooks n'ont aucun secret `!vault |`.
+func TestUnEnvironnementSansCleDeVaultNEmpechePasLeRun(t *testing.T) {
+	v := &emetteurVaultFactice{err: core.ErrNoVaultKey}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
+	b = b.AvecVault(v)
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor a échoué faute de clé de vault : %v", err)
+	}
+	if len(ordre.VaultPassword) != 0 {
+		t.Errorf("clé de vault = %q, attendu vide", ordre.VaultPassword.Reveal())
+	}
+}
+
+// Une PANNE du magasin de vault fait échouer la livraison, comme pour la clé
+// d'accès : livrer un ordre sans clé de vault ferait échouer le run bien plus
+// loin, sur le premier `!vault |` qu'il ne peut pas déchiffrer.
+func TestUnePanneDuMagasinDeVaultFaitEchouerLaLivraison(t *testing.T) {
+	v := &emetteurVaultFactice{err: errors.New("API Kubernetes indisponible")}
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
+	b = b.AvecVault(v)
+
+	if _, err := b.OrderFor(t.Context(), 1); err == nil {
+		t.Fatal("la livraison a réussi malgré un magasin de vault en panne")
+	}
+}
+
+// Sans magasin de vault du tout, l'ordre part sans clé plutôt que d'échouer —
+// même comportement que pour la clé d'accès sans `key-inventory`.
+func TestSansMagasinDeVaultLOrdrePartQuandMeme(t *testing.T) {
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+	b = b.AvecDroits(nouveauxDroits(cle(runValide().UserID, "prod")))
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("OrderFor : %v", err)
+	}
+	if len(ordre.VaultPassword) != 0 {
+		t.Errorf("clé de vault = %q, attendu vide", ordre.VaultPassword.Reveal())
+	}
+}
+
+// Un droit révoqué empêche AUSSI la livraison de la clé de vault : `b.keys`
+// peut être nil sans que `b.vault` le soit, donc `cleDeVault` doit revérifier
+// le droit lui-même plutôt que de compter sur `cleDAcces`.
+func TestUnDroitRevoqueEmpecheLaLivraisonDeLaCleDeVault(t *testing.T) {
+	v := &emetteurVaultFactice{cle: "un-mot-de-passe-de-vault"}
+	droits := nouveauxDroits(cle(runValide().UserID, "prod"))
+	b, _ := core.NewOrderBuilder(runsFactices{1: runValide()}, &frappeurFactice{}, nil, "https://git.invalid")
+	b = b.AvecDroits(droits)
+	b = b.AvecVault(v)
+
+	if _, err := b.OrderFor(t.Context(), 1); err != nil {
+		t.Fatalf("livraison refusée alors que le droit est vivant : %v", err)
+	}
+
+	delete(droits.accordes, cle(runValide().UserID, "prod"))
+
+	_, err := b.OrderFor(t.Context(), 1)
+	if !errors.Is(err, core.ErrEnvironnementInterdit) {
+		t.Fatalf("err = %v : la clé de vault a été livrée malgré un droit révoqué", err)
+	}
+	if len(v.envs) != 1 {
+		t.Errorf("le magasin de vault a été appelé %d fois, attendu 1", len(v.envs))
+	}
+}
+
 // Un ad-hoc SANS cible ne saurait pas quoi exécuter : le composeur d'ordres
 // refuse plutôt que de livrer un `module`/`host_pattern` vides.
 func TestUnRunAdhocSansCibleNeProduitPasDOrdre(t *testing.T) {

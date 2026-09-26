@@ -114,6 +114,28 @@ type Config struct {
 	// `-e @<fichier>`, et la valeur n'apparaît nulle part dans le flux.
 	BecomePassword []byte
 
+	// VaultPassword est la clé Ansible Vault de l'environnement (ADR-0045),
+	// vide quand il n'y en a pas.
+	//
+	// Écrite dans `<pdd>/env/vault_password` (0600), puis livrée à
+	// `ansible-playbook` par `--vault-password-file`, ajouté aux arguments
+	// INTERNEMENT — jamais via Flags, le champ utilisateur filtré par
+	// l'allowlist de l'ADR-0038. Ce n'est pas une régression de cette
+	// allowlist : elle refuse un `--vault-password-file` FOURNI PAR
+	// L'APPELANT, qui pointerait vers un fichier arbitraire du pod ; celui-ci
+	// pointe vers un fichier que ce paquet vient d'écrire lui-même à partir
+	// d'un secret émis par le serveur — exactement la même distinction que
+	// pour SSHKey, qui ne passe pas non plus par Flags.
+	//
+	// Contrairement à SSHKey, le fichier n'est PAS effacé après lecture :
+	// `ansible-playbook` le relit potentiellement à plusieurs reprises
+	// pendant tout le run (chaque tâche qui référence un `!vault |` peut
+	// déclencher une relecture), là où `ssh-agent` charge la clé SSH une fois
+	// pour toute la durée du run. Il reste donc en clair sur le disque
+	// éphémère du pod pendant la durée du run — risque déjà accepté pour
+	// `extravars` (BecomePassword), pas un nouveau precedent.
+	VaultPassword []byte
+
 	// ForwardEnv porte les variables du shell de l'utilisateur retenues par la
 	// composition serveur (§5.4).
 	//
@@ -222,6 +244,9 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 		return "", err
 	}
 	if err := r.poserLeBecome(); err != nil {
+		return "", err
+	}
+	if err := r.poserLaCleDeVault(); err != nil {
 		return "", err
 	}
 
@@ -466,6 +491,38 @@ func (r *Runner) poserLaCle() error {
 	return nil
 }
 
+// cheminCleDeVault est le chemin du fichier de mot de passe de vault, dans le
+// même répertoire `env/` qu'`ansible-runner` connaît déjà pour la clé SSH et
+// `extravars` — pas un chemin de plus à faire connaître aux deux moitiés du
+// runner.
+func (r *Runner) cheminCleDeVault() string {
+	return filepath.Join(r.cfg.PrivateDataDir, "env", "vault_password")
+}
+
+// poserLaCleDeVault écrit la clé de vault là où `--vault-password-file` ira
+// la lire (ADR-0045).
+//
+// Contrairement à `poserLaCle`, le fichier n'est PAS effacé après lecture par
+// un mécanisme équivalent à `ssh-agent` : `ansible-playbook` le relit à sa
+// convenance pendant tout le run, chaque tâche qui référence un `!vault |`
+// pouvant déclencher une relecture. Il reste donc en clair sur le disque
+// éphémère du pod pour la durée du run — voir le commentaire de
+// `Config.VaultPassword`.
+func (r *Runner) poserLaCleDeVault() error {
+	if len(r.cfg.VaultPassword) == 0 {
+		return nil
+	}
+
+	env := filepath.Join(r.cfg.PrivateDataDir, "env")
+	if err := os.MkdirAll(env, 0o700); err != nil {
+		return fmt.Errorf("préparation du répertoire de clés : %w", err)
+	}
+	if err := os.WriteFile(r.cheminCleDeVault(), r.cfg.VaultPassword, 0o600); err != nil {
+		return fmt.Errorf("écriture de la clé de vault : %w", err)
+	}
+	return nil
+}
+
 // poserLeBecome écrit le mot de passe d'élévation là où Ansible le lira.
 //
 // Le fichier est écrit ICI et non laissé à `ansible-runner` : celui-ci pose bien
@@ -564,8 +621,17 @@ func (r *Runner) kwargs() (string, error) {
 	if r.cfg.Inventory != "" {
 		args["inventory"] = filepath.Join(r.cfg.Workspace, r.cfg.Inventory)
 	}
-	if len(r.cfg.Flags) > 0 {
-		args["cmdline"] = citerTous(r.cfg.Flags)
+	// `--vault-password-file` est ajouté ICI, jamais via `r.cfg.Flags` : voir le
+	// commentaire de `Config.VaultPassword`. Il précède les flags de
+	// l'utilisateur dans la liste, sans que l'ordre ait d'incidence pour
+	// `ansible-playbook`.
+	cmdline := make([]string, 0, len(r.cfg.Flags)+2)
+	if len(r.cfg.VaultPassword) > 0 {
+		cmdline = append(cmdline, "--vault-password-file", r.cheminCleDeVault())
+	}
+	cmdline = append(cmdline, r.cfg.Flags...)
+	if len(cmdline) > 0 {
+		args["cmdline"] = citerTous(cmdline)
 	}
 
 	brut, err := json.Marshal(map[string]any{"kwargs": args})

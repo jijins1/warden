@@ -274,6 +274,25 @@ func fsCle() (*flag.FlagSet, drapeauxCle) {
 	return fs, f
 }
 
+type drapeauxVault struct {
+	env, varName *string
+	cle, valeur  *prompt.Source
+}
+
+func fsVault() (*flag.FlagSet, drapeauxVault) {
+	fs := neuf("vault")
+	f := drapeauxVault{
+		env:     fs.String("env", "", "environnement"),
+		varName: fs.String("var", "", "nom de la variable, dans le bloc !vault rendu"),
+	}
+	// PAS multiligne, contrairement à `key import` : un mot de passe de vault
+	// est une valeur courte, comme celui d'un enrôlement — l'invite au
+	// terminal est le chemin normal, pas un refus.
+	f.cle = prompt.Declarer(fs, "vault", "le mot de passe de vault existant")
+	f.valeur = prompt.Declarer(fs, "value", "la valeur à chiffrer")
+	return fs, f
+}
+
 type drapeauxLogin struct {
 	subject *string
 	mdp     *prompt.Source
@@ -341,6 +360,8 @@ func flagsPour(chemin []string) *flag.FlagSet {
 		fs, _ = fsDepot()
 	case "key":
 		fs, _ = fsCle()
+	case "vault":
+		fs, _ = fsVault()
 	case "login":
 		fs, _ = fsLogin()
 	case "passwd":

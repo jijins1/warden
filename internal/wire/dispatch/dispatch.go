@@ -128,6 +128,16 @@ type Order struct {
 	// ÉMET, et celui-ci ne fait que transiter.
 	BecomePassword Secret `json:"become_password,omitempty"`
 
+	// VaultPassword est la clé Ansible Vault de l'environnement, émise par
+	// `vault-inventory` au moment du claim (ADR-0045), vide quand
+	// l'environnement n'en a pas.
+	//
+	// Troisième famille de secrets, distincte de SSHKey (accès à un hôte) et
+	// de ForwardEnv (variables du shell de l'utilisateur) : celle-ci
+	// déchiffre des valeurs VERSIONNÉES dans le dépôt. Jamais montée, jamais
+	// présente avant le claim — même chemin que SSHKey.
+	VaultPassword Secret `json:"vault_password,omitempty"`
+
 	// ForwardEnv porte les variables du shell de l'utilisateur retenues par
 	// l'allowlist du §5.4.1. Les NOMS ne sont pas sensibles — ils sont déclarés
 	// dans le fichier projet, versionné — mais les valeurs le sont : ce sont

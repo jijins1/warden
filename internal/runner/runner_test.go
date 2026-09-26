@@ -111,6 +111,21 @@ func TestRedacteurIgnoreLaCleDAcces(t *testing.T) {
 	}
 }
 
+// La clé de vault, elle, EST du jeu (ADR-0045) : contrairement à SSHKey, elle
+// vit dans un fichier lisible par le playbook pendant toute la durée du run,
+// et un module qui la recopierait dans sa sortie doit la voir masquée.
+func TestRedacteurMasqueLaCleDeVault(t *testing.T) {
+	red := redacteurPour(wire.Order{VaultPassword: wire.Secret("mot-de-passe-de-vault")})
+	if red == nil {
+		t.Fatal("un ordre portant une clé de vault doit armer le rédacteur")
+	}
+
+	sortie, _, _ := red.RedactText("la clé est mot-de-passe-de-vault")
+	if strings.Contains(sortie, "mot-de-passe-de-vault") {
+		t.Errorf("la clé de vault ressort en clair : %q", sortie)
+	}
+}
+
 // Rien à masquer, pas de rédacteur : le faire parcourir chaque ligne du flux
 // pour zéro aiguille serait payé sur le chemin chaud.
 func TestRedacteurNilQuandRienNEstInjecte(t *testing.T) {

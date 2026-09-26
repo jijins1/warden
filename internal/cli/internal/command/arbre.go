@@ -24,7 +24,7 @@ func Arbre() *Commande {
 			completion(),
 			submit(), run(),
 			logs(),
-			repo(), utilisateur(), droit(), cle(), hote(), enroler(),
+			repo(), utilisateur(), droit(), cle(), vault(), hote(), enroler(),
 		},
 	}
 }
@@ -343,6 +343,51 @@ func cle() Commande {
 				Voir: []string{"warden host declare"},
 			},
 			{Nom: "list", Resume: "affiche les environnements pourvus d'une clé", Usage: []string{"key list"}},
+		},
+	}
+}
+
+func vault() Commande {
+	return Commande{
+		Nom: "vault", Rubrique: RubriqueAdmin,
+		Resume: "administre la clé Ansible Vault d'un environnement",
+		Details: "Une clé par environnement, sur le même découpage que « warden key ».\n" +
+			"La valeur en clair ne quitte JAMAIS le serveur : ce paquet ne la\n" +
+			"rend à personne, y compris à un administrateur. Le seul chemin\n" +
+			"d'interaction humaine est « vault encrypt » — on donne une valeur en\n" +
+			"clair, on reçoit un texte chiffré.\n\n" +
+			"Remplacer la clé d'un environnement CASSE le déchiffrement des\n" +
+			"secrets déjà chiffrés avec l'ancienne, tant qu'ils n'ont pas été\n" +
+			"ré-encodés avec « vault encrypt » sous la nouvelle : warden ne\n" +
+			"modifie jamais le contenu d'un dépôt.",
+		Sous: []Commande{
+			{
+				Nom: "generate", Resume: "tire le mot de passe de vault d'un environnement",
+				Usage: []string{"vault generate --env <nom>"}, Flags: []string{"env"},
+			},
+			{
+				Nom: "import", Resume: "importe un mot de passe existant",
+				Usage:   []string{"vault import --env <nom> [--ask-vault | --vault-file <chemin> | --vault-stdin]"},
+				Details: "Sans drapeau, le mot de passe est demandé au terminal.",
+				Flags:   []string{"env", "ask-vault", "vault-file", "vault-stdin"},
+			},
+			{
+				Nom: "show", Resume: "affiche l'empreinte de la clé de vault",
+				Usage: []string{"vault show --env <nom>"}, Flags: []string{"env"},
+			},
+			{
+				Nom: "encrypt", Resume: "chiffre une valeur, rend un bloc !vault à coller dans un playbook",
+				Usage: []string{"vault encrypt --env <nom> --var <nom_variable> " +
+					"[--ask-value | --value-file <chemin> | --value-stdin]"},
+				Details: "Sans drapeau, la valeur est demandée au terminal — le chemin normal\n" +
+					"pour un secret court qu'on ne veut voir nulle part dans un\n" +
+					"historique de shell.",
+				Flags: []string{"env", "var", "ask-value", "value-file", "value-stdin"},
+				Exemples: []Exemple{
+					{Pourquoi: "chiffrer un mot de passe de base de données pour l'environnement prod",
+						Ligne: "warden vault encrypt --env prod --var db_password"},
+				},
+			},
 		},
 	}
 }

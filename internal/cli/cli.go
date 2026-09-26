@@ -90,6 +90,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeLogs(ctx, args[1:], os.Stdout)
 	case "key":
 		return commandeCle(ctx, args[1:], os.Stdout)
+	case "vault":
+		return commandeVault(ctx, args[1:], os.Stdout)
 	case "repo":
 		return commandeDepot(ctx, args[1:], os.Stdout)
 	case "host":
@@ -523,6 +525,40 @@ func commandeCle(ctx context.Context, args []string, sortie io.Writer) error {
 		return admin.ListerCles(ctx, api, sortie)
 	default:
 		return command.Inconnue([]string{"key"}, args[0])
+	}
+}
+
+func commandeVault(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return command.Manquante([]string{"vault"})
+	}
+
+	fs, f := fsVault()
+	env, varName, cle, valeur := f.env, f.varName, f.cle, f.valeur
+	if err := fs.Parse(args[1:]); err != nil {
+		return erreurDrapeaux("vault", err)
+	}
+
+	if err := command.VerifierVerbe([]string{"vault"}, args[0]); err != nil {
+		return err
+	}
+
+	api, err := apiSeule()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "generate":
+		return admin.PoserCleDeVault(ctx, api, admin.OptionsCleDeVault{Environment: *env, Generate: true}, sortie)
+	case "import":
+		return admin.PoserCleDeVault(ctx, api, admin.OptionsCleDeVault{Environment: *env, Cle: cle}, sortie)
+	case "show":
+		return admin.MontrerCleDeVault(ctx, api, *env, sortie)
+	case "encrypt":
+		return admin.ChiffrerPourVault(ctx, api, *env, *varName, valeur, sortie)
+	default:
+		return command.Inconnue([]string{"vault"}, args[0])
 	}
 }
 

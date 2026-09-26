@@ -172,12 +172,16 @@ est le PÉRIMÈTRE de la liste, plus son absence.
   n'appliquant que le dernier, `run.flags` en gardant deux. D'où le champ
   `famille`, qui n'existe que pour ça.
 
-- [ ] **Ansible Vault n'a aucune réponse.** `--vault-password-file`, `--vault-id`
-  et `--ask-vault-pass` sont refusés parce qu'ils feraient venir le secret d'un
-  fichier du pod, hors du magasin de l'ADR-0020. C'est le seul refus de
-  l'ADR-0038 qui laisse un besoin RÉEL sans alternative : `forward_env` couvre
-  les secrets du shell, pas ceux versionnés dans le dépôt. Demande une décision,
-  pas une ligne de table.
+- [x] ~~**Ansible Vault n'a aucune réponse.**~~ Résolu le 2026-09-26
+  ([ADR-0045](adr/0045-vault-inventory-cle-ansible-vault.md)). Composant
+  `vault-inventory`, troisième famille de secrets aux côtés des credentials
+  d'accès et des variables transmises : une clé par environnement, jamais
+  révélée à un humain — le seul chemin d'interaction est
+  `warden vault encrypt`, qui chiffre côté serveur et rend un bloc `!vault |`
+  à coller dans le dépôt. `--vault-password-file` reste absent de
+  l'allowlist de l'ADR-0038 ; il est ajouté par le runner lui-même, à partir
+  d'un fichier qu'il vient d'écrire, jamais depuis un flag fourni par
+  l'appelant.
 
 - [x] ~~**`warden submit` n'affichait pas le déroulement du run.**~~ Résolu le
   2026-09-08 ([ADR-0040](adr/0040-submit-suit-le-run.md)). Le suivi existait, il
