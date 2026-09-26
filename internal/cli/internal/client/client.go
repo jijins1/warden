@@ -322,6 +322,61 @@ func (c *Client) ListKeys(ctx context.Context) ([]Key, error) {
 	return out, err
 }
 
+// VaultKey est ce qu'on peut dire d'une clé de vault sans la révéler
+// (ADR-0045).
+//
+// Aucun champ n'y porte la valeur en clair, et aucun n'y portera jamais :
+// contrairement à une clé SSH, un mot de passe symétrique n'a pas de partie
+// publique à afficher.
+type VaultKey struct {
+	Environment string `json:"environment"`
+	Fingerprint string `json:"fingerprint"`
+	Origin      string `json:"origin"`
+	CreatedAt   string `json:"created_at"`
+	RotatedAt   string `json:"rotated_at,omitempty"`
+}
+
+// PutVaultKey pose la clé de vault d'un environnement.
+//
+// Les deux modes sont exclusifs, même contrainte que PutKey : soit
+// `plaintext` porte un mot de passe existant (migration d'un dépôt déjà
+// chiffré), soit `generate` demande à warden de le tirer.
+type PutVaultKey struct {
+	Plaintext string `json:"plaintext,omitempty"`
+	Generate  bool   `json:"generate,omitempty"`
+}
+
+// SetVaultKey pose ou remplace la clé de vault d'un environnement.
+func (c *Client) SetVaultKey(ctx context.Context, environment string, p PutVaultKey) (VaultKey, error) {
+	var out VaultKey
+	err := c.appeler(ctx, http.MethodPost, "/environments/"+url.PathEscape(environment)+"/vault", p, &out)
+	return out, err
+}
+
+// GetVaultKey rend le descripteur de la clé de vault d'un environnement.
+func (c *Client) GetVaultKey(ctx context.Context, environment string) (VaultKey, error) {
+	var out VaultKey
+	err := c.appeler(ctx, http.MethodGet, "/environments/"+url.PathEscape(environment)+"/vault", nil, &out)
+	return out, err
+}
+
+// EncryptVault chiffre une valeur avec la clé de vault d'un environnement.
+//
+// La valeur en clair transite une seule fois, dans cette requête ; ce qui
+// revient est le bloc `!vault |` chiffré, jamais la clé.
+func (c *Client) EncryptVault(ctx context.Context, environment, varName, plaintext string) (string, error) {
+	var out struct {
+		Block string `json:"block"`
+	}
+	body := struct {
+		Plaintext string `json:"plaintext"`
+		VarName   string `json:"var_name"`
+	}{Plaintext: plaintext, VarName: varName}
+	err := c.appeler(ctx, http.MethodPost,
+		"/environments/"+url.PathEscape(environment)+"/vault/encrypt", body, &out)
+	return out.Block, err
+}
+
 // Host est le formalisme d'une machine enrôlée, tel qu'il circule.
 //
 // L'adresse est obligatoire : c'est là que l'enrôlement se connecte, et un nom

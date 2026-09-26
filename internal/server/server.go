@@ -38,6 +38,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/outbound/orchestrator"
 	"github.com/jijins1/warden/internal/server/internal/outbound/protectedfile"
 	"github.com/jijins1/warden/internal/server/internal/outbound/store"
+	"github.com/jijins1/warden/internal/server/internal/outbound/vaultinventory"
 )
 
 // Role désigne le rôle sous lequel le binaire est lancé (ADR-0006).
@@ -633,6 +634,8 @@ func runAPI(ctx context.Context) error {
 		starter      core.RunLauncher
 		keys         core.KeyIssuer
 		keyStore     core.KeyStore
+		vault        core.VaultIssuer
+		vaultStore   core.VaultStore
 		consigne     core.SecretStash
 
 		repo    core.RepoDiffer
@@ -748,6 +751,15 @@ func runAPI(ctx context.Context) error {
 			}
 			keys, keyStore = ki, ki
 
+			// La clé de vault (ADR-0045) partage la même condition que la clé
+			// SSH : sa valeur en clair vit dans un Secret du namespace des
+			// pods.
+			vi, err := vaultinventory.New(k8s, ns, st)
+			if err != nil {
+				return err
+			}
+			vault, vaultStore = vi, vi
+
 			// L'orchestrateur tient déjà le cycle de vie des Secrets d'un pod ;
 			// la consigne des valeurs de passage y vit pour la même raison.
 			consigne = orch
@@ -774,6 +786,10 @@ func runAPI(ctx context.Context) error {
 			// qui donne un sens à la révocation (§10.3). Sans ce branchement, le
 			// composeur refuserait toute clé — c'est le défaut voulu.
 			ob = ob.AvecDroits(st)
+			// Facultatif comme `keys` : sans magasin de vault, l'ordre part
+			// sans clé et le run tourne — il échouera au premier `!vault |`
+			// qu'il ne peut pas déchiffrer, ce qui est un diagnostic honnête.
+			ob = ob.AvecVault(vault)
 			// La consigne sert DEUX chemins : le mot de passe d'un enrôlement et
 			// celui d'élévation d'un playbook. Les deux viennent d'un humain et
 			// ne font que passer, d'où le même magasin.
@@ -835,7 +851,11 @@ func runAPI(ctx context.Context) error {
 		// `Access` (ADR-0044).
 		Protected: st,
 		KeyStore:  keyStore,
-		Stash:     consigne,
+		// Le catalogue de vault ne demande que PostgreSQL, comme celui des
+		// clés SSH ; poser une clé ou chiffrer une valeur demandent le
+		// cluster, donc `Vault` suit la même condition que `KeyStore`.
+		Vault: vaultStore,
+		Stash: consigne,
 	})
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)

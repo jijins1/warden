@@ -7,6 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/moby/moby/api v1.55.0
 	github.com/pressly/goose/v3 v3.27.3
+	github.com/sosedoff/ansible-vault-go v0.2.0
 	github.com/spf13/viper v1.19.0
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0

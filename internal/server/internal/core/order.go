@@ -35,6 +35,7 @@ type OrderBuilder struct {
 	runs   RunByIDReader
 	grants FetchGrantIssuer
 	keys   KeyIssuer
+	vault  VaultIssuer
 
 	// droits porte l'autorisation par environnement (§10.2). Nil interdit TOUT :
 	// `VerifierLAcces` refuse quand le magasin manque, parce qu'un contrôle qui
@@ -72,6 +73,18 @@ func (b *OrderBuilder) AvecDroits(droits EnvironmentGrants) *OrderBuilder {
 
 func (b *OrderBuilder) AvecEnrolement(hosts HostCatalog, cles KeyCatalog, consigne SecretStash) *OrderBuilder {
 	b.hosts, b.cles, b.consigne = hosts, cles, consigne
+	return b
+}
+
+// AvecVault branche l'émetteur de clés Ansible Vault (ADR-0045).
+//
+// Une option et non un paramètre du constructeur, comme AvecEnrolement : les
+// appelants existants continuent de compiler. FACULTATIF au même sens que
+// `keys` — un déploiement sans magasin de vault compose des ordres sans clé
+// de vault, et c'est un état légitime pour tout environnement dont aucun
+// playbook n'utilise `!vault |`.
+func (b *OrderBuilder) AvecVault(vault VaultIssuer) *OrderBuilder {
+	b.vault = vault
 	return b
 }
 
@@ -163,6 +176,14 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		return wire.Order{}, err
 	}
 
+	// La clé de vault est émise ICI, à la livraison, pour la même raison que la
+	// clé d'accès et le jeton git : aucun credential n'est persisté, ni en
+	// base ni dans le WAL (ADR-0045, miroir de l'ADR-0018 amendée).
+	cleVault, err := b.cleDeVault(ctx, run)
+	if err != nil {
+		return wire.Order{}, err
+	}
+
 	// Le mot de passe d'élévation, s'il a été consigné. Lu à la LIVRAISON et
 	// détruit par sa lecture, comme celui d'un enrôlement : les deux viennent
 	// d'un humain et ne font que passer.
@@ -213,6 +234,10 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		// tout ce qui l'accepte.
 		SSHKey:         cle,
 		BecomePassword: become,
+
+		// La clé de vault de l'ADR-0045, vide quand l'environnement n'en a
+		// pas — état légitime, voir cleDeVault.
+		VaultPassword: cleVault,
 
 		// Les NOMS ont été filtrés par la composition (§5.4.1) et journalisés à
 		// la création du run ; les VALEURS ne le sont jamais et ne font que
@@ -311,6 +336,38 @@ func (b *OrderBuilder) cleDAcces(ctx context.Context, run Run) (wire.Secret, err
 		// Kubernetes n'a pas répondu produirait un échec `unreachable` qui
 		// accuserait la machine cible.
 		return nil, fmt.Errorf("clé d'accès du run %s : %w", run.RunRef, err)
+	}
+	return wire.Secret(cle.Reveal()), nil
+}
+
+// cleDeVault émet la clé de vault de l'environnement du run, ou rien
+// (ADR-0045).
+//
+// Un environnement sans clé de vault n'est PAS une erreur, pour la même raison
+// que cleDAcces : la plupart des environnements n'ont aucun secret `!vault |`
+// dans leurs playbooks. Le droit est revérifié ICI et non supposé acquis par
+// cleDAcces : `b.keys` peut être nil sans que `b.vault` le soit, et
+// cleDAcces renvoie alors sans avoir consulté `b.droits`.
+func (b *OrderBuilder) cleDeVault(ctx context.Context, run Run) (wire.Secret, error) {
+	if b.vault == nil {
+		return nil, nil
+	}
+
+	if err := VerifierLAcces(ctx, b.droits, run.UserID, run.Environment); err != nil {
+		return nil, fmt.Errorf("clé de vault du run %s : %w", run.RunRef, err)
+	}
+
+	cle, err := b.vault.Issue(ctx, run.Environment)
+	if errors.Is(err, ErrNoVaultKey) {
+		slog.Info("run sans clé de vault",
+			slog.String("run_ref", run.RunRef), slog.String("environnement", run.Environment))
+		return nil, nil
+	}
+	if err != nil {
+		// Même conduite que cleDAcces : une panne du magasin FAIT ÉCHOUER la
+		// livraison plutôt que de livrer un ordre qui échouerait plus loin, au
+		// premier `!vault |` que le playbook ne pourrait pas déchiffrer.
+		return nil, fmt.Errorf("clé de vault du run %s : %w", run.RunRef, err)
 	}
 	return wire.Secret(cle.Reveal()), nil
 }

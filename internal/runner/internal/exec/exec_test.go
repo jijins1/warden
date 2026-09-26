@@ -569,3 +569,108 @@ func TestSansMotDePasseDElevationAucunExtravars(t *testing.T) {
 		t.Error("un extravars a été posé alors qu'il n'y a pas de mot de passe")
 	}
 }
+
+// --- la clé de vault (ADR-0045) ---
+
+// Elle va dans `<pdd>/env/vault_password`, et `--vault-password-file` est
+// ajouté à `cmdline` SANS passer par `Flags` — c'est le point que
+// TestLesFlagsSontCitesEtNePeuventPasEnIntroduireDAutres ne couvre pas : ici
+// on vérifie que l'argument apparaît bien, construit par ce paquet et non par
+// l'allowlist serveur.
+func TestLaCleDeVaultEstPoseeEtReferenceeSurLaLigneDeCommande(t *testing.T) {
+	entree := fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	const cle = "un-mot-de-passe-de-vault"
+	cfg.VaultPassword = []byte(cle)
+
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	chemin := filepath.Join(cfg.PrivateDataDir, "env", "vault_password")
+	brut, err := os.ReadFile(chemin) // #nosec G304 -- chemin construit par le test
+	if err != nil {
+		t.Fatalf("la clé de vault n'a pas été posée : %v", err)
+	}
+	if string(brut) != cle {
+		t.Errorf("la clé de vault a été réécrite : %q", brut)
+	}
+	if fi, err := os.Stat(chemin); err != nil {
+		t.Fatalf("Stat: %v", err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf("permissions = %v, attendu 0600", fi.Mode().Perm())
+	}
+
+	entreeBrute, err := os.ReadFile(entree)
+	if err != nil {
+		t.Fatalf("lecture : %v", err)
+	}
+	var trame struct {
+		Kwargs struct {
+			Cmdline string `json:"cmdline"`
+		} `json:"kwargs"`
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(string(entreeBrute), "\n", 2)[0]), &trame); err != nil {
+		t.Fatalf("kwargs illisibles : %v", err)
+	}
+	if !strings.Contains(trame.Kwargs.Cmdline, "--vault-password-file") || !strings.Contains(trame.Kwargs.Cmdline, chemin) {
+		t.Errorf("cmdline = %q, attendu --vault-password-file %s", trame.Kwargs.Cmdline, chemin)
+	}
+}
+
+// Sans clé de vault, RIEN n'est écrit et `cmdline` ne porte aucun
+// `--vault-password-file` — un run sans secret `!vault |` doit tourner sans
+// qu'Ansible cherche un fichier qui n'existe pas.
+func TestSansCleDeVaultAucunFichierNiArgument(t *testing.T) {
+	entree := fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cfg.PrivateDataDir, "env", "vault_password")); err == nil {
+		t.Error("un fichier de clé de vault a été posé alors qu'il n'y a pas de clé")
+	}
+
+	brut, err := os.ReadFile(entree)
+	if err != nil {
+		t.Fatalf("lecture : %v", err)
+	}
+	if strings.Contains(string(brut), "vault-password-file") {
+		t.Error("--vault-password-file présent alors qu'il n'y a pas de clé de vault")
+	}
+}
+
+// Les deux — flags utilisateur ET clé de vault — coexistent sur la même
+// ligne, chacun cité, et l'un ne doit pas pouvoir s'introduire dans l'autre.
+func TestLaCleDeVaultEtLesFlagsUtilisateurCoexistent(t *testing.T) {
+	entree := fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.VaultPassword = []byte("un-mot-de-passe")
+	cfg.Flags = []string{"--check", "--diff"}
+
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	brut, err := os.ReadFile(entree)
+	if err != nil {
+		t.Fatalf("lecture : %v", err)
+	}
+	var trame struct {
+		Kwargs struct {
+			Cmdline string `json:"cmdline"`
+		} `json:"kwargs"`
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(string(brut), "\n", 2)[0]), &trame); err != nil {
+		t.Fatalf("kwargs illisibles : %v", err)
+	}
+	for _, attendu := range []string{"--vault-password-file", "--check", "--diff"} {
+		if !strings.Contains(trame.Kwargs.Cmdline, attendu) {
+			t.Errorf("cmdline = %q, attendu %q", trame.Kwargs.Cmdline, attendu)
+		}
+	}
+}

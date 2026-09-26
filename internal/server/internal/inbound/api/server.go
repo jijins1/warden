@@ -219,6 +219,12 @@ type Deps struct {
 	// que ce n'est pas le contrôle de sécurité par défaut du produit.
 	Protected core.ProtectedEnvironments
 
+	// Vault sert l'administration des clés Ansible Vault (ADR-0045).
+	// Facultatif comme KeyStore et pour la même raison : lire un descripteur
+	// ou chiffrer une valeur demandent le cluster, un déploiement sans
+	// Kubernetes répond 501 sur ces trois routes et le reste fonctionne.
+	Vault core.VaultStore
+
 	// ProjectConfig lit `.ansibleproxy.yml` dans l'arbre du commit (ADR-0009).
 	//
 	// Facultatif, et son absence est TOLÉRANTE plutôt qu'interdisante —
@@ -374,6 +380,14 @@ func (a *Server) Handler() http.Handler {
 	// de run — donc pour tout utilisateur, pas seulement les administrateurs.
 	// Ça ne révèle rien que le nom de l'environnement, déjà visible ailleurs.
 	router.HandleFunc("GET /environments/protected", a.HandleListProtectedEnvironments)
+
+	// La clé de vault d'un environnement (ADR-0045). PAS sous `/admin`,
+	// contrairement aux clés SSH : le droit qui gouverne ces trois routes est
+	// `autoriserLEnvironnement` (ADR-0033), le même que celui d'un run sur cet
+	// environnement — pas l'administration globale du produit.
+	router.HandleFunc("GET /environments/{environment}/vault", a.HandleGetVaultKey)
+	router.HandleFunc("POST /environments/{environment}/vault", a.HandlePutVaultKey)
+	router.HandleFunc("POST /environments/{environment}/vault/encrypt", a.HandleEncryptVault)
 
 	// Administration. Sous un préfixe distinct pour que la NetworkPolicy et
 	// l'ingress puissent la traiter à part — l'autorisation est portée par la
