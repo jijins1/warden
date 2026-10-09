@@ -91,8 +91,8 @@ func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vs := r.URL.Query().Get("vs")
-	if vs != "mainline" && vs != "previous" {
-		http.Error(w, "vs must be 'mainline' or 'previous'", http.StatusBadRequest)
+	if vs != "mainline" && vs != "previous" && vs != "current" {
+		http.Error(w, "vs must be 'mainline', 'previous' or 'current'", http.StatusBadRequest)
 		return
 	}
 
@@ -113,6 +113,29 @@ func (a *Server) HandleGetRunDiff(w http.ResponseWriter, r *http.Request) {
 	switch vs {
 	case "mainline":
 		diff, err = a.deps.Repo.DiffMainline(r.Context(), run)
+
+	case "current":
+		// Deux dépendances facultatives de plus que "mainline" : la politique de
+		// dépôt (pour sa branche protégée) et le résolveur de refs (pour la
+		// position ACTUELLE de cette branche dans le miroir). Un déploiement qui
+		// ne les monte pas reste valide pour tout le reste de l'audit — c'est le
+		// même principe que `Repo` ci-dessus.
+		if a.deps.Repos == nil || a.deps.Refs == nil {
+			http.Error(w, "diffing against the current playbook unavailable: repo policy or ref resolver not configured",
+				http.StatusNotImplemented)
+			return
+		}
+		repoCfg, errRepo := a.deps.Repos.GetRepo(r.Context(), run.Repo)
+		if errRepo != nil {
+			http.Error(w, "repository configuration unavailable", http.StatusBadGateway)
+			return
+		}
+		currentSHA, errResolve := a.deps.Refs.ResolveRef(r.Context(), run.Repo, repoCfg.MainlineRef)
+		if errResolve != nil {
+			http.Error(w, "resolving the current mainline failed", http.StatusBadGateway)
+			return
+		}
+		diff, err = a.deps.Repo.DiffAgainst(r.Context(), run, currentSHA)
 
 	case "previous":
 		precedent, errPrec := a.deps.Runs.PreviousRun(r.Context(), run)

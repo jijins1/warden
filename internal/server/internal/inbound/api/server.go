@@ -302,7 +302,7 @@ func New(cfg *Config, deps Deps) (*Server, error) {
 	return &Server{
 		cfg:    cfg,
 		deps:   deps,
-		policy: NewPolicy(),
+		policy: NewPolicy(deps.Access),
 
 		insecureDevAuth:   cfg.InsecureDevAuth,
 		origines:          orig,
@@ -362,6 +362,7 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
+	router.HandleFunc("GET /hosts/{host}/playbooks", a.HandleListPlaybooksByHost)
 	router.HandleFunc("POST /runs", a.HandleCreateRun)
 	router.HandleFunc("POST /repos/{repo}/push-grant", a.HandleIssuePushGrant)
 	// POST /repos/{repo}/runs — lancer depuis le navigateur (ADR-0042). Sous

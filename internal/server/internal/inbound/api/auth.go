@@ -187,13 +187,18 @@ func (a *Server) parEnTeteDeDev(w http.ResponseWriter, r *http.Request, next htt
 
 // Policy holds the authorization rules. Every handler that reads audit data
 // must consult it; the middleware only establishes who is calling.
-// Elle ne porte aucune dépendance : les règles actuelles se décident sur
-// l'utilisateur et le run qu'on lui passe. Le jour où « les hôtes que je gère »
-// apparaît, c'est un port du cœur qui entrera ici, pas un adaptateur.
-type Policy struct{}
+//
+// `droits` porte l'autorisation par environnement (§10.2) : c'est le port du
+// cœur annoncé par l'ancienne version de ce commentaire, celui qui devait
+// entrer « le jour où les hôtes que je gère apparaît ». Nil désactive la règle
+// d'environnement sans casser la règle de propriété : un déploiement sans
+// magasin de droits reste utilisable, chacun n'y voyant que ses propres runs.
+type Policy struct {
+	droits core.EnvironmentGrants
+}
 
 // NewPolicy creates a new authorization policy.
-func NewPolicy() *Policy { return &Policy{} }
+func NewPolicy(droits core.EnvironmentGrants) *Policy { return &Policy{droits: droits} }
 
 // CanAdministerRepos reports whether the user may read and write the per-repo
 // server policy.
@@ -215,20 +220,40 @@ func (p *Policy) CanAdministerRepos(_ context.Context, user *core.User) bool {
 // CanViewRun reports whether the user may read a run and everything hanging off
 // it (events, diffs, git diffs).
 //
-// The rule is ownership of the run and nothing else. An administrator does not
-// qualify — see CanAdministerRepos for why that separation is deliberate — and
-// neither does someone who operates the machines the run touched.
+// The rule is ownership of the run, OR a live grant on the run's environment:
+// anyone allowed to run against an environment is allowed to see what has run
+// there. An administrator does not qualify by that status alone — see
+// CanAdministerRepos for why that separation is deliberate — but qualifies the
+// moment they also hold an environment grant, same as anyone else.
 //
-// That second case is §6.5's "everything that touched db-prod-02 this month",
-// and its absence is load-bearing rather than cosmetic: it is precisely why
-// HandleListByHost filters its result down to the caller instead of serving the
-// host's whole history. Widening it needs a notion of who owns a host, which
-// does not exist yet; the type comment above says where it would enter.
+// This is what makes HandleListByHost able to serve more than the caller's own
+// runs on a host: "everything that touched db-prod-02" is now everything the
+// caller's environment grants cover, not a promise of the host's whole
+// history — a host can span environments, and a grant on one of them does not
+// open the others.
 func (p *Policy) CanViewRun(ctx context.Context, user *core.User, run *core.Run) bool {
 	if user == nil || run == nil {
 		return false
 	}
-	return user.ID == run.UserID
+	return user.ID == run.UserID || p.CanViewEnvironment(ctx, user, run.Environment)
+}
+
+// CanViewEnvironment reports whether the user holds a live grant on the
+// environment (§10.2).
+//
+// Separated from CanViewRun so a caller walking many rows that share an
+// environment — HandleListByHost, VisibleRunFilter — can memoize the result
+// instead of asking the grants store once per row.
+func (p *Policy) CanViewEnvironment(ctx context.Context, user *core.User, environment string) bool {
+	if user == nil || p.droits == nil || environment == "" {
+		return false
+	}
+	ok, err := p.droits.PeutAtteindre(ctx, user.ID, environment)
+	if err != nil {
+		// A read failure does not grant access — same stance as VerifierLAcces.
+		return false
+	}
+	return ok
 }
 
 // CanListRuns reports whether the user may list runs. The listing itself is
@@ -242,9 +267,20 @@ func (p *Policy) CanListRuns(ctx context.Context, user *core.User) bool {
 // own scope by passing someone else's id. ok is false when nothing is visible;
 // callers must not fall back to the unfiltered filter, since ListRuns treats a
 // non-positive UserID as "no filter at all".
-func (p *Policy) VisibleRunFilter(user *core.User, filter core.RunFilter) (core.RunFilter, bool) {
+//
+// A filter naming an environment the caller holds a grant on is let through
+// WITHOUT forcing UserID: that grant is exactly CanViewRun's second branch, and
+// a listing that filtered to the caller's own runs anyway would contradict the
+// detail view reachable from it. Without an environment named, there is no
+// single grant to check against, so the filter falls back to the caller's own
+// runs — showing everything across every environment the caller can reach
+// would need iterating their whole grant set, a different and bigger query.
+func (p *Policy) VisibleRunFilter(ctx context.Context, user *core.User, filter core.RunFilter) (core.RunFilter, bool) {
 	if user == nil {
 		return core.RunFilter{}, false
+	}
+	if filter.Environment != "" && p.CanViewEnvironment(ctx, user, filter.Environment) {
+		return filter, true
 	}
 	filter.UserID = user.ID
 	return filter, true

@@ -2,7 +2,14 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG } from '../config/app-config';
-import { LancementRun, RunCree, RunDetail, RunListResult, RunsParMachine } from './wire';
+import {
+  LancementRun,
+  PlaybooksParMachine,
+  RunCree,
+  RunDetail,
+  RunListResult,
+  RunsParMachine,
+} from './wire';
 
 /**
  * Les filtres que le SERVEUR sait appliquer.
@@ -54,9 +61,11 @@ export class RunsService {
   /**
    * Les runs qui ont touché une machine (§6.5).
    *
-   * RESTREINT à l'appelant, comme la liste : le handler écarte les runs
-   * d'autrui après les avoir lus. Ce n'est donc PAS l'historique de la machine,
-   * et tout libellé qui le laisserait croire mentirait sur la portée.
+   * Restreint à ce que l'appelant peut voir : le sien, ou tout run dont il
+   * détient un droit vivant sur l'environnement. Ce n'est donc PAS forcément
+   * l'historique complet de la machine — un environnement qu'il ne couvre pas
+   * reste hors de portée — et tout libellé qui promettrait l'exhaustivité
+   * mentirait sur la portée.
    *
    * Un tableau nu, sans curseur : le serveur plafonne à 500 et attend qu'on
    * resserre la fenêtre.
@@ -68,6 +77,27 @@ export class RunsService {
     return firstValueFrom(
       this.#http.get<RunsParMachine>(
         `${this.#base}/hosts/${encodeURIComponent(host)}/runs`,
+        { params },
+      ),
+    );
+  }
+
+  /**
+   * Les playbooks DISTINCTS joués sur une machine — une ligne par (dépôt,
+   * playbook), portant son run le plus récent. Même restriction de visibilité
+   * que `parMachine`, et même absence de curseur.
+   */
+  async playbooksParMachine(
+    host: string,
+    since?: string,
+    until?: string,
+  ): Promise<PlaybooksParMachine> {
+    let params = new HttpParams();
+    if (since) params = params.set('since', since);
+    if (until) params = params.set('until', until);
+    return firstValueFrom(
+      this.#http.get<PlaybooksParMachine>(
+        `${this.#base}/hosts/${encodeURIComponent(host)}/playbooks`,
         { params },
       ),
     );

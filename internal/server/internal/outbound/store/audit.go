@@ -235,3 +235,79 @@ func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.T
 
 	return items, nil
 }
+
+// maxPlaybooksByHost borne le résultat. Les playbooks distincts d'un hôte
+// restent naturellement peu nombreux comparés à ses runs — maxRunsByHost
+// existe pour une table d'events qui n'est jamais purgée, pas pour un compte
+// de playbooks — mais une machine assez ancienne peut quand même accumuler
+// plus de lignes que ce qu'un écran veut afficher d'un coup.
+const maxPlaybooksByHost = 200
+
+// PlaybooksByHost returns the DISTINCT playbooks run against a host — one row
+// per (repo, playbook), each carrying its most recent run. Companion to
+// RunsByHost (§6.5), deduplicated by playbook instead of by run.
+// Used by: GET /hosts/{host}/playbooks?since=&until=
+func (s *Store) PlaybooksByHost(ctx context.Context, host string, since, until time.Time) ([]core.PlaybookSummary, error) {
+	if host == "" {
+		return nil, fmt.Errorf("host required")
+	}
+
+	// `DISTINCT ON` exige que l'ORDER BY commence par ses colonnes : le tri par
+	// started_at DESC qui donne « le plus récent » n'est donc possible qu'APRÈS,
+	// sur le résultat déjà dédupliqué — d'où la sous-requête.
+	query := `
+		SELECT repo, playbook, environment, inventory, run_ref, user_id, audit_sha, state, started_at
+		FROM (
+			SELECT DISTINCT ON (r.repo, r.playbook)
+			       r.repo, r.playbook, r.environment, r.inventory,
+			       r.run_ref, r.user_id, COALESCE(r.audit_sha, '') AS audit_sha, r.state, r.started_at
+			FROM event e
+			JOIN run r ON e.run_id = r.id
+			WHERE e.host = $1
+			  -- Un run d'ENRÔLEMENT ou AD-HOC n'a pas de playbook : il n'a rien à
+			  -- faire dans « quels playbooks ont tourné ici ».
+			  AND r.playbook IS NOT NULL AND r.playbook <> ''
+	`
+	args := []interface{}{host}
+	argNum := 2
+
+	if !since.IsZero() {
+		query += fmt.Sprintf(" AND r.started_at >= $%d", argNum)
+		args = append(args, since)
+		argNum++
+	}
+	if !until.IsZero() {
+		query += fmt.Sprintf(" AND r.started_at <= $%d", argNum)
+		args = append(args, until)
+		argNum++
+	}
+
+	query += `
+			ORDER BY r.repo, r.playbook, r.started_at DESC
+		) t
+		ORDER BY started_at DESC
+	`
+	query += fmt.Sprintf(" LIMIT $%d", argNum)
+	args = append(args, maxPlaybooksByHost)
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying playbooks by host: %w", err)
+	}
+	defer rows.Close()
+
+	var items []core.PlaybookSummary
+	for rows.Next() {
+		var item core.PlaybookSummary
+		if err := rows.Scan(&item.Repo, &item.Playbook, &item.Environment, &item.Inventory,
+			&item.LastRunRef, &item.LastUserID, &item.LastAuditSHA, &item.LastState, &item.LastStartedAt); err != nil {
+			return nil, fmt.Errorf("scanning playbook: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating playbooks: %w", err)
+	}
+
+	return items, nil
+}

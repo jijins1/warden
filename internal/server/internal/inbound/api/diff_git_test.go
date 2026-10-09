@@ -78,6 +78,86 @@ func TestDiffGitBoutEnBout(t *testing.T) {
 	})
 }
 
+// TestDiffVsCurrent vérifie que vs=current compare au sommet ACTUEL de la
+// branche protégée dans le miroir — pas au mainline_sha figé dans le run — en
+// avançant ce sommet APRÈS la création du run et en vérifiant que le diff
+// rendu change en conséquence.
+func TestDiffVsCurrent(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+
+	racine, shas := depotDeTest(t)
+	h.brancherRoleGit(t, racine)
+
+	if err := h.store.UpsertRepo(ctx, core.Repo{
+		Name: "depot", RemoteURL: "https://example.invalid/depot.git",
+		MainlineRef: "refs/heads/principale",
+	}, h.userID); err != nil {
+		t.Fatalf("UpsertRepo: %v", err)
+	}
+
+	ref := h.creerRunGit(t, ctx, h.userID, "P03", shas[1])
+
+	// Sans rien avancer : audit_sha du run EST déjà le sommet de la branche,
+	// donc vs=current ne montre rien de plus que vs=mainline ne montrerait pas
+	// déjà — le diff est vide.
+	resp := h.get(t, "/runs/"+ref+"/diff?vs=current", h.userSubject)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("statut %d, attendu 200", resp.StatusCode)
+	}
+	corps, _ := io.ReadAll(resp.Body)
+	if string(corps) != "" {
+		t.Errorf("diff non vide avant toute avance de la branche :\n%s", corps)
+	}
+
+	// La branche avance APRÈS le run — exactement ce que "le playbook actuel"
+	// doit voir et que mainline_sha, figé à la création, ne peut pas.
+	avancerBranche(t, racine, "troisieme")
+
+	resp = h.get(t, "/runs/"+ref+"/diff?vs=current", h.userSubject)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("statut %d, attendu 200", resp.StatusCode)
+	}
+	corps, _ = io.ReadAll(resp.Body)
+	if !strings.Contains(string(corps), "troisieme") {
+		t.Errorf("diff vs=current inattendu, devrait montrer l'avance de la branche:\n%s", corps)
+	}
+}
+
+// avancerBranche ajoute un commit sur `refs/heads/principale` du dépôt bare
+// `racine/depot.git`, en clonant puis en repoussant — ce que ResolveRef lit
+// ensuite SANS relecture réseau, puisque c'est le même fichier sur disque que
+// le miroir que gitd sert.
+func avancerBranche(t *testing.T, racine, ligne string) {
+	t.Helper()
+	clone := t.TempDir()
+
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	git("", "clone", filepath.Join(racine, "depot.git"), clone)
+	git(clone, "config", "user.email", "test@example.com")
+	git(clone, "config", "user.name", "Test")
+
+	f := filepath.Join(clone, "f.txt")
+	contenu, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatalf("lecture: %v", err)
+	}
+	if err := os.WriteFile(f, append(contenu, []byte(ligne+"\n")...), 0o600); err != nil {
+		t.Fatalf("écriture: %v", err)
+	}
+	git(clone, "add", "f.txt")
+	git(clone, "commit", "-m", "trois")
+	git(clone, "push", "origin", "principale")
+}
+
 // TestDiffPrecedentDUnAutreUtilisateurRefuse est LA propriété de sécurité de
 // cette tranche.
 //
@@ -153,6 +233,7 @@ func (h *harness) brancherRoleGit(t *testing.T, racine string) {
 
 	h.remonter(t, api.Deps{
 		Runs: h.store, Users: h.store, Diffs: h.diffs, Events: h.flux, Repo: gc,
+		Repos: h.store, Refs: gc,
 	})
 }
 

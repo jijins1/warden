@@ -8,6 +8,9 @@
       <button type="button" [class.actif]="vs() === 'previous'" (click)="choisir('previous')">
         vs previous run
       </button>
+      <button type="button" [class.actif]="vs() === 'current'" (click)="choisir('current')">
+        vs current playbook
+      </button>
     </span>
     <span class="espace"></span>
     @if (demande()) {
@@ -24,6 +27,7 @@
       <span>
         <strong>vs branch</strong> answers “what had he changed locally?”.
         <strong>vs previous run</strong> answers “what changed since it worked?”.
+        <strong>vs current playbook</strong> answers “what changed since, including what shipped after this run?”.
       </span>
       <button mat-flat-button (click)="charger()">Compute</button>
     </p>

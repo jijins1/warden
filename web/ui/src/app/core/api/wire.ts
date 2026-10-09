@@ -97,6 +97,29 @@ export interface RunListResult {
  */
 export type RunsParMachine = RunListItem[];
 
+/**
+ * `GET /hosts/{host}/playbooks` — core.PlaybookSummary TEL QUEL, même
+ * PascalCase que RunListItem et pour la même raison (voir ci-dessus).
+ *
+ * Une ligne par (Repo, Playbook) : le run le plus récent de ce couple, pas son
+ * historique. LastAuditSHA existe pour diffuser vs=current sans devoir relire
+ * le run par sa référence au préalable.
+ */
+export interface PlaybookSummary {
+  Repo: string;
+  Playbook: string;
+  Environment: string;
+  Inventory: string;
+  LastRunRef: string;
+  LastUserID: number;
+  LastAuditSHA: string;
+  LastState: RunState;
+  LastStartedAt: string;
+}
+
+/** `GET /hosts/{host}/playbooks` — un TABLEAU nu, comme RunsParMachine. */
+export type PlaybooksParMachine = PlaybookSummary[];
+
 /** `POST /auth/password` — api/auth_handler.go. */
 export interface ChangementMotDePasse {
   current_password: string;

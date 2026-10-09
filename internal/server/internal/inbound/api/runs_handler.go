@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -36,7 +37,7 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 
 	// The owner is never taken from the query string: it is the authenticated
 	// caller, or the request does not happen.
-	filter, visible := a.policy.VisibleRunFilter(user, filter)
+	filter, visible := a.policy.VisibleRunFilter(r.Context(), user, filter)
 	if !visible {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
@@ -116,13 +117,86 @@ func (a *Server) HandleListByHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The host view crosses runs, so it is filtered here rather than in SQL.
+	peutVoir := a.accesMemo(r.Context(), user)
 	visible := make([]core.RunListItem, 0, len(runs))
 	for _, run := range runs {
-		if run.UserID == user.ID {
+		if peutVoir(run.UserID, run.Environment) {
 			visible = append(visible, run)
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(visible)
+}
+
+// HandleListPlaybooksByHost lists the distinct playbooks run against a host.
+// GET /hosts/{host}/playbooks?since=&until=
+//
+// Companion to HandleListByHost, deduplicated by playbook instead of by run —
+// "which playbooks have run here" rather than "every run that touched here".
+func (a *Server) HandleListPlaybooksByHost(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if host == "" {
+		http.Error(w, "host required", http.StatusBadRequest)
+		return
+	}
+
+	user := ContextUser(r.Context())
+	if !a.policy.CanViewHost(r.Context(), user, host) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	var since, until time.Time
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		if s, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+			since = s
+		}
+	}
+	if untilStr := r.URL.Query().Get("until"); untilStr != "" {
+		if u, err := time.Parse(time.RFC3339, untilStr); err == nil {
+			until = u
+		}
+	}
+
+	playbooks, err := a.deps.Runs.PlaybooksByHost(r.Context(), host, since, until)
+	if err != nil {
+		http.Error(w, "listing playbooks by host failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Même règle de visibilité que HandleListByHost, sur le run le plus récent
+	// de chaque playbook : un playbook dont le dernier run n'est pas visible
+	// n'a rien à montrer de plus récent qui le soit, par construction de la
+	// requête (DISTINCT ON ... ORDER BY started_at DESC).
+	peutVoir := a.accesMemo(r.Context(), user)
+	visible := make([]core.PlaybookSummary, 0, len(playbooks))
+	for _, pb := range playbooks {
+		if peutVoir(pb.LastUserID, pb.Environment) {
+			visible = append(visible, pb)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(visible)
+}
+
+// accesMemo rend une fonction qui dit si l'appelant peut voir une ligne
+// (propriétaire ou droit d'environnement — Policy.CanViewRun's second
+// branch), en mémoïsant la vérification de droit par environnement : les
+// deux listes par hôte parcourent des lignes qui partagent très peu
+// d'environnements.
+func (a *Server) accesMemo(ctx context.Context, user *core.User) func(ownerID int64, environment string) bool {
+	cache := make(map[string]bool, 4)
+	return func(ownerID int64, environment string) bool {
+		if user != nil && ownerID == user.ID {
+			return true
+		}
+		ok, vu := cache[environment]
+		if !vu {
+			ok = a.policy.CanViewEnvironment(ctx, user, environment)
+			cache[environment] = ok
+		}
+		return ok
+	}
 }

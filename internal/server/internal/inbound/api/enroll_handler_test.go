@@ -70,6 +70,9 @@ func (runFactice) ListRuns(context.Context, core.RunFilter) (core.RunListResult,
 func (runFactice) RunsByHost(context.Context, string, time.Time, time.Time) ([]core.RunListItem, error) {
 	return nil, errPortNonUtilise
 }
+func (runFactice) PlaybooksByHost(context.Context, string, time.Time, time.Time) ([]core.PlaybookSummary, error) {
+	return nil, errPortNonUtilise
+}
 func (runFactice) PreviousRun(context.Context, core.Run) (core.Run, error) {
 	return core.Run{}, errPortNonUtilise
 }
