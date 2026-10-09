@@ -262,6 +262,9 @@ func (stubPort) ListRuns(context.Context, core.RunFilter) (core.RunListResult, e
 func (stubPort) RunsByHost(context.Context, string, time.Time, time.Time) ([]core.RunListItem, error) {
 	return nil, errPortNonUtilise
 }
+func (stubPort) PlaybooksByHost(context.Context, string, time.Time, time.Time) ([]core.PlaybookSummary, error) {
+	return nil, errPortNonUtilise
+}
 func (stubPort) PreviousRun(context.Context, core.Run) (core.Run, error) {
 	return core.Run{}, errPortNonUtilise
 }

@@ -62,6 +62,7 @@ func (h *harness) remonter(t *testing.T, deps api.Deps) {
 	mux.HandleFunc("GET /runs", server.HandleListRuns)
 	mux.HandleFunc("GET /runs/{run_ref}/diff", server.HandleGetRunDiff)
 	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
+	mux.HandleFunc("GET /hosts/{host}/playbooks", server.HandleListPlaybooksByHost)
 
 	h.httpSrv.Config.Handler = server.AuthnMiddleware(mux)
 	h.server = server
@@ -123,7 +124,7 @@ func setup(t *testing.T) *harness {
 	t.Cleanup(f.Close)
 
 	server, err := api.New(cfg, api.Deps{
-		Runs: st, Users: st, Diffs: dr, Events: f,
+		Runs: st, Users: st, Diffs: dr, Events: f, Access: st,
 	})
 	if err != nil {
 		t.Fatalf("creating API server: %v", err)
@@ -137,6 +138,7 @@ func setup(t *testing.T) *harness {
 	mux.HandleFunc("GET /runs", server.HandleListRuns)
 	mux.HandleFunc("GET /runs/{run_ref}/diff", server.HandleGetRunDiff)
 	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
+	mux.HandleFunc("GET /hosts/{host}/playbooks", server.HandleListPlaybooksByHost)
 	httpSrv := httptest.NewServer(server.AuthnMiddleware(mux))
 	t.Cleanup(httpSrv.Close)
 

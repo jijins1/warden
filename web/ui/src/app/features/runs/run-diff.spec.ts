@@ -98,4 +98,24 @@ describe('RunDiff', () => {
     const el = await monter(echec({ status: 502, message: 'x' }));
     expect(el.textContent).toContain('could not compute');
   });
+
+  // vs=current est la seule des trois comparaisons qui change à chaque appel —
+  // elle n'a donc rien à faire si le bouton ne la demande pas vraiment.
+  it('demande vs=current au clic sur « vs current playbook »', async () => {
+    const service = { diffDuRun: vi.fn(() => Promise.resolve('')) };
+    TestBed.configureTestingModule({
+      providers: [{ provide: DiffsService, useValue: service }],
+    });
+    const fixture = TestBed.createComponent(Hote);
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const bouton = Array.from(el.querySelectorAll<HTMLButtonElement>('.segments button')).find(
+      (b) => b.textContent?.includes('vs current playbook'),
+    );
+    bouton?.click();
+    await fixture.whenStable();
+
+    expect(service.diffDuRun).toHaveBeenCalledWith('01J', 'current');
+  });
 });

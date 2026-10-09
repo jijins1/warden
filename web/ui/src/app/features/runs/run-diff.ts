@@ -97,9 +97,11 @@ function expliquer(err: Partial<ApiError>): string {
       break;
   }
   if (err.status === 501) {
-    // Un déploiement d'audit sans accès au rôle `git` reste valide : ce n'est
-    // pas une panne, et le dire comme telle enverrait chercher un incident.
-    return 'Git diffs are not available in this deployment: the API has no client to the git role.';
+    // Un déploiement d'audit sans accès au rôle `git`, ou sans la politique de
+    // dépôt et le résolveur de refs que vs=current demande en plus, reste
+    // valide : ce n'est pas une panne, et le dire comme telle enverrait
+    // chercher un incident.
+    return 'Git diffs are not available in this deployment.';
   }
   if (err.status === 504) {
     return 'The git role did not answer in time. Try again.';

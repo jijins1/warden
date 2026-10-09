@@ -115,6 +115,10 @@ func (muet) RunsByHost(context.Context, string, time.Time, time.Time) ([]core.Ru
 	return nil, core.ErrNotFound
 }
 
+func (muet) PlaybooksByHost(context.Context, string, time.Time, time.Time) ([]core.PlaybookSummary, error) {
+	return nil, core.ErrNotFound
+}
+
 func (muet) PreviousRun(context.Context, core.Run) (core.Run, error) {
 	return core.Run{}, core.ErrNotFound
 }

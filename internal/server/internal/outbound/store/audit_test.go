@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/jijins1/warden/internal/events"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -510,5 +512,85 @@ func TestRunsByHostSupporteUnRunDEnrolement(t *testing.T) {
 	}
 	if len(runs) != 1 {
 		t.Fatalf("%d runs, attendu 1", len(runs))
+	}
+}
+
+// insererEventPourRun pose un event minimal reliant un run à un hôte, sans
+// passer par l'ingest : ce que PlaybooksByHost et RunsByHost lisent est le
+// JOIN sur `event.host`, pas le contenu de l'event.
+func insererEventPourRun(t *testing.T, ctx context.Context, conn *pgx.Conn, runID int64, host string) {
+	t.Helper()
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO event (run_id, run_day, seq, occurred_at, host, state, payload)
+		VALUES ($1, (SELECT run_day FROM run WHERE id = $1), 1, now(), $2, 'ok', '{}'::jsonb)`,
+		runID, host); err != nil {
+		t.Fatalf("event sur %s : %v", host, err)
+	}
+}
+
+// TestPlaybooksByHostDedupliqueParPlaybook couvre la dédup du §6.5 par
+// playbook : deux runs du MÊME playbook sur une machine ne doivent rendre
+// qu'une ligne, portant le plus RÉCENT des deux — et un run d'un autre
+// playbook sur la même machine doit rester une ligne séparée.
+func TestPlaybooksByHostDedupliqueParPlaybook(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	s, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	user := mustUser(t, ctx, s, "test")
+	const host = "db-01"
+
+	ancien := mustCreateRun(t, ctx, s, runRef(t, "006"), user.ID, "prod", "inv", "deploy.yml")
+	recent := mustCreateRun(t, ctx, s, runRef(t, "007"), user.ID, "prod", "inv", "deploy.yml")
+	autre := mustCreateRun(t, ctx, s, runRef(t, "008"), user.ID, "prod", "inv", "other.yml")
+
+	conn := connect(t, dsn)
+	defer func() { _ = conn.Close(ctx) }()
+
+	// Ordre explicite : sans lui, les trois runs partagent la même seconde et
+	// "le plus récent" ne voudrait rien dire.
+	if _, err := conn.Exec(ctx,
+		`UPDATE run SET started_at = now() - interval '2 hours' WHERE id = $1`, ancien); err != nil {
+		t.Fatalf("recul de started_at : %v", err)
+	}
+	if _, err := conn.Exec(ctx,
+		`UPDATE run SET started_at = now() - interval '1 hour' WHERE id = $1`, recent); err != nil {
+		t.Fatalf("recul de started_at : %v", err)
+	}
+
+	insererEventPourRun(t, ctx, conn, ancien, host)
+	insererEventPourRun(t, ctx, conn, recent, host)
+	insererEventPourRun(t, ctx, conn, autre, host)
+
+	playbooks, err := s.PlaybooksByHost(ctx, host, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("PlaybooksByHost: %v", err)
+	}
+	if len(playbooks) != 2 {
+		t.Fatalf("%d playbooks, attendu 2 (deploy.yml dédupliqué + other.yml) : %+v", len(playbooks), playbooks)
+	}
+
+	var deploy, other *core.PlaybookSummary
+	for i := range playbooks {
+		switch playbooks[i].Playbook {
+		case "deploy.yml":
+			deploy = &playbooks[i]
+		case "other.yml":
+			other = &playbooks[i]
+		}
+	}
+	if deploy == nil || other == nil {
+		t.Fatalf("playbooks attendus absents : %+v", playbooks)
+	}
+	if deploy.LastRunRef != runRef(t, "007") {
+		t.Errorf("deploy.yml : dernier run = %q, attendu le plus récent (%q)",
+			deploy.LastRunRef, runRef(t, "007"))
+	}
+	if other.LastRunRef != runRef(t, "008") {
+		t.Errorf("other.yml : dernier run = %q, attendu %q", other.LastRunRef, runRef(t, "008"))
 	}
 }

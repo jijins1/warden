@@ -31,6 +31,11 @@ type RunReader interface {
 	// RunsByHost rend les runs ayant touché un hôte, borné côté adaptateur.
 	RunsByHost(ctx context.Context, host string, since, until time.Time) ([]RunListItem, error)
 
+	// PlaybooksByHost rend les playbooks DISTINCTS joués sur un hôte, un par
+	// (dépôt, playbook), chacun portant son run le plus récent — le même §6.5
+	// que RunsByHost, dédupliqué par playbook plutôt que par run.
+	PlaybooksByHost(ctx context.Context, host string, since, until time.Time) ([]PlaybookSummary, error)
+
 	// PreviousRun rend le run qui précède celui-ci sur le même TRIPLET
 	// (dépôt, environnement, inventaire) — le « qu'est-ce qui a changé depuis
 	// que ça marchait » du §6.5.
@@ -108,4 +113,14 @@ type RepoDiffer interface {
 	// Le run précédent est résolu et autorisé par l'appelant : le rôle `git` ne
 	// connaît pas le modèle de run, et la politique d'accès ne vit pas chez lui.
 	DiffPrevious(ctx context.Context, run, precedent Run) (string, error)
+
+	// DiffAgainst compare le commit audité du run à un commit arbitraire DU
+	// MÊME dépôt : audit_sha -> to.
+	//
+	// Elle existe pour vs=current — « qu'est-ce qui a changé depuis ce run,
+	// playbook actuel compris » — où `to` est le sommet courant de la branche
+	// protégée dans le miroir, résolu par l'appelant via RefResolver. Contrairement
+	// à DiffMainline, qui compare au SHA FIGÉ dans le run (ADR-0021), ce diff
+	// change à chaque consultation : c'est précisément ce qu'on lui demande.
+	DiffAgainst(ctx context.Context, run Run, to string) (string, error)
 }

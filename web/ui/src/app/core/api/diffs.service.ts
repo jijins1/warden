@@ -3,8 +3,16 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG } from '../config/app-config';
 
-/** Les deux questions du §6.5, et elles ne sont pas interchangeables. */
-export type Comparaison = 'mainline' | 'previous';
+/**
+ * Les trois questions du §6.5, et elles ne sont pas interchangeables.
+ *
+ * `current` est la seule des trois à ne PAS être figée : elle recalcule contre
+ * le sommet ACTUEL de la branche protégée à chaque appel, alors que `mainline`
+ * compare au SHA gelé par le run (ADR-0021). C'est délibéré — « qu'est-ce qui
+ * a changé depuis, y compris ce qui a été poussé après coup » est exactement
+ * la question qu'un diff figé ne peut pas répondre.
+ */
+export type Comparaison = 'mainline' | 'previous' | 'current';
 
 @Injectable({ providedIn: 'root' })
 export class DiffsService {
@@ -15,8 +23,9 @@ export class DiffsService {
    * Le diff git d'audit, en texte unifié.
    *
    * `mainline` répond « qu'avait-il modifié en local ? », `previous` répond
-   * « qu'est-ce qui a changé depuis que ça marchait ? ». Deux questions
-   * distinctes posées au même endpoint.
+   * « qu'est-ce qui a changé depuis que ça marchait ? », `current` répond
+   * « qu'est-ce qui a changé depuis, playbook d'aujourd'hui compris ? ». Trois
+   * questions distinctes posées au même endpoint.
    *
    * `responseType: 'text'` est OBLIGATOIRE : la réponse est `text/plain`, et la
    * demander en JSON la ferait échouer au parsing sur un diff parfaitement

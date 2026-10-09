@@ -153,6 +153,201 @@ func TestListRunsIsScopedToCaller(t *testing.T) {
 	}
 }
 
+// TestListByHostHonorsEnvironmentGrant verifies that HandleListByHost now shows
+// a non-owned run once the caller holds a live grant on its environment, and
+// hides it again once that grant is revoked — the same rule as CanViewRun,
+// exercised through the HTTP handler and its per-environment memoization.
+func TestListByHostHonorsEnvironmentGrant(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+
+	owner, err := h.store.UpsertUser(ctx, core.Identity{
+		Type: core.UserLocal, Subject: "owner", DisplayName: "Owner",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	const runRef = "01JZQ0000000000000000003ND"
+	runID, err := h.store.CreateRun(ctx, store.NewRun{
+		RunRef:      runRef,
+		UserID:      owner.ID,
+		Repo:        "warden",
+		Environment: "prod",
+		Inventory:   "inv/prod",
+		Playbook:    "deploy.yml",
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	h.pushEvents(t, runID, 1)
+
+	const host = "test-01" // le host que pushEvents attache à chaque event.
+
+	// Sans droit : le caller ne voit rien du run d'un autre.
+	resp := h.get(t, "/hosts/"+host+"/runs", h.userSubject)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var runs []core.RunListItem
+	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected no visible runs without a grant, got %d", len(runs))
+	}
+
+	// Avec un droit vivant sur "prod" : le run de l'autre devient visible.
+	if _, err := h.store.Grant(ctx, h.userSubject, "prod", owner.ID); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	resp = h.get(t, "/hosts/"+host+"/runs", h.userSubject)
+	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunRef != runRef {
+		t.Fatalf("expected the granted run to be visible, got %+v", runs)
+	}
+
+	// Droit révoqué : invisible de nouveau.
+	if err := h.store.Revoke(ctx, h.userSubject, "prod"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	resp = h.get(t, "/hosts/"+host+"/runs", h.userSubject)
+	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected the run to disappear once the grant is revoked, got %+v", runs)
+	}
+}
+
+// TestListRunsShowsEnvironmentWideWithGrant verifies that filtering /runs by an
+// environment the caller holds a live grant on returns every run on that
+// environment, not just the caller's own — the counterpart of
+// TestListRunsIsScopedToCaller, which covers the case without a grant.
+func TestListRunsShowsEnvironmentWideWithGrant(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+
+	other, err := h.store.UpsertUser(ctx, core.Identity{
+		Type: core.UserLocal, Subject: "mallory", DisplayName: "Mallory",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	const otherRef = "01JZQ0000000000000000004ND"
+	if _, err := h.store.CreateRun(ctx, store.NewRun{
+		RunRef:      otherRef,
+		UserID:      other.ID,
+		Repo:        "warden",
+		Environment: "prod",
+		Inventory:   "inv/prod",
+		Playbook:    "deploy.yml",
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+	}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	// Sans droit sur "prod" : /runs?env=prod ne rend toujours que les runs du
+	// caller, c'est-à-dire aucun ici.
+	resp := h.get(t, "/runs?env=prod", h.userSubject)
+	var result core.RunListResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(result.Runs) != 0 {
+		t.Fatalf("expected no runs on prod without a grant, got %d", len(result.Runs))
+	}
+
+	if _, err := h.store.Grant(ctx, h.userSubject, "prod", other.ID); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	resp = h.get(t, "/runs?env=prod", h.userSubject)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(result.Runs) != 1 || result.Runs[0].RunRef != otherRef {
+		t.Fatalf("expected mallory's run on prod to be visible with a grant, got %+v", result.Runs)
+	}
+}
+
+// TestListPlaybooksByHostHonorsEnvironmentGrant mirrors
+// TestListByHostHonorsEnvironmentGrant for the deduplicated playbook view: a
+// non-owned playbook is hidden without a grant on its environment, shown with
+// one, and hidden again once it is revoked.
+func TestListPlaybooksByHostHonorsEnvironmentGrant(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+
+	owner, err := h.store.UpsertUser(ctx, core.Identity{
+		Type: core.UserLocal, Subject: "owner", DisplayName: "Owner",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	const runRef = "01JZQ0000000000000000005ND"
+	runID, err := h.store.CreateRun(ctx, store.NewRun{
+		RunRef:      runRef,
+		UserID:      owner.ID,
+		Repo:        "warden",
+		Environment: "prod",
+		Inventory:   "inv/prod",
+		Playbook:    "deploy.yml",
+		AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MainlineRef: "refs/heads/main",
+		MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	h.pushEvents(t, runID, 1)
+	const host = "test-01"
+
+	resp := h.get(t, "/hosts/"+host+"/playbooks", h.userSubject)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var playbooks []core.PlaybookSummary
+	if err := json.NewDecoder(resp.Body).Decode(&playbooks); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(playbooks) != 0 {
+		t.Fatalf("expected no visible playbooks without a grant, got %+v", playbooks)
+	}
+
+	if _, err := h.store.Grant(ctx, h.userSubject, "prod", owner.ID); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	resp = h.get(t, "/hosts/"+host+"/playbooks", h.userSubject)
+	if err := json.NewDecoder(resp.Body).Decode(&playbooks); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(playbooks) != 1 || playbooks[0].Playbook != "deploy.yml" || playbooks[0].LastRunRef != runRef {
+		t.Fatalf("expected deploy.yml visible with a grant, got %+v", playbooks)
+	}
+
+	if err := h.store.Revoke(ctx, h.userSubject, "prod"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	resp = h.get(t, "/hosts/"+host+"/playbooks", h.userSubject)
+	if err := json.NewDecoder(resp.Body).Decode(&playbooks); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(playbooks) != 0 {
+		t.Fatalf("expected deploy.yml to disappear once the grant is revoked, got %+v", playbooks)
+	}
+}
+
 // TestStreamDeniesOtherUsersRun verifies that a run the caller does not own is
 // reported as absent rather than forbidden, so the endpoint cannot be used to
 // probe which run_refs exist.
@@ -217,14 +412,30 @@ func TestPolicyCanViewRun(t *testing.T) {
 		t.Fatalf("RunByRef: %v", err)
 	}
 
-	policy := api.NewPolicy()
+	policy := api.NewPolicy(h.store)
 	if !policy.CanViewRun(ctx, &owner, &run) {
 		t.Error("owner should be able to view their own run")
 	}
 	if policy.CanViewRun(ctx, &stranger, &run) {
-		t.Error("stranger should not be able to view another user's run")
+		t.Error("stranger without a grant should not be able to view another user's run")
 	}
 	if policy.CanViewRun(ctx, nil, &run) {
 		t.Error("nil user should not be able to view any run")
+	}
+
+	// A live grant on the run's environment opens it, even to a non-owner:
+	// anyone allowed to run against an environment may see what ran there.
+	if _, err := h.store.Grant(ctx, "stranger", run.Environment, owner.ID); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if !policy.CanViewRun(ctx, &stranger, &run) {
+		t.Error("stranger with a grant on the run's environment should be able to view it")
+	}
+
+	if err := h.store.Revoke(ctx, "stranger", run.Environment); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if policy.CanViewRun(ctx, &stranger, &run) {
+		t.Error("stranger should lose access once the grant is revoked")
 	}
 }

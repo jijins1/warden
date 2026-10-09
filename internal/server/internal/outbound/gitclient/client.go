@@ -95,6 +95,13 @@ func (c *Client) DiffPrevious(ctx context.Context, run, precedent core.Run) (str
 	return c.diff(ctx, run.Repo, precedent.AuditSHA, run.AuditSHA)
 }
 
+// DiffAgainst compare le commit audité du run à un commit arbitraire du même
+// dépôt — vs=current, où `to` est le sommet actuel de la branche protégée,
+// résolu par l'appelant.
+func (c *Client) DiffAgainst(ctx context.Context, run core.Run, to string) (string, error) {
+	return c.diff(ctx, run.Repo, run.AuditSHA, to)
+}
+
 func (c *Client) diff(ctx context.Context, repo, from, to string) (string, error) {
 	if repo == "" {
 		// Run antérieur à la migration 00004 : inutile d'aller le demander.

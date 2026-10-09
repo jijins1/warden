@@ -176,3 +176,26 @@ type RunListResult struct {
 	// NextCursor est vide sur la dernière page.
 	NextCursor string
 }
+
+// PlaybookSummary est un playbook DISTINCT parmi ceux joués sur une machine —
+// une ligne par (dépôt, playbook), portant le run le plus RÉCENT de ce couple,
+// pas tout son historique.
+//
+// Séparée de RunListItem parce qu'elle répond à une question différente :
+// « quels playbooks ont tourné ici » plutôt que « quels runs ont tourné ici ».
+// LastAuditSHA existe pour une raison précise que RunListItem n'a pas besoin de
+// porter : c'est le commit à diffuser contre le playbook ACTUEL de la branche
+// protégée (vs=current), et sans lui l'appelant devrait relire le run par sa
+// référence avant de pouvoir calculer le moindre diff.
+type PlaybookSummary struct {
+	Repo        string
+	Playbook    string
+	Environment string
+	Inventory   string
+
+	LastRunRef    string
+	LastUserID    int64
+	LastAuditSHA  string
+	LastState     string
+	LastStartedAt time.Time
+}
