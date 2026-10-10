@@ -358,7 +358,7 @@ func suivreLeRun(ctx context.Context, adresse, runRef string, sortie io.Writer) 
 		return err
 	}
 
-	fin, err := render.Run(ctx, suiveur, runRef, sortie)
+	fin, err := render.Run(ctx, suiveur, runRef, sortie, render.Couleur(sortie))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			// Ctrl-C DÉTACHE, il n'annule pas : l'annulation du §5.6 demande un

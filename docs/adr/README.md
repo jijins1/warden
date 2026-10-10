@@ -58,6 +58,7 @@ d'implémentation prises en cours de route.
 | [0043](0043-diagnostic-dun-run-sans-tache.md) | Dire pourquoi un run n'a rien exécuté | Accepted |
 | [0044](0044-environnements-proteges.md) | Options par environnement : un avertissement déclaré, et un gel indépendant des droits | Accepted |
 | [0045](0045-vault-inventory-cle-ansible-vault.md) | `vault-inventory` : la clé Ansible Vault, une par environnement | Accepted |
+| [0046](0046-la-sortie-de-la-cli-est-celle-dansible.md) | La sortie de la CLI est celle d'Ansible, couleurs comprises | Accepted |
 
 ## Convention
 

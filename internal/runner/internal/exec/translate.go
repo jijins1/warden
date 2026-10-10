@@ -279,6 +279,11 @@ func sansDiff(brut json.RawMessage) json.RawMessage {
 	if res, ok := ed["res"].(map[string]any); ok {
 		delete(res, "diff")
 	}
+	// Le texte RENDU part aussi. MESURÉ : le `stdout` de premier niveau d'un
+	// `runner_on_file_diff` EST le diff unifié, et `-vvv` le remet dans celui du
+	// `runner_on_ok` qui suit. L'affichage se rabat sur l'état de l'event
+	// (« changed: [hôte] »), ce qui est tout ce qu'il a le droit de montrer.
+	delete(m, "stdout")
 
 	out, err := json.Marshal(m)
 	if err != nil {

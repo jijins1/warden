@@ -113,6 +113,23 @@ func TestLeVraiAnsibleRunnerEstPilote(t *testing.T) {
 		t.Error("aucun diff extrait alors que --diff est actif")
 	}
 
+	// La CLI réaffiche le texte rendu par Ansible, couleurs comprises : elles
+	// n'arrivent que si le forçage passe encore. Et le texte rendu du diff ne
+	// doit jamais rester dans le payload — il EST le diff.
+	var colore bool
+	for _, e := range evs {
+		if strings.Contains(string(e.Payload), `"stdout": "\u001b[0;32mok:`) ||
+			strings.Contains(string(e.Payload), `"stdout":"\u001b[0;32mok:`) {
+			colore = true
+		}
+		if strings.Contains(string(e.Payload), "+bonjour") {
+			t.Errorf("le diff rendu est resté dans un payload : %s", e.Payload)
+		}
+	}
+	if !colore {
+		t.Error("aucun texte rendu coloré : ANSIBLE_FORCE_COLOR n'atteint plus Ansible")
+	}
+
 	// La tâche a bien eu lieu : sans cela, un flux d'events parfaitement formé
 	// pourrait décrire un playbook qui n'a rien fait.
 	if _, err := os.Stat(cible); err != nil {

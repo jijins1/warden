@@ -221,11 +221,22 @@ const VIDE: DetailEvent = {
   censure: false,
 };
 
+/**
+ * Les séquences de couleur qu'Ansible écrit (`ESC [ … m`).
+ *
+ * Le runner force la couleur d'Ansible pour que la CLI la restitue ; un `<pre>`
+ * l'afficherait en clair. Construite par `RegExp` pour ne pas porter de
+ * caractère de contrôle littéral dans le source.
+ */
+const SEQUENCE_SGR = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
+
 function chaine(v: unknown): string {
   // Les sauts de ligne DE TÊTE seulement : `ansible-runner` préfixe ses lignes
   // par `\r\n`, et un `trim()` complet mangerait l'indentation d'une sortie
   // structurée — ce qui la rendrait illisible là où elle compte.
-  return typeof v === 'string' ? v.replace(/^[\r\n]+/, '').trimEnd() : '';
+  return typeof v === 'string'
+    ? v.replace(SEQUENCE_SGR, '').replace(/^[\r\n]+/, '').trimEnd()
+    : '';
 }
 
 function objet(v: unknown): Record<string, unknown> | null {

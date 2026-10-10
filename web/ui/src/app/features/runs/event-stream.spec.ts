@@ -48,6 +48,13 @@ describe('detailDe', () => {
     expect(d.module).toBe('');
   });
 
+  // Le runner force la couleur d'Ansible pour la CLI : le texte rendu porte des
+  // séquences d'échappement, qu'un <pre> afficherait en clair (« [0;32m »).
+  it('retire les couleurs du texte rendu par Ansible', () => {
+    const d = detailDe({ stdout: '\u001b[0;32mok: [kodi]\u001b[0m' });
+    expect(d.sortie).toBe('ok: [kodi]');
+  });
+
   // Le payload vient d'un module Ansible, donc de la machine gérée : sa forme
   // n'est pas garantie. Rien ne doit lever.
   it('ne lève sur aucune forme inattendue', () => {

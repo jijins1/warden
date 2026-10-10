@@ -137,6 +137,11 @@ func TestLeDiffEstSortiDuPayload(t *testing.T) {
 			strings.Contains(string(e.Payload), `"after":"bonjour`) {
 			t.Errorf("seq %d : le diff est resté dans le payload : %s", e.Seq, e.Payload)
 		}
+		// Le texte RENDU par Ansible le porte aussi : `runner_on_file_diff` a
+		// pour `stdout` le diff unifié lui-même. MESURÉ dans la fixture.
+		if strings.Contains(string(e.Payload), "+bonjour") {
+			t.Errorf("seq %d : le diff rendu est resté dans le payload : %s", e.Seq, e.Payload)
+		}
 	}
 	// Deux events portent le diff : `runner_on_file_diff` et le `runner_on_ok`
 	// qui le suit. Ne traiter que le second laisserait le premier déposer le

@@ -102,6 +102,11 @@ deux lignes à fermer. Le §5.6 reste ouvert dans `docs/reste-a-faire.md`.
 
 ## Conséquences
 
+> **Amendé par l'[ADR-0046](0046-la-sortie-de-la-cli-est-celle-dansible.md)** :
+> la CLI réaffiche désormais le texte rendu par Ansible, couleurs comprises.
+> Le regroupement par tâche et les marqueurs ci-dessous ne s'appliquent plus ;
+> le bilan qui survit à une coupure, si.
+
 - L'affichage regroupe **par tâche**, comme `ansible-playbook`. Sur une flotte,
   la question posée est « où en est cette tâche » et non « qu'a fait cette
   machine » ; une ligne par event, à plat, devient illisible dès la troisième

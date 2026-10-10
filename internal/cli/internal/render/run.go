@@ -2,11 +2,11 @@ package render
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/jijins1/warden/internal/cli/internal/stream"
 	"github.com/jijins1/warden/internal/events"
@@ -36,173 +36,170 @@ type Suiveur interface {
 
 // Run affiche le déroulement d'un run jusqu'à sa fin.
 //
-// Le regroupement PAR TÂCHE reprend la forme d'`ansible-playbook`, et ce n'est
-// pas de la nostalgie : sur une flotte, la question posée est « où en est cette
-// tâche » et non « qu'a fait cette machine ». Une ligne par event, à plat, la
-// rendrait illisible dès la troisième machine.
+// Ce qui s'affiche est le texte qu'ANSIBLE a rendu, tel quel : chaque event
+// d'`ansible-runner` porte dans son `stdout` la ligne que le callback par défaut
+// aurait écrite — bannières PLAY et TASK, « ok: [hôte] », « fatal: … », PLAY
+// RECAP — et ses couleurs, forcées côté runner. Le recomposer serait diverger :
+// le format d'Ansible est celui que l'ingénieur sait lire en incident, et une
+// imitation finit toujours par en différer sur le cas qu'on n'avait pas prévu.
 //
-// Chaque tâche tient sur UNE ligne de résumé (« ok=3 changed=1 ») plutôt qu'une
-// ligne par hôte : sur une flotte, la question posée est « combien ont changé »,
-// pas le détail machine par machine tant que rien n'a échoué. Les hôtes en
-// échec ou injoignables restent nommés juste en dessous, sans repli possible :
-// c'est l'information qu'on ne doit jamais avoir à aller chercher.
-func Run(ctx context.Context, suiveur Suiveur, runRef string, sortie io.Writer) (stream.Fin, error) {
-	r := &rendu{sortie: sortie, tache: -1, compte: map[string]map[events.State]int{}}
+// `couleur` dit si la sortie les garde ; voir `Couleur`.
+func Run(ctx context.Context, suiveur Suiveur, runRef string, sortie io.Writer, couleur bool) (stream.Fin, error) {
+	r := &rendu{sortie: sortie, couleur: couleur, compte: map[string]*stats{}}
 
 	fin, err := suiveur.Suivre(ctx, runRef, r.event)
+	// Le bilan est écrit MÊME sur erreur : une coupure après huit minutes de
+	// run ne doit pas emporter ce qu'on a déjà vu passer.
+	r.recapituler()
 	if err != nil {
-		// Le récapitulatif est écrit MÊME sur erreur : une coupure après huit
-		// minutes de run ne doit pas emporter ce qu'on a déjà vu passer.
-		r.clorreTache()
-		r.recapituler()
 		return stream.Fin{}, err
 	}
-	r.clorreTache()
-	r.recapituler()
 	return fin, nil
 }
 
 type rendu struct {
-	sortie io.Writer
+	sortie  io.Writer
+	couleur bool
 
-	// tache retient le numéro de la dernière tâche annoncée, pour n'écrire son
-	// titre qu'une fois. -1 parce que 0 est un numéro de tâche valide.
-	tache int
+	// recapVu dit qu'Ansible a écrit son PLAY RECAP : la CLI n'en reconstitue
+	// alors pas un second.
+	recapVu bool
 
-	// tacheCompte et tacheEchecs portent le résumé de la tâche EN COURS,
-	// vidés dans clorreTache() dès que la tâche suivante commence.
-	tacheCompte map[events.State]int
-	tacheEchecs []echecHote
+	// ansibleAParle dit qu'au moins un texte rendu par Ansible a été affiché.
+	ansibleAParle bool
 
-	compte map[string]map[events.State]int
+	// compte ne sert qu'au bilan de REPLI, quand le run s'arrête avant
+	// qu'Ansible ait écrit le sien.
+	compte map[string]*stats
 }
 
-type echecHote struct {
-	hote string
-	etat events.State
+// stats reprend les compteurs d'`AggregateStats` qu'un event permet de
+// déduire. `rescued` et `ignored` n'en font pas partie : l'event ne dit pas
+// qu'un échec a été rattrapé ou ignoré, et ils restent à zéro dans le repli.
+type stats struct {
+	ok, changed, unreachable, failed, skipped int
 }
+
+// trameAnsible est ce que la CLI lit du payload : le type d'event et le texte
+// rendu.
+type trameAnsible struct {
+	Event  string `json:"event"`
+	Stdout string `json:"stdout"`
+}
+
+// evStats est l'event qui porte le PLAY RECAP d'Ansible.
+const evStats = "playbook_on_stats"
 
 func (r *rendu) event(e ws.EventFrame) {
-	if e.TaskNumber != r.tache {
-		r.clorreTache()
-		r.tache = e.TaskNumber
-		if titre := titreDeTache(e); titre != "" {
-			_, _ = fmt.Fprintf(r.sortie, "\n%s\n", titre)
-		}
-	}
-
-	// Le DIAGNOSTIC passe avant le filtre ci-dessous, et c'est tout son objet :
-	// un run qui échoue sans qu'aucune tâche ne démarre — playbook introuvable,
-	// erreur de syntaxe — ne produit que des events sans hôte. Ils étaient donc
-	// tous écartés, et `warden logs` n'avait plus qu'un `failed` nu à imprimer.
+	// Le DIAGNOSTIC est écrit par warden, pas par Ansible : un run qui échoue
+	// sans qu'aucune tâche ne démarre — playbook introuvable — n'a aucun texte
+	// d'Ansible à montrer. Il prend la forme des erreurs fatales d'Ansible.
 	//
-	// Seule la clé que WARDEN écrit passe : les trames `verbose` d'Ansible
-	// restent du bruit, y compris sur un run qui réussit.
+	// Il se tait quand Ansible a parlé : sur une erreur de syntaxe, il n'est que
+	// la concaténation des trames `verbose`, déjà affichées telles qu'Ansible
+	// les a écrites.
 	if msg := events.Diagnostic(e.Payload); msg != "" {
-		r.clorreTache()
-		_, _ = fmt.Fprintf(r.sortie, "\n%s %s\n", marqueur(events.StateFailed), msg)
-		return
-	}
-
-	hote := e.Host
-	if hote == "" {
-		// Un event sans hôte vient du play lui-même, pas d'une machine : rien
-		// à compter par tâche ni par hôte, et l'afficher ne serait que du
-		// bruit — une ligne vide répétée à chaque event de cycle de vie.
-		return
-	}
-
-	if r.tacheCompte == nil {
-		r.tacheCompte = map[events.State]int{}
-	}
-	r.tacheCompte[e.State]++
-	if e.State == events.StateFailed || e.State == events.StateUnreachable {
-		r.tacheEchecs = append(r.tacheEchecs, echecHote{hote: hote, etat: e.State})
-	}
-
-	if r.compte[hote] == nil {
-		r.compte[hote] = map[events.State]int{}
-	}
-	r.compte[hote][e.State]++
-}
-
-// clorreTache écrit le résumé de la tâche en cours, et le vide.
-//
-// Appelée au changement de tâche ET en fin de run : une tâche dont le run
-// s'arrête au milieu doit quand même laisser son résumé, pour la même raison
-// que le bilan final survit à une coupure.
-func (r *rendu) clorreTache() {
-	if len(r.tacheCompte) == 0 {
-		return
-	}
-
-	colonnes := make([]string, 0, len(ordreRecap))
-	for _, etat := range ordreRecap {
-		if n := r.tacheCompte[etat]; n > 0 {
-			colonnes = append(colonnes, fmt.Sprintf("%s=%d", etat, n))
+		if !r.ansibleAParle {
+			r.ecrire(stringc("ERROR! "+msg, couleurErreur))
 		}
-	}
-	_, _ = fmt.Fprintf(r.sortie, "  %s\n", strings.Join(colonnes, "  "))
-
-	for _, ech := range r.tacheEchecs {
-		_, _ = fmt.Fprintf(r.sortie, "    %s %s\n", marqueur(ech.etat), ech.hote)
+		return
 	}
 
-	r.tacheCompte = nil
-	r.tacheEchecs = nil
+	var t trameAnsible
+	// Un payload illisible n'empêche pas d'afficher la suite : le repli
+	// ci-dessous s'appuie sur l'enveloppe, qui reste lisible.
+	_ = json.Unmarshal(e.Payload, &t)
+	if t.Event == evStats {
+		r.recapVu = true
+	}
+	r.compter(e)
+
+	texte := t.Stdout
+	if texte == "" {
+		texte = ligneDEtat(e)
+	} else {
+		r.ansibleAParle = true
+	}
+	if texte != "" {
+		r.ecrire(texte)
+	}
 }
 
-// titreDeTache compose l'en-tête d'une tâche.
+// ecrire pose un texte d'Ansible sur la sortie.
 //
-// Le rôle préfixe le nom quand il existe, comme Ansible l'affiche : sans lui,
-// deux rôles portant une tâche « installer le paquet » deviennent
-// indiscernables au moment précis où l'on cherche laquelle a échoué.
-func titreDeTache(e ws.EventFrame) string {
-	switch {
-	case e.Role != "" && e.TaskName != "":
-		return "TASK [" + e.Role + " : " + e.TaskName + "]"
-	case e.TaskName != "":
-		return "TASK [" + e.TaskName + "]"
+// `ansible-runner` sépare les lignes par `\r\n` — celles d'un pseudo-terminal —
+// et n'écrit pas la fin de la dernière : c'est ce que le display d'Ansible
+// ajoute en l'imprimant.
+func (r *rendu) ecrire(texte string) {
+	texte = assainir(strings.ReplaceAll(texte, "\r\n", "\n"))
+	if !r.couleur {
+		texte = sansCouleur(texte)
+	}
+	_, _ = fmt.Fprintln(r.sortie, texte)
+}
+
+func (r *rendu) compter(e ws.EventFrame) {
+	if e.Host == "" {
+		return
+	}
+	s := r.compte[e.Host]
+	if s == nil {
+		s = &stats{}
+		r.compte[e.Host] = s
+	}
+	// Comme `AggregateStats` : une tâche `changed` compte AUSSI dans `ok`.
+	switch e.State {
+	case events.StateOK:
+		s.ok++
+	case events.StateChanged:
+		s.ok++
+		s.changed++
+	case events.StateFailed:
+		s.failed++
+	case events.StateUnreachable:
+		s.unreachable++
+	case events.StateSkipped:
+		s.skipped++
+	}
+}
+
+// ligneDEtat reconstitue la ligne du callback par défaut d'Ansible pour un
+// event qui n'a pas de texte rendu.
+//
+// C'est le cas d'un event porteur de diff : le runner en retire le texte, parce
+// que ce texte EST le diff, qui ne quitte pas sa table (§6.5). Un event sans
+// hôte ni état connu — cycle de vie, diff — ne produit rien, comme chez Ansible.
+func ligneDEtat(e ws.EventFrame) string {
+	if e.Host == "" {
+		return ""
+	}
+	h := "[" + e.Host + "]"
+	switch e.State {
+	case events.StateOK:
+		return stringc("ok: "+h, couleurOK)
+	case events.StateChanged:
+		return stringc("changed: "+h, couleurChanged)
+	case events.StateSkipped:
+		return stringc("skipping: "+h, couleurSkip)
+	case events.StateFailed:
+		return stringc("fatal: "+h+": FAILED!", couleurErreur)
+	case events.StateUnreachable:
+		return stringc("fatal: "+h+": UNREACHABLE!", couleurUnreachable)
 	default:
 		return ""
 	}
 }
 
-// marqueur rend l'état d'un event en un caractère.
-//
-// `unreachable` a son propre signe et ne se confond pas avec `failed` : une
-// machine injoignable est un problème de RÉSEAU ou de clé, pas de playbook, et
-// les deux ne se corrigent pas au même endroit.
-func marqueur(etat events.State) string {
-	switch etat {
-	case events.StateFailed:
-		return "✗"
-	case events.StateUnreachable:
-		return "⚠"
-	case events.StateChanged:
-		return "+"
-	case events.StateSkipped:
-		return "-"
-	default:
-		return "·"
-	}
-}
+// largeurBanniere est la largeur d'Ansible hors terminal (`Display.columns`) —
+// celle du pod, donc celle des bannières qu'Ansible a lui-même rendues.
+const largeurBanniere = 79
 
-// ordreRecap fige les colonnes du récapitulatif.
+// recapituler écrit un PLAY RECAP de repli, au format d'Ansible, quand Ansible
+// n'a pas pu écrire le sien — coupure du flux, run interrompu.
 //
-// `changed` avant `ok` : c'est la métrique d'audit principale du produit
-// (ADR-0008), et la mettre en tête est ce qui la fait lire.
-var ordreRecap = []events.State{
-	events.StateChanged, events.StateOK, events.StateFailed,
-	events.StateUnreachable, events.StateSkipped,
-}
-
-// recapituler écrit le bilan par machine, à la façon du PLAY RECAP d'Ansible.
-//
-// Trié : l'ordre d'itération d'une map varie d'un run à l'autre, et un
-// récapitulatif dont les lignes bougent sans que rien n'ait changé se relit mal.
+// Trié, comme celui d'Ansible.
 func (r *rendu) recapituler() {
-	if len(r.compte) == 0 {
+	if r.recapVu || len(r.compte) == 0 {
 		return
 	}
 
@@ -212,18 +209,44 @@ func (r *rendu) recapituler() {
 	}
 	sort.Strings(hotes)
 
-	_, _ = fmt.Fprintf(r.sortie, "\nBilan\n")
-	tw := tabwriter.NewWriter(r.sortie, 0, 0, 2, ' ', 0)
+	titre := "PLAY RECAP"
+	lignes := []string{"\n" + titre + " " + strings.Repeat("*", largeurBanniere-len(titre))}
 	for _, h := range hotes {
-		colonnes := make([]string, 0, len(ordreRecap))
-		for _, etat := range ordreRecap {
-			if n := r.compte[h][etat]; n > 0 {
-				colonnes = append(colonnes, fmt.Sprintf("%s=%d", etat, n))
-			}
-		}
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", h, strings.Join(colonnes, "  "))
+		s := r.compte[h]
+		lignes = append(lignes, fmt.Sprintf("%s : %s %s %s %s %s %s %s",
+			couleurDHote(h, s),
+			colorize("ok", s.ok, couleurOK),
+			colorize("changed", s.changed, couleurChanged),
+			colorize("unreachable", s.unreachable, couleurUnreachable),
+			colorize("failed", s.failed, couleurErreur),
+			colorize("skipped", s.skipped, couleurSkip),
+			colorize("rescued", 0, couleurOK),
+			colorize("ignored", 0, couleurWarn),
+		))
 	}
-	_ = tw.Flush()
+	r.ecrire(strings.Join(lignes, "\n"))
+}
+
+// couleurDHote reprend le `hostcolor` d'Ansible : l'hôte en rouge s'il a
+// échoué, en jaune s'il a changé, en vert sinon, sur 26 colonnes visibles.
+func couleurDHote(h string, s *stats) string {
+	code := couleurOK
+	switch {
+	case s.failed > 0 || s.unreachable > 0:
+		code = couleurErreur
+	case s.changed > 0:
+		code = couleurChanged
+	}
+	return stringc(h, code) + strings.Repeat(" ", max(0, 26-len(h)))
+}
+
+// colorize reprend le `colorize` d'Ansible : un compteur nul reste sans couleur.
+func colorize(nom string, n int, code string) string {
+	s := fmt.Sprintf("%s=%-4d", nom, n)
+	if n == 0 {
+		return s
+	}
+	return stringc(s, code)
 }
 
 // Issue écrit la fin du run et dit si elle est un échec.

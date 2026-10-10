@@ -28,106 +28,118 @@ func (s *suiveurFactice) Suivre(_ context.Context, runRef string, voir func(ws.E
 	return s.fin, s.err
 }
 
-func frame(seq int64, tache int, role, nom, hote string, etat events.State) ws.EventFrame {
-	return ws.EventFrame{
-		Seq: seq, TaskNumber: tache, Role: role, TaskName: nom,
-		Host: hote, State: etat, Payload: json.RawMessage(`{}`),
+// trame compose un event tel que le flux le livre : le payload est la ligne
+// d'`ansible-runner`, dont `stdout` porte le texte qu'Ansible a rendu.
+func trame(seq int64, hote string, etat events.State, evt, stdout string) ws.EventFrame {
+	charge, _ := json.Marshal(map[string]string{"event": evt, "stdout": stdout})
+	return ws.EventFrame{Seq: seq, Host: hote, State: etat, Payload: charge}
+}
+
+// Les textes ci-dessous sont MESURÉS : ansible-runner 2.4.3 sous
+// `ANSIBLE_FORCE_COLOR=1`, playbook à quatre tâches, `--diff`.
+const (
+	vert  = "\x1b[0;32m"
+	jaune = "\x1b[0;33m"
+	cyan  = "\x1b[0;36m"
+	fin   = "\x1b[0m"
+)
+
+func runMesure() []ws.EventFrame {
+	return []ws.EventFrame{
+		trame(0, "", events.StateUnknown, "playbook_on_start", ""),
+		trame(1, "", events.StateUnknown, "playbook_on_play_start",
+			"\r\nPLAY [localhost] ***************************************************************"),
+		trame(2, "", events.StateUnknown, "playbook_on_task_start",
+			"\r\nTASK [command] *****************************************************************"),
+		trame(3, "localhost", events.StateUnknown, "runner_on_start", ""),
+		trame(4, "localhost", events.StateOK, "runner_on_ok", vert+"ok: [localhost]"+fin),
+		trame(5, "", events.StateUnknown, "playbook_on_task_start",
+			"\r\nTASK [debug] *******************************************************************"),
+		trame(6, "localhost", events.StateSkipped, "runner_on_skipped", cyan+"skipping: [localhost]"+fin),
+		trame(7, "", events.StateUnknown, "playbook_on_stats",
+			"\r\nPLAY RECAP *********************************************************************\r\n"+
+				jaune+"localhost"+fin+"                  : "+vert+"ok=1   "+fin+" changed=0    unreachable=0    failed=0    "+
+				cyan+"skipped=1   "+fin+" rescued=0    ignored=0   "),
 	}
 }
 
-// Le titre de tâche n'est écrit QU'UNE FOIS, quel que soit le nombre de machines
-// qui la traversent. C'est ce qui rend la sortie lisible sur une flotte.
-func TestUneTacheNestAnnonceeQuUneFois(t *testing.T) {
+// LA propriété : ce que la CLI écrit est, au caractère près, ce
+// qu'`ansible-playbook` aurait écrit. Ni résumé, ni réordonnancement.
+func TestLaSortieEstCelleDAnsible(t *testing.T) {
+	s := &suiveurFactice{frames: runMesure(), fin: stream.Fin{Status: render.IssueReussi}}
+
+	var out strings.Builder
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, false); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+
+	veut := `
+PLAY [localhost] ***************************************************************
+
+TASK [command] *****************************************************************
+ok: [localhost]
+
+TASK [debug] *******************************************************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+`
+	if out.String() != veut {
+		t.Errorf("sortie :\n%q\nveut :\n%q", out.String(), veut)
+	}
+}
+
+// Sur un terminal, les couleurs sont celles qu'Ansible a choisies — transmises,
+// pas réinventées.
+func TestLesCouleursDAnsibleSontGardeesSurUnTerminal(t *testing.T) {
+	s := &suiveurFactice{frames: runMesure(), fin: stream.Fin{Status: render.IssueReussi}}
+
+	var out strings.Builder
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, true); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+	for _, veut := range []string{vert + "ok: [localhost]" + fin, cyan + "skipping: [localhost]" + fin} {
+		if !strings.Contains(out.String(), veut) {
+			t.Errorf("sortie sans %q :\n%q", veut, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "\r") {
+		t.Errorf("retour chariot laissé dans la sortie :\n%q", out.String())
+	}
+}
+
+// Le runner retire le texte rendu des events porteurs d'un diff, parce que ce
+// texte EST le diff. La ligne d'état qu'Ansible aurait écrite est reconstituée,
+// dans sa couleur ; le diff, lui, n'est jamais montré ici (§6.5).
+func TestUnEventPriveDeSonTexteRetombeSurLaLigneDAnsible(t *testing.T) {
+	sansTexte := func(seq int64, hote string, etat events.State, evt string) ws.EventFrame {
+		charge, _ := json.Marshal(map[string]string{"event": evt})
+		return ws.EventFrame{Seq: seq, Host: hote, State: etat, Payload: charge}
+	}
 	s := &suiveurFactice{
 		frames: []ws.EventFrame{
-			frame(0, 1, "", "Gathering Facts", "kodi", events.StateOK),
-			frame(1, 1, "", "Gathering Facts", "muzi", events.StateOK),
-			frame(2, 2, "node_exporter", "installer le binaire", "kodi", events.StateChanged),
-			frame(3, 2, "node_exporter", "installer le binaire", "muzi", events.StateOK),
+			sansTexte(0, "kodi", events.StateUnknown, "runner_on_file_diff"),
+			sansTexte(1, "kodi", events.StateChanged, "runner_on_ok"),
 		},
 		fin: stream.Fin{Status: render.IssueReussi},
 	}
 
 	var out strings.Builder
-	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, true); err != nil {
 		t.Fatalf("Run : %v", err)
 	}
-
-	if n := strings.Count(out.String(), "TASK [Gathering Facts]"); n != 1 {
-		t.Errorf("titre écrit %d fois, voulu 1\n%s", n, out.String())
-	}
-	// Le rôle préfixe le nom : deux rôles portant « installer le paquet »
-	// seraient sinon indiscernables au moment où l'on cherche lequel a échoué.
-	if !strings.Contains(out.String(), "TASK [node_exporter : installer le binaire]") {
-		t.Errorf("le rôle ne préfixe pas la tâche :\n%s", out.String())
-	}
-}
-
-// `unreachable` ne se confond pas avec `failed` : une machine injoignable est un
-// problème de réseau ou de clé, pas de playbook. Les deux restent nommées par
-// hôte même dans le résumé replié — c'est l'information qu'on ne doit jamais
-// avoir à aller chercher.
-func TestLesEtatsOntDesMarqueursDistincts(t *testing.T) {
-	s := &suiveurFactice{
-		frames: []ws.EventFrame{
-			frame(0, 1, "", "t", "a", events.StateOK),
-			frame(1, 1, "", "t", "b", events.StateChanged),
-			frame(2, 1, "", "t", "c", events.StateFailed),
-			frame(3, 1, "", "t", "d", events.StateUnreachable),
-			frame(4, 1, "", "t", "e", events.StateSkipped),
-		},
-		fin: stream.Fin{Status: render.IssueEchec},
-	}
-
-	var out strings.Builder
-	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
-		t.Fatalf("Run : %v", err)
-	}
-	// Résumé de la tâche : les états sans échec sont COMPTÉS, pas listés par hôte.
-	for _, veut := range []string{"ok=1", "changed=1", "skipped=1"} {
-		if !strings.Contains(out.String(), veut) {
-			t.Errorf("résumé sans %q :\n%s", veut, out.String())
-		}
-	}
-	// Les échecs, eux, restent nommés — jamais repliés dans un simple compte.
-	for _, veut := range []string{"✗ c", "⚠ d"} {
-		if !strings.Contains(out.String(), veut) {
-			t.Errorf("sortie sans %q :\n%s", veut, out.String())
-		}
-	}
-}
-
-// Un event sans hôte — le play lui-même, pas une machine — ne doit produire
-// AUCUNE ligne : c'était le bruit qui noyait les tâches sur un run bavard.
-func TestUnEventSansHoteNeProduitAucuneLigne(t *testing.T) {
-	s := &suiveurFactice{
-		frames: []ws.EventFrame{
-			frame(0, 0, "", "", "", events.StateUnknown),
-			frame(1, 1, "", "t", "kodi", events.StateOK),
-		},
-		fin: stream.Fin{Status: render.IssueReussi},
-	}
-
-	var out strings.Builder
-	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
-		t.Fatalf("Run : %v", err)
-	}
-	if strings.Contains(out.String(), "—") {
-		t.Errorf("un event sans hôte a laissé une ligne :\n%s", out.String())
+	// Une seule ligne : l'event de diff, sans texte ni état, n'en produit pas.
+	if !strings.HasPrefix(out.String(), jaune+"changed: [kodi]"+fin+"\n") {
+		t.Errorf("sortie :\n%q", out.String())
 	}
 }
 
 // Un run qui échoue sans qu'AUCUNE tâche ne démarre doit quand même dire
-// pourquoi.
-//
-// C'est le défaut constaté en production : un playbook introuvable ne produit
-// que des events sans hôte, tous écartés par le filtre ci-dessus, et la sortie
-// se réduisait à `run <ref> : failed`. Le diagnostic écrit par warden passe
-// désormais, et lui seul — les trames `verbose` d'Ansible restent du bruit.
+// pourquoi — à la manière d'Ansible, qui préfixe ses erreurs fatales.
 func TestUnEchecSansTacheDitPourquoi(t *testing.T) {
-	diagnostic := frame(0, 0, "", "", "", events.StateFailed)
-	diagnostic.Payload = json.RawMessage(
-		`{"` + events.CleErreur + `":"playbook introuvable dans le commit audité : site.yml"}`)
+	diagnostic := ws.EventFrame{State: events.StateFailed, Payload: json.RawMessage(
+		`{"` + events.CleErreur + `":"playbook introuvable dans le commit audité : site.yml"}`)}
 
 	s := &suiveurFactice{
 		frames: []ws.EventFrame{diagnostic},
@@ -135,56 +147,100 @@ func TestUnEchecSansTacheDitPourquoi(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, false); err != nil {
 		t.Fatalf("Run : %v", err)
 	}
-	if !strings.Contains(out.String(), "site.yml") {
+	if !strings.Contains(out.String(), "ERROR! playbook introuvable dans le commit audité : site.yml") {
 		t.Errorf("le motif de l'échec n'apparaît pas :\n%s", out.String())
 	}
 }
 
-// Le bilan est trié : l'ordre d'itération d'une map varie d'un run à l'autre, et
-// un récapitulatif dont les lignes bougent sans que rien n'ait changé se relit
-// mal.
-func TestLeBilanEstTrieEtCompte(t *testing.T) {
+// Quand Ansible a expliqué l'échec lui-même — erreur de syntaxe —, son texte
+// est déjà affiché tel qu'il l'a écrit. Le diagnostic, qui n'en est que la
+// concaténation, le répéterait.
+func TestLeDiagnosticNeRepetePasAnsible(t *testing.T) {
+	diagnostic := ws.EventFrame{State: events.StateFailed, Payload: json.RawMessage(
+		`{"` + events.CleErreur + `":"ERROR! A malformed block was encountered"}`)}
+
 	s := &suiveurFactice{
 		frames: []ws.EventFrame{
-			frame(0, 1, "", "t", "muzi", events.StateChanged),
-			frame(1, 1, "", "t", "kodi", events.StateOK),
-			frame(2, 2, "", "u", "muzi", events.StateChanged),
-			frame(3, 2, "", "u", "kodi", events.StateOK),
+			trame(0, "", events.StateUnknown, "verbose", "\x1b[0;31mERROR! A malformed block was encountered\x1b[0m"),
+			diagnostic,
 		},
-		fin: stream.Fin{Status: render.IssueReussi},
+		fin: stream.Fin{Status: render.IssueEchec},
 	}
 
 	var out strings.Builder
-	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err != nil {
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, false); err != nil {
 		t.Fatalf("Run : %v", err)
 	}
-
-	bilan := out.String()[strings.Index(out.String(), "Bilan"):]
-	if strings.Index(bilan, "kodi") > strings.Index(bilan, "muzi") {
-		t.Errorf("bilan non trié :\n%s", bilan)
-	}
-	if !strings.Contains(bilan, "changed=2") || !strings.Contains(bilan, "ok=2") {
-		t.Errorf("comptes faux :\n%s", bilan)
+	if out.String() != "ERROR! A malformed block was encountered\n" {
+		t.Errorf("sortie :\n%q", out.String())
 	}
 }
 
 // Une coupure après huit minutes de run ne doit pas emporter ce qu'on a déjà vu
-// passer : le bilan est écrit MÊME sur erreur.
+// passer : sans le PLAY RECAP d'Ansible, la CLI en écrit un, au même format,
+// à partir de ce qu'elle a compté.
 func TestUneCoupureNemportePasLeBilan(t *testing.T) {
 	s := &suiveurFactice{
-		frames: []ws.EventFrame{frame(0, 1, "", "t", "kodi", events.StateChanged)},
-		err:    context.Canceled,
+		frames: []ws.EventFrame{
+			trame(0, "muzi", events.StateChanged, "runner_on_ok", jaune+"changed: [muzi]"+fin),
+			trame(1, "kodi", events.StateOK, "runner_on_ok", vert+"ok: [kodi]"+fin),
+			trame(2, "kodi", events.StateFailed, "runner_on_failed", "fatal: [kodi]: FAILED! => {}"),
+		},
+		err: context.Canceled,
 	}
 
 	var out strings.Builder
-	if _, err := render.Run(t.Context(), s, "01JZQ", &out); err == nil {
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, false); err == nil {
 		t.Fatal("erreur avalée")
 	}
-	if !strings.Contains(out.String(), "kodi") {
-		t.Errorf("le bilan a disparu avec la coupure :\n%s", out.String())
+	veut := `
+PLAY RECAP *********************************************************************
+kodi                       : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+muzi                       : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+`
+	if !strings.HasSuffix(out.String(), veut) {
+		t.Errorf("bilan :\n%q\nveut le suffixe :\n%q", out.String(), veut)
+	}
+}
+
+// Quand Ansible a écrit son PLAY RECAP, la CLI n'en ajoute pas un second.
+func TestLeBilanDAnsibleNEstPasDouble(t *testing.T) {
+	s := &suiveurFactice{frames: runMesure(), err: context.Canceled}
+
+	var out strings.Builder
+	_, _ = render.Run(t.Context(), s, "01JZQ", &out, false)
+	if n := strings.Count(out.String(), "PLAY RECAP"); n != 1 {
+		t.Errorf("PLAY RECAP écrit %d fois :\n%s", n, out.String())
+	}
+}
+
+// Les règles sont celles d'Ansible (`ansible/utils/color.py`) : NOCOLOR coupe,
+// une sortie qui n'est pas un terminal coupe, et FORCE_COLOR l'emporte sur tout.
+func TestLaCouleurSuitLesReglesDAnsible(t *testing.T) {
+	cas := []struct {
+		nom      string
+		env      map[string]string
+		terminal bool
+		veut     bool
+	}{
+		{"terminal", nil, true, true},
+		{"tube", nil, false, false},
+		{"NO_COLOR", map[string]string{"NO_COLOR": "1"}, true, false},
+		{"ANSIBLE_NOCOLOR", map[string]string{"ANSIBLE_NOCOLOR": "true"}, true, false},
+		{"ANSIBLE_NOCOLOR faux", map[string]string{"ANSIBLE_NOCOLOR": "0"}, true, true},
+		{"FORCE_COLOR sur un tube", map[string]string{"ANSIBLE_FORCE_COLOR": "yes"}, false, true},
+		{"FORCE_COLOR l'emporte", map[string]string{"ANSIBLE_FORCE_COLOR": "1", "NO_COLOR": "1"}, false, true},
+	}
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			getenv := func(k string) string { return c.env[k] }
+			if got := render.CouleurPour(getenv, c.terminal); got != c.veut {
+				t.Errorf("CouleurPour = %v, veut %v", got, c.veut)
+			}
+		})
 	}
 }
 
@@ -215,5 +271,31 @@ func TestIssueDitSiCestUnEchec(t *testing.T) {
 				t.Errorf("sortie %q sans %q", out.String(), c.contie)
 			}
 		})
+	}
+}
+
+// Le texte vient du pod runner, domaine hostile (ADR-0011) : un playbook y
+// écrit ce qu'il veut. Seules les COULEURS passent ; effacer l'écran, changer
+// le titre ou écrire dans le presse-papiers (OSC 52) ne passe pas.
+func TestSeulesLesCouleursAtteignentLeTerminal(t *testing.T) {
+	hostile := vert + "ok: [kodi]" + fin +
+		"\x1b[2J\x1b]0;titre\x07\x1b]52;c;cGF5bG9hZA==\x07\u009b2J\x08\r fin"
+	s := &suiveurFactice{
+		frames: []ws.EventFrame{trame(0, "", events.StateUnknown, "verbose", hostile)},
+		fin:    stream.Fin{Status: render.IssueReussi},
+	}
+
+	var out strings.Builder
+	if _, err := render.Run(t.Context(), s, "01JZQ", &out, true); err != nil {
+		t.Fatalf("Run : %v", err)
+	}
+	propre := strings.ReplaceAll(strings.ReplaceAll(out.String(), vert, ""), fin, "")
+	for _, r := range propre {
+		if r != '\n' && r != '\t' && (r < 0x20 || (r >= 0x7f && r <= 0x9f)) {
+			t.Fatalf("caractère de contrôle %U passé au terminal : %q", r, out.String())
+		}
+	}
+	if !strings.HasPrefix(out.String(), vert+"ok: [kodi]"+fin) {
+		t.Errorf("la couleur d'Ansible a été retirée : %q", out.String())
 	}
 }

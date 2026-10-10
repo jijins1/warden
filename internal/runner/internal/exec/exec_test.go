@@ -674,3 +674,42 @@ func TestLaCleDeVaultEtLesFlagsUtilisateurCoexistent(t *testing.T) {
 		}
 	}
 }
+
+// Ansible ne colore que sur un terminal, et `ansible-runner worker` n'en a pas :
+// sans ce forçage, le texte rendu de chaque event arrive en noir et blanc, et
+// la CLI ne peut plus afficher ce qu'`ansible-playbook` aurait affiché.
+//
+// Par `envvars` dans la trame, et non par `env/envvars` : MESURÉ sur
+// ansible-runner 2.4.3, les deux se FUSIONNENT, donc le forçage ne dépend pas
+// de la présence de variables transmises et ne les écrase pas.
+func TestLaCouleurDAnsibleEstForcee(t *testing.T) {
+	entree := fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.ForwardEnv = map[string]string{"FOO": "bar"}
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	brut, err := os.ReadFile(entree)
+	if err != nil {
+		t.Fatalf("lecture de l'entrée capturée : %v", err)
+	}
+	var trame struct {
+		Kwargs struct {
+			Envvars map[string]string `json:"envvars"`
+		} `json:"kwargs"`
+	}
+	premiere, _, _ := strings.Cut(string(brut), "\n")
+	if err := json.Unmarshal([]byte(premiere), &trame); err != nil {
+		t.Fatalf("kwargs illisibles : %v", err)
+	}
+	if trame.Kwargs.Envvars["ANSIBLE_FORCE_COLOR"] != "1" {
+		t.Errorf("envvars = %v, ANSIBLE_FORCE_COLOR absent", trame.Kwargs.Envvars)
+	}
+	// Les variables transmises restent dans LEUR fichier : la trame n'en porte
+	// aucune, elle ne fait que s'y ajouter.
+	if _, ok := trame.Kwargs.Envvars["FOO"]; ok {
+		t.Errorf("une variable transmise a fui dans la trame : %v", trame.Kwargs.Envvars)
+	}
+}

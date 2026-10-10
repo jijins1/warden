@@ -603,6 +603,16 @@ func (r *Runner) kwargs() (string, error) {
 		// recopier sous le `private_data_dir` doublerait la taille du volume
 		// pour rien.
 		"project_dir": r.cfg.Workspace,
+		// Ansible ne colore que sur un terminal, et le worker n'en a pas. Le
+		// texte rendu de chaque event — le `stdout` de premier niveau, que la
+		// CLI réaffiche tel quel — arriverait sinon sans couleur. C'est la
+		// couleur d'ANSIBLE, pas une imitation : la CLI n'a qu'à la retirer
+		// quand sa propre sortie n'est pas un terminal.
+		//
+		// Ici et non dans `env/envvars` : MESURÉ sur ansible-runner 2.4.3, les
+		// deux se FUSIONNENT. Le forçage ne dépend donc pas des variables
+		// transmises, et ne réécrit pas leur fichier.
+		"envvars": map[string]string{"ANSIBLE_FORCE_COLOR": "1"},
 	}
 	if r.cfg.Playbook != "" {
 		args["playbook"] = r.cfg.Playbook
