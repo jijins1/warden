@@ -1,0 +1,5 @@
+# Les droits par environnement (ADR-0033), réconciliés par le contrôleur.
+# Le compte doit exister : `wardend user add --subject alice --admin`.
+environments:
+  prod:
+    - alice
