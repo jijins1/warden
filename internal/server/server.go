@@ -156,8 +156,12 @@ func runController(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	m, err := lireModes()
+	if err != nil {
+		return err
+	}
 	ns := os.Getenv(EnvPodNamespace)
-	if ns == "" {
+	if m.orchestrateur == modeKubernetes && ns == "" {
 		// Sans namespace, il n'y a rien à observer. Démarrer quand même donnerait
 		// un contrôleur qui tourne, ne réconcilie rien et paraît sain — la pire
 		// des trois issues.
@@ -170,26 +174,46 @@ func runController(ctx context.Context) error {
 	}
 	defer st.Close()
 
-	k8s, err := clientKubernetes()
-	if err != nil {
-		return err
-	}
 	// Les adresses de dispatch et d'ingestion sont exigées par le constructeur de
 	// l'orchestrateur parce qu'un pod LANCÉ sans elles ne saurait qui appeler. Le
 	// contrôleur n'en lance aucun ; les valeurs posées ici ne partent nulle part,
 	// et les inventer serait plus honnête que d'affaiblir un contrôle qui protège
 	// le chemin de lancement.
-	orch, err := orchestrator.New(k8s, orchestrator.Config{
-		Namespace:   ns,
-		DispatchURL: valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid"),
-		IngestURL:   valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid"),
-		PullSecrets: secretsDeTirage(),
-	})
-	if err != nil {
-		return err
+	dispatchURL := valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid")
+	ingestURL := valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid")
+
+	var pods core.PodsObserves
+	switch m.orchestrateur {
+	case modeDocker:
+		// En mode Docker, c'est le contrôleur qui porte la borne de durée
+		// (ADR-0047) : il lui faut donc le même plafond que le lanceur.
+		deadline, err := secondesDeDeadline()
+		if err != nil {
+			return err
+		}
+		d, err := lanceurDocker(dispatchURL, ingestURL, deadline)
+		if err != nil {
+			return err
+		}
+		pods = d
+	default:
+		k8s, err := clientKubernetes()
+		if err != nil {
+			return err
+		}
+		orch, err := orchestrator.New(k8s, orchestrator.Config{
+			Namespace:   ns,
+			DispatchURL: dispatchURL,
+			IngestURL:   ingestURL,
+			PullSecrets: secretsDeTirage(),
+		})
+		if err != nil {
+			return err
+		}
+		pods = orch
 	}
 
-	rec, err := core.NewReconciler(st, orch)
+	rec, err := core.NewReconciler(st, pods)
 	if err != nil {
 		return err
 	}
@@ -226,8 +250,13 @@ func runController(ctx context.Context) error {
 	intervalleDroits := secondesOuDefaut(EnvGrantsSeconds, IntervalleDesDroits)
 	intervalleProteges := secondesOuDefaut(EnvProtectedSeconds, IntervalleDesProteges)
 
+	perimetre := slog.String("namespace", ns)
+	if m.orchestrateur == modeDocker {
+		perimetre = slog.String("instance", valeurOuDefaut(EnvDockerInstance, "warden"))
+	}
 	slog.Info("contrôleur démarré",
-		slog.String("namespace", ns),
+		slog.String("orchestrateur", m.orchestrateur),
+		perimetre,
 		slog.Duration("intervalle_pods", intervallePods))
 	if droits != nil {
 		slog.Info("droits lus depuis un fichier",
@@ -579,6 +608,10 @@ func runAPI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	m, err := lireModes()
+	if err != nil {
+		return err
+	}
 
 	// api.FromEnv et non une construction à la main : elle lit
 	// WARDEN_INSECURE_DEV_AUTH, sans quoi l'API assemblée refuse TOUTE requête —
@@ -683,86 +716,123 @@ func runAPI(ctx context.Context) error {
 		// empêcher.
 		creator = st
 
-		// Le démarrage des runs n'est branché que si le produit a accès au
-		// cluster. Sans lui, `POST /runs` ENREGISTRE le run sans le démarrer et le
-		// dit : un déploiement sans droits Kubernetes reste utilisable pour tout
-		// le reste, ce qui est le mode de développement.
-		if ns := os.Getenv(EnvPodNamespace); ns != "" {
+		// Le démarrage des runs n'est branché que si le produit a de quoi lancer
+		// un runner : le cluster, ou Docker quand il est choisi explicitement
+		// (ADR-0047). Sans lui, `POST /runs` ENREGISTRE le run sans le démarrer
+		// et le dit : un déploiement sans droits Kubernetes reste utilisable pour
+		// tout le reste, ce qui est le mode de développement.
+		ns := os.Getenv(EnvPodNamespace)
+		declencheur := EnvPodNamespace
+		if m.orchestrateur == modeDocker {
+			declencheur = EnvOrchestrator + "=" + modeDocker
+		}
+		if m.orchestrateur == modeDocker || ns != "" {
 			image := os.Getenv(EnvRunnerImage)
 			if image == "" {
 				// L'ADR-0014 fait déclarer l'image par le projet ; cette
 				// configuration n'existe pas encore, donc elle vient du
-				// déploiement. Son absence produirait des pods qui échouent au
-				// démarrage avec une erreur de Kubernetes, loin de la cause.
-				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvRunnerImage)
+				// déploiement. Son absence produirait des runners qui échouent
+				// au démarrage, loin de la cause.
+				return fmt.Errorf("%s est définie sans %s", declencheur, EnvRunnerImage)
 			}
-
-			k8s, err := clientKubernetes()
-			if err != nil {
-				return err
-			}
-			// L'adresse que le POD joindra, distincte de celle sur laquelle le
-			// service écoute : un pod n'est pas dans le même espace réseau que le
-			// processus qui sert. Sans elle, les pods démarrent et s'arrêtent
-			// faute de savoir qui appeler.
+			// L'adresse que le RUNNER joindra, distincte de celle sur laquelle le
+			// service écoute : un runner n'est pas dans le même espace réseau que
+			// le processus qui sert. Sans elle, les runners démarrent et
+			// s'arrêtent faute de savoir qui appeler.
 			dispatchURL := os.Getenv(EnvDispatchRunnerURL)
 			if dispatchURL == "" {
-				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvDispatchRunnerURL)
+				return fmt.Errorf("%s est définie sans %s", declencheur, EnvDispatchRunnerURL)
 			}
 			// Même raisonnement que pour le dispatch, avec une conséquence plus
-			// dure : un pod sans adresse d'ingestion exécuterait son playbook
+			// dure : un runner sans adresse d'ingestion exécuterait son playbook
 			// sans pouvoir rien rapporter, et l'audit ne dirait rien de ce qui
 			// a été modifié — l'inverse exact du produit (§6.3).
 			ingestURL := os.Getenv(EnvIngestRunnerURL)
 			if ingestURL == "" {
-				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvIngestRunnerURL)
+				return fmt.Errorf("%s est définie sans %s", declencheur, EnvIngestRunnerURL)
 			}
 			// Le plafond de durée d'un run vient du DÉPLOIEMENT, faute d'une
 			// configuration projet (ADR-0014). C'est la décision actée n°13 : ce
 			// qui borne un run qui pend même contrôleur mort, donc la seule
-			// protection qui ne dépend d'aucun de nos processus. Absente, la
-			// valeur par défaut de l'orchestrateur s'applique.
+			// protection qui ne dépend d'aucun de nos processus — en mode
+			// Kubernetes du moins ; en mode Docker, c'est le contrôleur qui la
+			// porte (ADR-0047). Absente, la valeur par défaut de l'adaptateur
+			// s'applique.
 			deadline, err := secondesDeDeadline()
 			if err != nil {
 				return err
 			}
-			orch, err := orchestrator.New(k8s, orchestrator.Config{
-				Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
-				DeadlineSeconds: deadline,
-				PullSecrets:     secretsDeTirage(),
-			})
-			if err != nil {
-				return err
+
+			var (
+				launcher core.PodLauncher
+				orch     *orchestrator.Kubernetes
+				k8s      *kubernetes.Clientset
+			)
+			switch m.orchestrateur {
+			case modeDocker:
+				d, err := lanceurDocker(dispatchURL, ingestURL, deadline)
+				if err != nil {
+					return err
+				}
+				launcher = d
+			default:
+				k8s, err = clientKubernetes()
+				if err != nil {
+					return err
+				}
+				orch, err = orchestrator.New(k8s, orchestrator.Config{
+					Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
+					DeadlineSeconds: deadline,
+					PullSecrets:     secretsDeTirage(),
+				})
+				if err != nil {
+					return err
+				}
+				launcher = orch
 			}
-			rs, err := core.NewRunStarter(st, orch, gc, image)
+			rs, err := core.NewRunStarter(st, launcher, gc, image)
 			if err != nil {
 				return err
 			}
 			starter = rs
 
-			// Le magasin de clés partage la condition du cluster, et pas par
-			// commodité : la partie privée vit dans un Secret du namespace des
-			// pods (ADR-0020). Sans accès à Kubernetes il n'y a pas de magasin,
-			// donc pas de clé — et les ordres partent sans, ce que le composeur
-			// traite comme un état légitime.
-			ki, err := keyinventory.New(k8s, ns, st)
-			if err != nil {
-				return err
-			}
-			keys, keyStore = ki, ki
+			switch m.secrets {
+			case modeVault:
+				// Les trois magasins dans Vault (ADR-0047) : clés d'accès, clé
+				// de vault, et consigne des valeurs de passage.
+				mv, err := ouvrirVault(st)
+				if err != nil {
+					return err
+				}
+				keys, keyStore = mv.cles, mv.cles
+				vault, vaultStore = mv.vault, mv.vault
+				consigne = mv.consigne
+			default:
+				// Le magasin de clés partage la condition du cluster, et pas par
+				// commodité : la partie privée vit dans un Secret du namespace
+				// des pods (ADR-0020). Sans accès à Kubernetes il n'y a pas de
+				// magasin, donc pas de clé — et les ordres partent sans, ce que
+				// le composeur traite comme un état légitime.
+				ki, err := keyinventory.New(k8s, ns, st)
+				if err != nil {
+					return err
+				}
+				keys, keyStore = ki, ki
 
-			// La clé de vault (ADR-0045) partage la même condition que la clé
-			// SSH : sa valeur en clair vit dans un Secret du namespace des
-			// pods.
-			vi, err := vaultinventory.New(k8s, ns, st)
-			if err != nil {
-				return err
-			}
-			vault, vaultStore = vi, vi
+				// La clé de vault (ADR-0045) partage la même condition que la
+				// clé SSH : sa valeur en clair vit dans un Secret du namespace
+				// des pods.
+				vi, err := vaultinventory.New(k8s, ns, st)
+				if err != nil {
+					return err
+				}
+				vault, vaultStore = vi, vi
 
-			// L'orchestrateur tient déjà le cycle de vie des Secrets d'un pod ;
-			// la consigne des valeurs de passage y vit pour la même raison.
-			consigne = orch
+				// L'orchestrateur tient déjà le cycle de vie des Secrets d'un
+				// pod ; la consigne des valeurs de passage y vit pour la même
+				// raison.
+				consigne = orch
+			}
 		}
 
 		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
