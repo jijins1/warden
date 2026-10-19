@@ -60,6 +60,7 @@ d'implémentation prises en cours de route.
 | [0045](0045-vault-inventory-cle-ansible-vault.md) | `vault-inventory` : la clé Ansible Vault, une par environnement | Accepted |
 | [0046](0046-la-sortie-de-la-cli-est-celle-dansible.md) | La sortie de la CLI est celle d'Ansible, couleurs comprises | Accepted |
 | [0047](0047-runners-docker-et-secrets-dans-vault.md) | Runners lancés par l'API Docker, secrets dans Vault | Proposed |
+| [0048](0048-connexion-par-mot-de-passe-sans-enrolement.md) | Connexion par mot de passe, sans enrôlement, empreintes vérifiées | Proposed |
 
 ## Convention
 
