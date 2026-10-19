@@ -350,6 +350,12 @@ const (
 	// dans un log (ADR-0023).
 	EnvTokenFile = "WARDEN_TOKEN_FILE"
 
+	// TokenFileStdin, posé dans EnvTokenFile, dit au runner de lire son jeton
+	// sur stdin jusqu'à EOF (ADR-0047). C'est le mode Docker : il n'y a pas de
+	// Secret à monter, et une variable d'environnement ressortirait dans
+	// `docker inspect` pour la même raison que dans le `Pod`.
+	TokenFileStdin = "-"
+
 	// EnvDispatchURL est l'adresse du canal, telle qu'un POD la joint. Elle
 	// diffère de l'adresse d'écoute du service : le pod n'est pas dans le même
 	// espace réseau que le processus qui sert.

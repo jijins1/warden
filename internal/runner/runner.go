@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("warden-runner ne prend aucun argument (%d reçus)", len(args))
 	}
 
-	token, err := lireJeton(os.Getenv(wire.EnvTokenFile))
+	token, err := lireJeton(os.Getenv(wire.EnvTokenFile), os.Stdin)
 	if err != nil {
 		return err
 	}
@@ -271,35 +272,56 @@ func joindre(cloture, run error) error {
 	return errors.Join(run, fmt.Errorf("clôture du run : %w", cloture))
 }
 
-// lireJeton lit le jeton d'amorçage depuis son fichier monté.
+// tailleMaxJeton borne la lecture du jeton sur stdin : un flux qui ne se ferme
+// pas, ou qui débite sans fin, ne doit pas faire grossir le runner.
+const tailleMaxJeton = 4 << 10
+
+// lireJeton lit le jeton d'amorçage depuis son fichier monté, ou depuis stdin
+// quand le chemin vaut wire.TokenFileStdin (mode Docker, ADR-0047).
 //
 // Un fichier et non une variable d'environnement, pour la raison donnée
 // plus haut. Sa lecture échoue bruyamment : un runner sans jeton ne peut rien
 // faire, et le laisser continuer produirait un échec plus loin, avec un message
 // parlant d'autre chose.
-func lireJeton(chemin string) (string, error) {
+func lireJeton(chemin string, stdin io.Reader) (string, error) {
 	if chemin == "" {
 		return "", fmt.Errorf("%s n'est pas définie", wire.EnvTokenFile)
 	}
-	// Le chemin est contraint au répertoire de montage, et ce n'est pas de la
-	// complaisance envers l'analyseur. Ce binaire tourne dans le même conteneur
-	// que le playbook : tout ce qui vient de son environnement est, à terme,
-	// influençable par du code arbitraire. Lire un chemin arbitraire ferait de
-	// cette fonction une primitive de lecture de fichier au service de qui
-	// contrôle l'environnement.
-	propre := filepath.Clean(chemin)
-	if !strings.HasPrefix(propre, MountDir+string(filepath.Separator)) {
-		return "", fmt.Errorf("le jeton d'amorçage doit être monté sous %s", MountDir)
-	}
 
-	brut, err := os.ReadFile(propre) // #nosec G304 G703 -- chemin contraint à MountDir juste au-dessus
-	if err != nil {
-		return "", fmt.Errorf("lecture du jeton d'amorçage : %w", err)
+	var brut []byte
+	if chemin == wire.TokenFileStdin {
+		// Lu jusqu'à EOF : le serveur ferme stdin après l'écriture, et le
+		// processus du playbook, lancé ensuite, n'y trouve plus rien.
+		lu, err := io.ReadAll(io.LimitReader(stdin, tailleMaxJeton+1))
+		if err != nil {
+			return "", fmt.Errorf("lecture du jeton d'amorçage sur stdin : %w", err)
+		}
+		if len(lu) > tailleMaxJeton {
+			return "", fmt.Errorf("le jeton d'amorçage lu sur stdin dépasse %d octets", tailleMaxJeton)
+		}
+		brut = lu
+	} else {
+		// Le chemin est contraint au répertoire de montage, et ce n'est pas de la
+		// complaisance envers l'analyseur. Ce binaire tourne dans le même conteneur
+		// que le playbook : tout ce qui vient de son environnement est, à terme,
+		// influençable par du code arbitraire. Lire un chemin arbitraire ferait de
+		// cette fonction une primitive de lecture de fichier au service de qui
+		// contrôle l'environnement.
+		propre := filepath.Clean(chemin)
+		if !strings.HasPrefix(propre, MountDir+string(filepath.Separator)) {
+			return "", fmt.Errorf("le jeton d'amorçage doit être monté sous %s", MountDir)
+		}
+
+		lu, err := os.ReadFile(propre) // #nosec G304 G703 -- chemin contraint à MountDir juste au-dessus
+		if err != nil {
+			return "", fmt.Errorf("lecture du jeton d'amorçage : %w", err)
+		}
+		brut = lu
 	}
 
 	jeton := strings.TrimSpace(string(brut))
 	if jeton == "" {
-		return "", errors.New("le jeton d'amorçage monté est vide")
+		return "", errors.New("le jeton d'amorçage est vide")
 	}
 	return jeton, nil
 }

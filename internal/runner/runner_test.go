@@ -39,7 +39,7 @@ func TestLeCheminDuJetonEstContraintAuMontage(t *testing.T) {
 
 	for _, chemin := range cas {
 		t.Run(chemin, func(t *testing.T) {
-			jeton, err := lireJeton(chemin)
+			jeton, err := lireJeton(chemin, strings.NewReader("ne doit pas être lu"))
 			if err == nil {
 				t.Fatalf("chemin accepté, jeton lu : %q", jeton)
 			}
@@ -58,8 +58,37 @@ func TestUnJetonVideEstRefuse(t *testing.T) {
 	// Le montage réel n'existe pas sur la machine de test ; on vérifie donc que
 	// la contrainte s'applique AVANT la lecture, ce qui est justement l'ordre
 	// voulu.
-	if _, err := lireJeton(MountDir + "/token"); err == nil {
+	if _, err := lireJeton(MountDir+"/token", strings.NewReader("")); err == nil {
 		t.Fatal("un jeton absent a été accepté")
+	}
+}
+
+// TestLeJetonSeLitSurStdin : le mode Docker (ADR-0047) passe le jeton par
+// stdin, qui est fermé après l'écriture.
+func TestLeJetonSeLitSurStdin(t *testing.T) {
+	jeton, err := lireJeton(wire.TokenFileStdin, strings.NewReader("jeton-amorcage\n"))
+	if err != nil {
+		t.Fatalf("lecture sur stdin : %v", err)
+	}
+	if jeton != "jeton-amorcage" {
+		t.Errorf("jeton lu : %q", jeton)
+	}
+}
+
+// TestUnStdinVideEstRefuse : un serveur qui ferme stdin sans rien écrire laisse
+// le runner sans identité.
+func TestUnStdinVideEstRefuse(t *testing.T) {
+	if _, err := lireJeton(wire.TokenFileStdin, strings.NewReader(" \n")); err == nil {
+		t.Fatal("un stdin vide a été accepté")
+	}
+}
+
+// TestUnStdinSansFinEstBorne : un flux qui ne s'arrête pas ne doit pas faire
+// grossir le runner sans limite.
+func TestUnStdinSansFinEstBorne(t *testing.T) {
+	trop := strings.NewReader(strings.Repeat("x", tailleMaxJeton+1))
+	if _, err := lireJeton(wire.TokenFileStdin, trop); err == nil {
+		t.Fatal("un jeton démesuré a été accepté")
 	}
 }
 
