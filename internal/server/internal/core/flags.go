@@ -114,6 +114,12 @@ var drapeauxAcceptes = []drapeau{
 	// n'apparaît dans aucun résultat de module.
 	{nom: "--diff"},
 	{nom: "--limit", verifier: verifierLimit},
+	// Le compte distant, le `-u` d'Ansible (ADR-0048). De priorité INFÉRIEURE
+	// à `ansible_user` : il ne change rien aux machines dont l'inventaire nomme
+	// le compte, et donne le sien à l'utilisateur sur celles — annuaire LDAP —
+	// où chacun se connecte en son nom. Enregistré dans `run.flags`, donc
+	// visible en audit.
+	{nom: "--user", verifier: verifierCompte},
 	// La verbosité, sous les quatre noms qu'`ansible-playbook` lui donne, et pas
 	// un de plus : Ansible accepte `-vvvvv` et au-delà, mais `-vvvv` est déjà le
 	// niveau où il rend le debug de la connexion, et rien au-dessus n'ajoute de

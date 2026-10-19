@@ -40,8 +40,10 @@ FROM alpine:3.22
 # le projet (ADR-0014), pas d'un méta-paquet qui en embarque un jeu arbitraire.
 #
 # git sert au `fetch` de l'ADR-0007 — le seul accès du pod au code.
-# openssh-client sert aux connexions vers les hôtes gérés.
-RUN apk add --no-cache ansible-core git openssh-client ca-certificates py3-pip
+# openssh-client sert aux connexions vers les hôtes gérés, et sshpass à celles
+# qui s'authentifient par mot de passe (ADR-0048) : Ansible le pilote dès que
+# `ansible_password` est posé.
+RUN apk add --no-cache ansible-core git openssh-client sshpass ca-certificates py3-pip
 
 # ansible-runner n'est PAS dans les dépôts Alpine : `apk add ansible-core` donne
 # le moteur, pas le flux d'events que le §11 demande de réutiliser tel quel. Son

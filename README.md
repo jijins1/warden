@@ -369,6 +369,23 @@ pod reads no `ssh_config`, so an alias that only exists in your `~/.ssh/config`
 will pass validation and fail to connect. What protects you from reaching the
 wrong machine is the pinned host key, not the shape of this field ([ADR-0036]).
 
+**Without enrolment** — for machines where everyone logs in under their own
+directory account (LDAP through sssd/PAM), nothing is installed. The machine is
+only *declared* with its host key, and you connect as yourself, with your own
+password, per run ([ADR-0048]):
+
+```sh
+warden host declare -f hosts.yaml           # host_key is mandatory here
+warden submit --playbook site.yml --env prod -u alice -k
+```
+
+`-u` is Ansible's: it yields to `ansible_user`, so enrolled machines in the same
+run keep their service account and key. The password travels like `-K` and is
+destroyed when read. Because a spoofed machine would receive it in clear, a run
+with `-k` **verifies host keys strictly** against the declared ones — an
+undeclared machine, or one declared without `host_key`, is refused before the
+password is sent.
+
 ---
 
 ## Finding a command
@@ -600,3 +617,4 @@ The product specification lives in [`specs/initial.md`](specs/initial.md).
 [ADR-0033]: docs/adr/0033-droits-par-environnement.md
 [ADR-0036]: docs/adr/0036-adresse-ou-nom-resoluble.md
 [ADR-0037]: docs/adr/0037-enrolement-depuis-linventaire-ansible.md
+[ADR-0048]: docs/adr/0048-connexion-par-mot-de-passe-sans-enrolement.md

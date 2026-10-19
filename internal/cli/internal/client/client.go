@@ -166,6 +166,9 @@ type NewRun struct {
 	// consigne éphémère, et la livraison de l'ordre au pod le consomme.
 	BecomePassword string `json:"become_password,omitempty"`
 
+	// ConnectionPassword suit le même chemin (ADR-0048).
+	ConnectionPassword string `json:"connection_password,omitempty"`
+
 	// ForwardEnv porte les VALEURS lues dans le shell de l'appelant, et elles
 	// seules (§5.4).
 	//

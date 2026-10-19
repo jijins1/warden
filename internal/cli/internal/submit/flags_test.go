@@ -221,3 +221,18 @@ func TestComposerRefuseUnCompteMalForme(t *testing.T) {
 		})
 	}
 }
+
+// `--user` est le `-u` d'Ansible (ADR-0048) : il descend tel quel, et un nom
+// qui n'est pas un compte est refusé avant tout travail.
+func TestComposerLeCompteDistant(t *testing.T) {
+	flags, err := (FlagsAnsible{User: "alice"}).Composer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flags) != 1 || flags[0] != "--user=alice" {
+		t.Errorf("flags = %v", flags)
+	}
+	if _, err := (FlagsAnsible{User: "alice; rm -rf"}).Composer(); err == nil {
+		t.Error("un compte malformé a été accepté")
+	}
+}

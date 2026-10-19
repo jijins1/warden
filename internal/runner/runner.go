@@ -159,6 +159,10 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		// Le mot de passe d'élévation vient de l'utilisateur, pas du serveur :
 		// il ne relève pas du magasin de l'ADR-0020 et ne fait que transiter.
 		BecomePassword: ordre.BecomePassword.Reveal(),
+		// Le mot de passe de connexion (ADR-0048), même provenance et même
+		// chemin, avec les empreintes qui seules l'autorisent à partir.
+		ConnectionPassword: ordre.ConnectionPassword.Reveal(),
+		KnownHosts:         ordre.KnownHosts,
 		// La clé de vault (ADR-0045) ne relève pas non plus du magasin de
 		// l'ADR-0020, mais elle en partage le chemin : émise par le serveur,
 		// jamais par un humain, révélée seulement ici.
@@ -354,6 +358,13 @@ func redacteurPour(ordre wire.Order) *redact.Redactor {
 	if len(ordre.BecomePassword) > 0 {
 		secrets = append(secrets, redact.Secret{
 			Name: "ansible_become_password", Value: string(ordre.BecomePassword.Reveal()),
+		})
+	}
+	// Le mot de passe de connexion aussi : il est dans le même fichier, lisible
+	// par le playbook pendant tout le run.
+	if len(ordre.ConnectionPassword) > 0 {
+		secrets = append(secrets, redact.Secret{
+			Name: "ansible_password", Value: string(ordre.ConnectionPassword.Reveal()),
 		})
 	}
 	// La clé de vault EST du jeu, contrairement à SSHKey. La distinction de

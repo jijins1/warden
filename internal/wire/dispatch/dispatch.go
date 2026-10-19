@@ -128,6 +128,17 @@ type Order struct {
 	// ÉMET, et celui-ci ne fait que transiter.
 	BecomePassword Secret `json:"become_password,omitempty"`
 
+	// ConnectionPassword est le mot de passe de connexion SSH de l'utilisateur
+	// (ADR-0048), vide quand il ne l'a pas fourni. Il vient d'un humain, comme
+	// BecomePassword, et ne fait que transiter.
+	ConnectionPassword Secret `json:"connection_password,omitempty"`
+
+	// KnownHosts porte les clés d'hôte des machines DÉCLARÉES de
+	// l'environnement, une ligne `known_hosts` par entrée. Rempli quand
+	// ConnectionPassword l'est : un mot de passe ne part que vers une
+	// machine dont l'empreinte est connue (ADR-0048).
+	KnownHosts []string `json:"known_hosts,omitempty"`
+
 	// VaultPassword est la clé Ansible Vault de l'environnement, émise par
 	// `vault-inventory` au moment du claim (ADR-0045), vide quand
 	// l'environnement n'en a pas.

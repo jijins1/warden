@@ -140,7 +140,8 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	// revalide (ADR-0038).
 	flagsAnsible, err := submit.FlagsAnsible{
 		Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
-		Become: *f.elever, BecomeUser: *f.eleverVers, Verbosite: f.verbeux.niveau(),
+		Become: *f.elever, BecomeUser: *f.eleverVers, User: *f.compte,
+		Verbosite: f.verbeux.niveau(),
 	}.Composer()
 	if err != nil {
 		return err
@@ -181,14 +182,12 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 
 	// Facultatif : il n'est demandé que si on l'a réclamé. C'est ce que
 	// `Fournie` distingue.
-	var motDePasseBecome prompt.Secret
-	if become.Fournie() {
-		motDePasseBecome, err = become.Lire(ctx)
-		if err != nil {
-			return err
-		}
-		defer motDePasseBecome.Wipe()
+	motDePasseBecome, motDePasseConnexion, err := lireLesMotsDePasse(ctx, become, f.connexion)
+	if err != nil {
+		return err
 	}
+	defer motDePasseBecome.Wipe()
+	defer motDePasseConnexion.Wipe()
 
 	// Le drapeau prime sur le fichier : viser un autre dépôt le temps d'une
 	// commande ne doit pas demander d'éditer un fichier versionné.
@@ -207,7 +206,8 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		GitURL:      git,
 		RunRef:      *runRef,
 
-		BecomePassword: motDePasseBecome,
+		BecomePassword:     motDePasseBecome,
+		ConnectionPassword: motDePasseConnexion,
 
 		// Les VALEURS des variables déclarées, lues dans le shell. Seuls les noms
 		// déclarés sont consultés : l'environnement n'est jamais parcouru en
@@ -268,7 +268,8 @@ func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
 
 	flagsAnsible, err := submit.FlagsAnsible{
 		Check: *f.check, Diff: *f.diff, ExtraVars: *f.extraVars,
-		Become: *f.elever, BecomeUser: *f.eleverVers, Verbosite: f.verbeux.niveau(),
+		Become: *f.elever, BecomeUser: *f.eleverVers, User: *f.compte,
+		Verbosite: f.verbeux.niveau(),
 	}.Composer()
 	if err != nil {
 		return err
@@ -296,14 +297,12 @@ func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
 		return err
 	}
 
-	var motDePasseBecome prompt.Secret
-	if become.Fournie() {
-		motDePasseBecome, err = become.Lire(ctx)
-		if err != nil {
-			return err
-		}
-		defer motDePasseBecome.Wipe()
+	motDePasseBecome, motDePasseConnexion, err := lireLesMotsDePasse(ctx, become, f.connexion)
+	if err != nil {
+		return err
 	}
+	defer motDePasseBecome.Wipe()
+	defer motDePasseConnexion.Wipe()
 
 	nomDuDepot := *repo
 	if nomDuDepot == "" {
@@ -322,7 +321,8 @@ func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
 		GitURL:      git,
 		RunRef:      *runRef,
 
-		BecomePassword: motDePasseBecome,
+		BecomePassword:     motDePasseBecome,
+		ConnectionPassword: motDePasseConnexion,
 
 		ForwardEnv:   projet.Valeurs(config.ForwardEnv, os.LookupEnv),
 		AuditInclude: config.AuditInclude,
@@ -939,4 +939,34 @@ func commandeDroit(ctx context.Context, args []string, sortie io.Writer) error {
 	default:
 		return command.Inconnue([]string{"grant"}, args[0])
 	}
+}
+
+// lireLesMotsDePasse lit les mots de passe d'élévation (`-K`) et de connexion
+// (`-k`), chacun seulement s'il a été demandé.
+//
+// Les deux ne peuvent pas venir tous deux de l'entrée standard : le premier
+// lecteur la viderait, et le second lirait un mot de passe vide sans que rien
+// ne le dise.
+func lireLesMotsDePasse(ctx context.Context, become, connexion *prompt.Source) (prompt.Secret, prompt.Secret, error) {
+	if become.Stdin && connexion.Stdin {
+		return nil, nil, errors.New("--become-pass-stdin et --pass-stdin ne peuvent pas lire tous deux " +
+			"l'entrée standard : passer l'un des deux par un fichier")
+	}
+	var b, c prompt.Secret
+	if become.Fournie() {
+		v, err := become.Lire(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		b = v
+	}
+	if connexion.Fournie() {
+		v, err := connexion.Lire(ctx)
+		if err != nil {
+			b.Wipe()
+			return nil, nil, err
+		}
+		c = v
+	}
+	return b, c, nil
 }

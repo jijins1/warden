@@ -196,6 +196,25 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		}
 	}
 
+	// Le mot de passe de connexion (ADR-0048), même chemin que celui
+	// d'élévation. Il ne part qu'avec les empreintes des machines déclarées :
+	// sans elles, un nœud usurpé le recevrait en clair.
+	var connexion wire.Secret
+	var empreintes []string
+	if b.consigne != nil {
+		if v, err := b.consigne.Take(ctx, CleConnexion(run.RunRef)); err == nil {
+			connexion = wire.Secret(v)
+		} else if !errors.Is(err, ErrNoStash) {
+			return wire.Order{}, fmt.Errorf("mot de passe de connexion du run %s : %w", run.RunRef, err)
+		}
+	}
+	if len(connexion) > 0 {
+		empreintes, err = b.empreintesDeclarees(ctx, run.Environment)
+		if err != nil {
+			return wire.Order{}, err
+		}
+	}
+
 	// Les variables du shell, si elles ont été consignées. Même chemin et même
 	// destin que le mot de passe d'élévation : lues à la LIVRAISON, détruites par
 	// leur lecture, jamais écrites en base ni dans le WAL.
@@ -234,6 +253,9 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		// tout ce qui l'accepte.
 		SSHKey:         cle,
 		BecomePassword: become,
+
+		ConnectionPassword: connexion,
+		KnownHosts:         empreintes,
 
 		// La clé de vault de l'ADR-0045, vide quand l'environnement n'en a
 		// pas — état légitime, voir cleDeVault.
@@ -430,6 +452,50 @@ func (b *OrderBuilder) EnrollFor(ctx context.Context, runID int64) (wire.Enroll,
 		PublicKey: descripteur.PublicKey,
 		HostKey:   empreinte,
 	}, nil
+}
+
+// CleConnexion nomme la consigne du mot de passe de connexion (ADR-0048),
+// exportée pour la même raison que CleBecome.
+func CleConnexion(runRef string) string { return runRef + "-connection" }
+
+// empreintesDeclarees rend les lignes `known_hosts` des machines déclarées de
+// l'environnement qui ont une clé d'hôte. Une machine sans clé n'y figure pas,
+// donc le runner la refusera : c'est voulu (ADR-0048).
+//
+// Sans catalogue de machines, la livraison échoue plutôt que de partir sans
+// empreintes : un mot de passe ne voyage pas sans elles.
+func (b *OrderBuilder) empreintesDeclarees(ctx context.Context, environment string) ([]string, error) {
+	if b.hosts == nil {
+		return nil, errors.New("mot de passe de connexion : aucun catalogue de machines pour en vérifier les empreintes")
+	}
+	machines, err := b.hosts.ListHosts(ctx, environment)
+	if err != nil {
+		return nil, fmt.Errorf("empreintes de %s : %w", environment, err)
+	}
+	var lignes []string
+	for _, m := range machines {
+		if m.HostKey == "" {
+			continue
+		}
+		lignes = append(lignes, LigneKnownHosts(m))
+	}
+	return lignes, nil
+}
+
+// LigneKnownHosts compose l'entrée `known_hosts` d'une machine : sous son nom
+// ET son adresse, puisque l'inventaire peut désigner l'une ou l'autre, avec la
+// forme `[hôte]:port` qu'OpenSSH exige hors du port 22.
+func LigneKnownHosts(m ManagedHost) string {
+	noms := []string{m.Name}
+	if m.Address != "" && m.Address != m.Name {
+		noms = append(noms, m.Address)
+	}
+	if m.Port != 0 && m.Port != 22 {
+		for i, n := range noms {
+			noms[i] = fmt.Sprintf("[%s]:%d", n, m.Port)
+		}
+	}
+	return strings.Join(noms, ",") + " " + m.HostKey
 }
 
 // CleBecome nomme la consigne du mot de passe d'élévation.

@@ -170,3 +170,16 @@ func TestEnClairRendNilSurVide(t *testing.T) {
 		t.Error("enClair doit rendre nil plutôt qu'une map vide")
 	}
 }
+
+// Le mot de passe de connexion EST du jeu (ADR-0048) : il vit dans le même
+// fichier que celui d'élévation, lisible par le playbook.
+func TestRedacteurMasqueLeMotDePasseDeConnexion(t *testing.T) {
+	red := redacteurPour(wire.Order{ConnectionPassword: wire.Secret("mdp-ldap-alice")})
+	if red == nil {
+		t.Fatal("un ordre portant un mot de passe de connexion doit armer le rédacteur")
+	}
+	sortie, _, _ := red.RedactText("le mot de passe est mdp-ldap-alice")
+	if strings.Contains(sortie, "mdp-ldap-alice") {
+		t.Errorf("le mot de passe de connexion ressort en clair : %q", sortie)
+	}
+}

@@ -114,6 +114,17 @@ type Config struct {
 	// `-e @<fichier>`, et la valeur n'apparaît nulle part dans le flux.
 	BecomePassword []byte
 
+	// ConnectionPassword est le mot de passe de connexion SSH de
+	// l'utilisateur (ADR-0048), vide le plus souvent. Même chemin que
+	// BecomePassword : `env/extravars`, sous `ansible_password`.
+	ConnectionPassword []byte
+
+	// KnownHosts sont les lignes `known_hosts` des machines déclarées. Avec
+	// ConnectionPassword, elles sont la SEULE source d'empreintes, et la
+	// vérification est stricte : un mot de passe ne part que vers une machine
+	// connue (ADR-0048).
+	KnownHosts []string
+
 	// VaultPassword est la clé Ansible Vault de l'environnement (ADR-0045),
 	// vide quand il n'y en a pas.
 	//
@@ -243,7 +254,7 @@ func (r *Runner) Run(ctx context.Context, emettre Emetteur) (Statut, error) {
 	if err := r.poserLesVariables(); err != nil {
 		return "", err
 	}
-	if err := r.poserLeBecome(); err != nil {
+	if err := r.poserLesExtravars(); err != nil {
 		return "", err
 	}
 	if err := r.poserLaCleDeVault(); err != nil {
@@ -523,7 +534,8 @@ func (r *Runner) poserLaCleDeVault() error {
 	return nil
 }
 
-// poserLeBecome écrit le mot de passe d'élévation là où Ansible le lira.
+// poserLesExtravars écrit les mots de passe d'élévation et de connexion là où
+// Ansible les lira.
 //
 // Le fichier est écrit ICI et non laissé à `ansible-runner` : celui-ci pose bien
 // 0600 — c'est mesuré — mais s'en remettre à un comportement qu'on n'a pas écrit
@@ -531,8 +543,30 @@ func (r *Runner) poserLaCleDeVault() error {
 //
 // Rien n'est écrit quand il n'y en a pas : un `extravars` vide ferait passer un
 // `-e @fichier` inutile à chaque run.
-func (r *Runner) poserLeBecome() error {
-	if len(r.cfg.BecomePassword) == 0 {
+func (r *Runner) poserLesExtravars() error {
+	vars := map[string]string{}
+	if len(r.cfg.BecomePassword) > 0 {
+		vars["ansible_become_password"] = string(r.cfg.BecomePassword)
+	}
+	if len(r.cfg.ConnectionPassword) > 0 {
+		chemin, err := r.poserLesEmpreintes()
+		if err != nil {
+			return err
+		}
+		vars["ansible_password"] = string(r.cfg.ConnectionPassword)
+		// La vérification des empreintes, en extravars et non en variables
+		// d'environnement : MESURÉ, un inventaire portant
+		// `ansible_host_key_checking: false` ou `ansible_ssh_common_args:
+		// -o StrictHostKeyChecking=no` l'emportait sur l'environnement. Les
+		// extravars ont la priorité la plus haute, et `ssh_args` vient en tête
+		// de la ligne de ssh, où la première valeur d'une option gagne
+		// (ADR-0048). Les trois premières options sont le défaut d'Ansible.
+		vars["ansible_host_key_checking"] = "true"
+		vars["ansible_ssh_args"] = "-C -o ControlMaster=auto -o ControlPersist=60s" +
+			" -o UserKnownHostsFile=" + chemin +
+			" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes"
+	}
+	if len(vars) == 0 {
 		return nil
 	}
 
@@ -544,17 +578,35 @@ func (r *Runner) poserLeBecome() error {
 	// `encoding/json` échappe ce qu'il faut : un mot de passe contenant un
 	// guillemet ou un saut de ligne produirait sinon un fichier illisible, et
 	// l'erreur parlerait de YAML plutôt que du mot de passe.
-	brut, err := json.Marshal(map[string]string{
-		"ansible_become_password": string(r.cfg.BecomePassword),
-	})
+	brut, err := json.Marshal(vars)
 	if err != nil {
 		// Le message ne cite jamais la valeur.
-		return errors.New("mot de passe d'élévation : encodage impossible")
+		return errors.New("mots de passe : encodage impossible")
 	}
 	if err := os.WriteFile(filepath.Join(env, "extravars"), brut, 0o600); err != nil {
-		return fmt.Errorf("écriture du mot de passe d'élévation : %w", err)
+		return fmt.Errorf("écriture des mots de passe : %w", err)
 	}
 	return nil
+}
+
+// poserLesEmpreintes écrit le `known_hosts` d'un run à mot de passe et rend
+// son chemin. Il est écrit même vide : un fichier vide refuse toutes les
+// machines, ce qui est exactement ce qu'on veut quand aucune n'est déclarée.
+func (r *Runner) poserLesEmpreintes() (string, error) {
+	chemin := filepath.Join(r.cfg.PrivateDataDir, "known_hosts")
+	var contenu strings.Builder
+	for _, ligne := range r.cfg.KnownHosts {
+		// Une ligne par entrée, et rien qui puisse en ajouter une autre.
+		if strings.ContainsAny(ligne, "\r\n") {
+			return "", errors.New("empreintes : une entrée contient un saut de ligne")
+		}
+		contenu.WriteString(ligne)
+		contenu.WriteByte('\n')
+	}
+	if err := os.WriteFile(chemin, []byte(contenu.String()), 0o600); err != nil {
+		return "", fmt.Errorf("écriture des empreintes : %w", err)
+	}
+	return chemin, nil
 }
 
 // poserLesVariables écrit les variables transmises là où ansible-runner les lit.
