@@ -20,7 +20,7 @@ aussi des **garanties** et un **magasin de secrets** :
 | Port | Implémentation actuelle | Ce que Kubernetes apporte |
 |---|---|---|
 | `PodLauncher` (`core/start.go`) — `LaunchPod`, `DeletePod` | `outbound/orchestrator` | Pod durci, `activeDeadlineSeconds`, jeton monté depuis un Secret |
-| `PodObserver` (`core/reconcile.go`) — `ObserverPods` | `outbound/orchestrator` | `PodFacts` : `Evicted`, `OOMKilled`, code de sortie |
+| `PodsObserves` (`core/reconcile.go`) — `ObserverPods`, `DeletePod` | `outbound/orchestrator` | `PodFacts` : `Evicted`, `OOMKilled`, code de sortie |
 | Consigne (`core/hosts.go`) — `Stash`, `Take` | `outbound/orchestrator/consigne.go` | Secret `warden-transit-*`, détruit à la lecture |
 | `keyinventory` | Secrets Kubernetes | Magasin des clés d'accès |
 | `vaultinventory` | Secrets Kubernetes | Magasin des clés Ansible Vault |
@@ -63,7 +63,7 @@ Vault sait emballer une valeur derrière un jeton à usage unique avec TTL.
 
 ### Option E — Docker pour les runners, Vault pour tous les secrets ✅ (proposée)
 
-Un adaptateur `outbound/docker` implémente `PodLauncher` et `PodObserver`. Un
+Un adaptateur `outbound/docker` implémente `PodLauncher` et `PodsObserves`. Un
 adaptateur `outbound/vault` implémente la consigne, `keyinventory` et
 `vaultinventory`. Les deux sont indépendants : l'adaptateur Vault est
 utilisable aussi en mode Kubernetes.
@@ -75,8 +75,10 @@ utilisable aussi en mode Kubernetes.
 - Client `github.com/moby/moby/client`, la même famille que `moby/moby/api`
   déjà en dépendance (e2e).
 - **Nom du conteneur = nom du pod** : `ContainerCreate` sur un nom existant
-  renvoie un conflit, traité comme succès — `LaunchPod` reste idempotent comme
-  le core l'exige.
+  renvoie un conflit — `LaunchPod` reste idempotent comme le core l'exige. Le
+  conflit n'est un succès que si le conteneur a démarré : un lanceur mort entre
+  la création et l'écriture du jeton laisse un conteneur `created` sans jeton,
+  que `LaunchPod` supprime puis recrée.
 - **Confinement par labels** (ADR-0010) : chaque conteneur porte les labels de
   l'orchestrateur, et **toute** requête de liste filtre sur eux.
 - **Durcissement transposé tel quel** : `ReadOnlyRootfs`, `CapDrop: ALL`,
@@ -127,35 +129,59 @@ run** : c'est une régression assumée par rapport à la décision actée n°13 
 
 ### 5. Vault pour tous les secrets
 
-- **Consigne** sur un montage **KV v1** `warden-transit/<clé>` : `PUT` pour
-  `Stash`, `GET` puis `DELETE` pour `Take`, 404 → `core.ErrNoStash`. Même
+- **Consigne** sur un montage **KV v2** `warden-transit`, réglé à
+  `max_versions = 1` : `POST data/<clé>` pour `Stash`, `GET data/<clé>` puis
+  `DELETE metadata/<clé>` pour `Take`, 404 → `core.ErrNoStash`. Même
   sémantique que `consigne.go`, y compris « l'échec de la suppression n'annule
-  pas la lecture ». KV v1 et non KV v2 : KV v2 garde les versions, un `DELETE`
-  y laisse la valeur récupérable, ce qui casse « détruit à la lecture ».
-- **Péremption** : KV v1 n'expire rien. La valeur est écrite avec son
-  horodatage ; `Take` refuse une valeur plus vieille qu'un TTL configuré et la
-  supprime. Un ménage périodique purge les valeurs jamais reprises.
-- **`keyinventory` et `vaultinventory`** sur KV (chemins distincts), mêmes
+  pas la lecture ».
+- **La suppression vise `metadata/`, jamais `data/`** : un `DELETE data/<clé>`
+  n'est qu'un effacement logique, annulable par `undelete` — la valeur
+  resterait récupérable, ce qui casse « détruit à la lecture ». `DELETE
+  metadata/<clé>` détruit toutes les versions et la clé elle-même.
+- **Péremption** : `delete_version_after` n'efface que logiquement, il ne
+  suffit pas. La valeur est écrite avec son horodatage ; `Take` refuse une
+  valeur plus vieille qu'un TTL configuré et la détruit.
+- **Ménage sans `list`** : les clés de consigne se dérivent du `run_ref`
+  (`CleBecome`, `CleForwardEnv`, le `run_ref` lui-même). Le ménage part des
+  runs terminés en base et détruit leurs clés à l'aveugle ; un 404 est un
+  succès. Il n'a jamais besoin d'énumérer la consigne.
+- **`keyinventory` et `vaultinventory`** sur KV v2 (chemins distincts), mêmes
   contrats que leurs adaptateurs Kubernetes.
-- **Policy dédiée** : `create`, `update`, `read`, `delete` sur les chemins du
-  produit, **sans `list`** sur la consigne — un serveur compromis ne peut pas
-  énumérer les valeurs en attente.
-- **Authentification du serveur** : AppRole, identifiants dans un fichier
-  monté. C'est le seul secret à fournir au déploiement.
+- **Policy dédiée** : `create`, `update`, `read` sur `data/*` et `delete` sur
+  `metadata/*` pour les chemins du produit, **sans `list`** sur la consigne —
+  un serveur compromis ne peut pas énumérer les valeurs en attente.
+- **Authentification du serveur** : AppRole. `role_id` et `secret_id` dans un
+  fichier monté, seul secret à fournir au déploiement. Le serveur renouvelle
+  son jeton Vault avant expiration et se réauthentifie quand il n'est plus
+  renouvelable, en relisant le fichier : tourner le `secret_id` revient à
+  remplacer le fichier, sans redémarrage.
 
 ### 6. Accès au socket Docker
 
 L'accès au socket équivaut à root sur l'hôte, bien au-delà des droits
 « namespace seulement » posés par l'ADR-0023. Le serveur ne parle **jamais**
 directement au socket : il passe par un proxy filtrant qui n'autorise que les
-routes `containers`, `images/create` et `networks` nécessaires, ou par un
+routes `containers` (y compris `containers/{id}/attach`, une connexion
+« upgradée » que le proxy retenu doit savoir relayer), `images/create` et
+`networks` nécessaires, ou par un
 démon Docker rootless dédié aux runners.
 
 ### 7. Sélection
 
-Configuration : `orchestrator: kubernetes | docker` et
-`secrets: kubernetes | vault`, choisis au démarrage dans `server.go`. Les
-combinaisons sont libres ; `docker` + `kubernetes` est refusé au démarrage.
+Le mode Kubernetes reste le mode par défaut et ne change pas : le mode Docker
+s'ajoute à côté, il ne le remplace pas.
+
+Deux variables d'environnement, lues au démarrage dans `server.go` comme les
+autres `WARDEN_*` :
+
+- `WARDEN_ORCHESTRATOR` : `kubernetes` (défaut) ou `docker` ;
+- `WARDEN_SECRETS` : `kubernetes` (défaut) ou `vault`.
+
+Absentes, elles valent `kubernetes` : un déploiement existant, dont la chart
+ne les pose pas, démarre exactement comme aujourd'hui. Une valeur inconnue est
+refusée au démarrage. Les combinaisons sont libres, sauf `docker` +
+`kubernetes`, refusée au démarrage : sans cluster, il n'y a pas de Secrets
+Kubernetes où ranger les clés.
 
 ## Plan d'implémentation
 
@@ -170,7 +196,8 @@ combinaisons sont libres ; `docker` + `kubernetes` est refusé au démarrage.
 5. **Câblage** dans `server.go`, configuration, validation au démarrage.
 6. **Déploiement** : un `compose.yaml` d'exemple — serveur, PostgreSQL, Vault,
    proxy du socket, réseau des runners.
-7. **e2e** : la chaîne complète en mode Docker.
+7. **e2e** : la chaîne complète en mode Docker, à côté de la chaîne Kubernetes
+   existante, qui reste la référence et continue de tourner telle quelle.
 
 ## Questions ouvertes
 
@@ -185,7 +212,8 @@ combinaisons sont libres ; `docker` + `kubernetes` est refusé au démarrage.
 
 ## Conséquences
 
-- Le cœur ne change pas ; deux adaptateurs s'ajoutent.
+- Le cœur ne change pas ; deux adaptateurs s'ajoutent. Le mode Kubernetes reste
+  le défaut, sans changement de configuration ni de chart.
 - Le runner gagne un mode de lecture du jeton.
 - Le mode Docker offre des garanties plus faibles que le mode Kubernetes
   (borne de durée, egress, périmètre des droits du serveur). Elles doivent être
