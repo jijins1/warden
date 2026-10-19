@@ -63,10 +63,12 @@ Vault sait emballer une valeur derrière un jeton à usage unique avec TTL.
 
 ### Option E — Docker pour les runners, Vault pour tous les secrets ✅ (proposée)
 
-Un adaptateur `outbound/docker` implémente `PodLauncher` et `PodsObserves`. Un
-adaptateur `outbound/vault` implémente la consigne, `keyinventory` et
-`vaultinventory`. Les deux sont indépendants : l'adaptateur Vault est
-utilisable aussi en mode Kubernetes.
+Un adaptateur `outbound/docker` implémente `PodLauncher` et `PodsObserves`.
+`outbound/vault` porte le client Vault et la consigne ; `keyinventory` et
+`vaultinventory` gagnent chacun un adaptateur Vault qui reçoit ce client par
+une interface déclarée chez eux, deux adaptateurs sortants ne s'important pas
+(ADR-0019). Docker et Vault sont indépendants : Vault est utilisable aussi en
+mode Kubernetes.
 
 ## Ce qui est proposé
 
@@ -80,7 +82,9 @@ utilisable aussi en mode Kubernetes.
   la création et l'écriture du jeton laisse un conteneur `created` sans jeton,
   que `LaunchPod` supprime puis recrée.
 - **Confinement par labels** (ADR-0010) : chaque conteneur porte les labels de
-  l'orchestrateur, et **toute** requête de liste filtre sur eux.
+  l'orchestrateur, plus un label d'instance (`warden.io/instance`) qui tient
+  le rôle du namespace. **Toute** requête de liste filtre sur eux, et aucun
+  conteneur sans eux n'est inspecté comme nôtre ni supprimé.
 - **Durcissement transposé tel quel** : `ReadOnlyRootfs`, `CapDrop: ALL`,
   `SecurityOpt: no-new-privileges`, utilisateur `65534:65534`,
   `Privileged: false`, `tmpfs` pour l'espace de travail et `/tmp`, seccomp par
@@ -121,9 +125,12 @@ serveur avec lui ou le prive de toute observation.
 
 ### 4. Borne de durée de vie
 
-Docker n'a pas d'équivalent à `activeDeadlineSeconds`. Le reconciler arrête
-les conteneurs plus vieux que `DeadlineSeconds` (date de création lue dans le
-label) et marque la cause. **Si le contrôleur est mort, plus rien ne borne un
+Docker n'a pas d'équivalent à `activeDeadlineSeconds`. L'observation des
+conteneurs, appelée à chaque passage du reconciler, tue ceux qui sont plus
+vieux que `DeadlineSeconds` (date de création du conteneur) et les rapporte en
+`DeadlineExceeded`. La cause se relit aux passages suivants depuis l'état du
+conteneur — fin postérieure à la borne — sans mémoire partagée entre
+répliques. Le cœur ne change pas. **Si le contrôleur est mort, plus rien ne borne un
 run** : c'est une régression assumée par rapport à la décision actée n°13 — voir
 « Questions ouvertes ».
 
@@ -150,8 +157,9 @@ run** : c'est une régression assumée par rapport à la décision actée n°13 
 - **Policy dédiée** : `create`, `update`, `read` sur `data/*` et `delete` sur
   `metadata/*` pour les chemins du produit, **sans `list`** sur la consigne —
   un serveur compromis ne peut pas énumérer les valeurs en attente.
-- **Authentification du serveur** : AppRole. `role_id` et `secret_id` dans un
-  fichier monté, seul secret à fournir au déploiement. Le serveur renouvelle
+- **Authentification du serveur** : AppRole. Le `role_id` n'est pas un secret
+  et passe en variable ; le `secret_id` est dans un fichier monté, seul secret
+  à fournir au déploiement. Le serveur renouvelle
   son jeton Vault avant expiration et se réauthentifie quand il n'est plus
   renouvelable, en relisant le fichier : tourner le `secret_id` revient à
   remplacer le fichier, sans redémarrage.
@@ -178,7 +186,16 @@ autres `WARDEN_*` :
 - `WARDEN_SECRETS` : `kubernetes` (défaut) ou `vault`.
 
 Absentes, elles valent `kubernetes` : un déploiement existant, dont la chart
-ne les pose pas, démarre exactement comme aujourd'hui. Une valeur inconnue est
+ne les pose pas, démarre exactement comme aujourd'hui.
+
+Le mode Docker lit en plus `WARDEN_DOCKER_NETWORK` (obligatoire),
+`WARDEN_DOCKER_INSTANCE` (`warden` par défaut) et
+`WARDEN_DOCKER_REGISTRY_AUTH_FILE` ; l'adresse du démon vient de `DOCKER_HOST`,
+qui pointe le proxy filtrant. Le mode Vault lit `WARDEN_VAULT_ADDR`,
+`WARDEN_VAULT_ROLE_ID`, `WARDEN_VAULT_SECRET_ID_FILE`, et en option
+`WARDEN_VAULT_CACERT`, `WARDEN_VAULT_APPROLE_MOUNT` (`approle`),
+`WARDEN_VAULT_KV_MOUNT` (`warden`), `WARDEN_VAULT_TRANSIT_MOUNT`
+(`warden-transit`) et `WARDEN_VAULT_TRANSIT_TTL_SECONDS` (600). Une valeur inconnue est
 refusée au démarrage. Les combinaisons sont libres, sauf `docker` +
 `kubernetes`, refusée au démarrage : sans cluster, il n'y a pas de Secrets
 Kubernetes où ranger les clés.
@@ -186,13 +203,14 @@ Kubernetes où ranger les clés.
 ## Plan d'implémentation
 
 1. **Runner** : jeton sur stdin (`EnvTokenFile=-`), tests unitaires.
-2. **`outbound/vault`** : consigne, puis `keyinventory`, puis `vaultinventory`.
+2. **`outbound/vault`** : client et consigne ; adaptateurs Vault de
+   `keyinventory` et `vaultinventory`.
    Tests contre un faux serveur HTTP ; un test d'intégration contre un Vault
    en conteneur (testcontainers, déjà en dépendance).
 3. **`outbound/docker`** : `LaunchPod`, `DeletePod`, `ObserverPods`, derrière
    une interface étroite du client moby pour les tests sans démon (ADR-0010).
    Un test d'intégration contre le démon Docker du CI.
-4. **Reaper de durée** dans le reconciler, pour le mode Docker.
+4. **Borne de durée** dans l'observation des conteneurs, pour le mode Docker.
 5. **Câblage** dans `server.go`, configuration, validation au démarrage.
 6. **Déploiement** : un `compose.yaml` d'exemple — serveur, PostgreSQL, Vault,
    proxy du socket, réseau des runners.
