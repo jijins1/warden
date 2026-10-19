@@ -2,14 +2,10 @@ package keyinventory
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
 
-	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,11 +127,7 @@ func (k *Kubernetes) Import(ctx context.Context, environment string, private []b
 		avecCommentaire(publique, environment), empreinte, core.KeyImported, by)
 }
 
-// Generate frappe une paire ed25519.
-//
-// ed25519 et non RSA : clé courte, signature rapide, et acceptée par tout
-// OpenSSH depuis 6.5 (2014). Le choix ne se discute que si une cible refuse
-// l'algorithme, ce qui se verrait à l'enrôlement et pas en production.
+// Generate frappe une paire ed25519 (voir frapper).
 //
 // La partie privée NE QUITTE JAMAIS le cluster : elle est frappée ici, écrite
 // dans le Secret, et rendue à personne. C'est ce qui distingue ce chemin de
@@ -145,26 +137,11 @@ func (k *Kubernetes) Generate(ctx context.Context, environment string, by int64)
 		return core.KeyDescriptor{}, err
 	}
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	privee, publique, empreinte, err := frapper(environment)
 	if err != nil {
-		return core.KeyDescriptor{}, fmt.Errorf("frappe de la clé de %s: %w", environment, err)
+		return core.KeyDescriptor{}, err
 	}
-
-	bloc, err := ssh.MarshalPrivateKey(priv, "warden "+environment)
-	if err != nil {
-		return core.KeyDescriptor{}, fmt.Errorf("encodage de la clé de %s: %w", environment, err)
-	}
-
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return core.KeyDescriptor{}, fmt.Errorf("partie publique de %s: %w", environment, err)
-	}
-
-	return k.poser(ctx, environment,
-		pem.EncodeToMemory(bloc),
-		avecCommentaire(ligneAutorisee(sshPub), environment),
-		ssh.FingerprintSHA256(sshPub),
-		core.KeyGenerated, by)
+	return k.poser(ctx, environment, privee, publique, empreinte, core.KeyGenerated, by)
 }
 
 // Describe rend ce qu'on peut dire d'une clé sans la révéler.
@@ -218,27 +195,12 @@ func (k *Kubernetes) poser(ctx context.Context, environment string,
 		return core.KeyDescriptor{}, fmt.Errorf("écriture de la clé de %s: %w", environment, err)
 	}
 
-	d := core.KeyDescriptor{
+	return cataloguer(ctx, k.catalogue, core.KeyDescriptor{
 		Environment: environment,
 		PublicKey:   publique,
 		Fingerprint: empreinte,
 		SecretName:  nom,
 		Origin:      origine,
 		CreatedBy:   by,
-	}
-	if err := k.catalogue.SaveKey(ctx, d); err != nil {
-		return core.KeyDescriptor{}, err
-	}
-
-	// Le descripteur est RELU après écriture, et ce n'est pas de la
-	// superstition : `created_at` et `rotated_at` sont posées par la BASE, donc
-	// celui qu'on vient de composer les porte à zéro. Le rendre tel quel
-	// affichait « posée le 0001-01-01 » à l'utilisateur.
-	//
-	// Une relecture qui échoue ne fait pas échouer la pose : la clé EST
-	// installée, et prétendre le contraire enverrait l'opérateur la reposer.
-	if relu, err := k.catalogue.KeyByEnvironment(ctx, environment); err == nil {
-		return relu, nil
-	}
-	return d, nil
+	})
 }
