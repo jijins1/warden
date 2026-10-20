@@ -681,6 +681,27 @@ func TestSansMotDePasseDeConnexionRienNeChange(t *testing.T) {
 	}
 }
 
+// Un run à clé vérifie aussi les empreintes quand l'ordre le demande, sans
+// qu'aucun mot de passe ne soit posé.
+func TestUnRunACleVerifieLesEmpreintes(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.HostKeyChecking = true
+	cfg.KnownHosts = []string{"cible ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemple"}
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	vars := lireExtravars(t, cfg)
+	if _, ok := vars["ansible_password"]; ok {
+		t.Error("un mot de passe est apparu sans avoir été fourni")
+	}
+	if vars["ansible_host_key_checking"] != "true" ||
+		!strings.Contains(vars["ansible_ssh_args"], "StrictHostKeyChecking=yes") {
+		t.Errorf("vérification absente : %v", vars)
+	}
+}
+
 // --- la clé de vault (ADR-0045) ---
 
 // Elle va dans `<pdd>/env/vault_password`, et `--vault-password-file` est

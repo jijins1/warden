@@ -133,10 +133,14 @@ type Order struct {
 	// BecomePassword, et ne fait que transiter.
 	ConnectionPassword Secret `json:"connection_password,omitempty"`
 
+	// HostKeyChecking demande au runner de vérifier STRICTEMENT les
+	// empreintes contre KnownHosts, et contre rien d'autre (ADR-0048). Un
+	// booléen explicite plutôt qu'une liste non vide : une liste vide est une
+	// vérification valide — elle refuse toutes les machines.
+	HostKeyChecking bool `json:"host_key_checking,omitempty"`
+
 	// KnownHosts porte les clés d'hôte des machines DÉCLARÉES de
-	// l'environnement, une ligne `known_hosts` par entrée. Rempli quand
-	// ConnectionPassword l'est : un mot de passe ne part que vers une
-	// machine dont l'empreinte est connue (ADR-0048).
+	// l'environnement, une ligne `known_hosts` par entrée.
 	KnownHosts []string `json:"known_hosts,omitempty"`
 
 	// VaultPassword est la clé Ansible Vault de l'environnement, émise par

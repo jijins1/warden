@@ -50,6 +50,12 @@ type OrderBuilder struct {
 	hosts    HostCatalog
 	cles     KeyCatalog
 	consigne SecretStash
+
+	// empreintesPermissives coupe la vérification des empreintes pour les
+	// runs à clé. Un interrupteur de TRANSITION, le temps de déclarer les clés
+	// d'hôte d'une flotte (ADR-0048) ; il ne s'applique jamais à un run à mot
+	// de passe.
+	empreintesPermissives bool
 }
 
 // AvecEnrolement branche de quoi composer un ordre d'enrôlement.
@@ -73,6 +79,21 @@ func (b *OrderBuilder) AvecDroits(droits EnvironmentGrants) *OrderBuilder {
 
 func (b *OrderBuilder) AvecEnrolement(hosts HostCatalog, cles KeyCatalog, consigne SecretStash) *OrderBuilder {
 	b.hosts, b.cles, b.consigne = hosts, cles, consigne
+	return b
+}
+
+// AvecMachines branche le catalogue des machines déclarées, d'où viennent les
+// empreintes vérifiées par chaque run (ADR-0048). Indépendant
+// d'AvecEnrolement : un déploiement sans consigne vérifie quand même.
+func (b *OrderBuilder) AvecMachines(hosts HostCatalog) *OrderBuilder {
+	b.hosts = hosts
+	return b
+}
+
+// SansVerifierLesEmpreintes coupe la vérification des empreintes des runs à
+// clé. Voir empreintesPermissives.
+func (b *OrderBuilder) SansVerifierLesEmpreintes() *OrderBuilder {
+	b.empreintesPermissives = true
 	return b
 }
 
@@ -208,8 +229,12 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 			return wire.Order{}, fmt.Errorf("mot de passe de connexion du run %s : %w", run.RunRef, err)
 		}
 	}
-	if len(connexion) > 0 {
-		empreintes, err = b.empreintesDeclarees(ctx, run.Environment)
+	// Les empreintes sont vérifiées sur TOUS les runs, sauf si le déploiement
+	// l'a désactivé pour sa transition — et jamais quand un mot de passe part,
+	// qu'un nœud usurpé recevrait en clair (ADR-0048).
+	verifier := !b.empreintesPermissives || len(connexion) > 0
+	if verifier {
+		empreintes, err = b.empreintesDeclarees(ctx, run.Environment, len(connexion) > 0)
 		if err != nil {
 			return wire.Order{}, err
 		}
@@ -255,6 +280,7 @@ func (b *OrderBuilder) OrderFor(ctx context.Context, runID int64) (wire.Order, e
 		BecomePassword: become,
 
 		ConnectionPassword: connexion,
+		HostKeyChecking:    verifier,
 		KnownHosts:         empreintes,
 
 		// La clé de vault de l'ADR-0045, vide quand l'environnement n'en a
@@ -462,11 +488,15 @@ func CleConnexion(runRef string) string { return runRef + "-connection" }
 // l'environnement qui ont une clé d'hôte. Une machine sans clé n'y figure pas,
 // donc le runner la refusera : c'est voulu (ADR-0048).
 //
-// Sans catalogue de machines, la livraison échoue plutôt que de partir sans
-// empreintes : un mot de passe ne voyage pas sans elles.
-func (b *OrderBuilder) empreintesDeclarees(ctx context.Context, environment string) ([]string, error) {
+// Sans catalogue de machines, la liste est vide : la vérification reste
+// stricte et refuse toute machine SSH — fermé par défaut. Un run à mot de
+// passe, lui, échoue à la livraison : il n'a rien à faire sans empreintes.
+func (b *OrderBuilder) empreintesDeclarees(ctx context.Context, environment string, motDePasse bool) ([]string, error) {
 	if b.hosts == nil {
-		return nil, errors.New("mot de passe de connexion : aucun catalogue de machines pour en vérifier les empreintes")
+		if motDePasse {
+			return nil, errors.New("mot de passe de connexion : aucun catalogue de machines pour en vérifier les empreintes")
+		}
+		return nil, nil
 	}
 	machines, err := b.hosts.ListHosts(ctx, environment)
 	if err != nil {

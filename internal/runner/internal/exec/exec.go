@@ -119,10 +119,12 @@ type Config struct {
 	// BecomePassword : `env/extravars`, sous `ansible_password`.
 	ConnectionPassword []byte
 
-	// KnownHosts sont les lignes `known_hosts` des machines déclarées. Avec
-	// ConnectionPassword, elles sont la SEULE source d'empreintes, et la
-	// vérification est stricte : un mot de passe ne part que vers une machine
-	// connue (ADR-0048).
+	// HostKeyChecking impose une vérification STRICTE des empreintes contre
+	// KnownHosts, seule source admise (ADR-0048). Un mot de passe de connexion
+	// l'impose de toute façon : il ne part que vers une machine connue.
+	HostKeyChecking bool
+
+	// KnownHosts sont les lignes `known_hosts` des machines déclarées.
 	KnownHosts []string
 
 	// VaultPassword est la clé Ansible Vault de l'environnement (ADR-0045),
@@ -534,8 +536,8 @@ func (r *Runner) poserLaCleDeVault() error {
 	return nil
 }
 
-// poserLesExtravars écrit les mots de passe d'élévation et de connexion là où
-// Ansible les lira.
+// poserLesExtravars écrit les mots de passe d'élévation et de connexion, et la
+// vérification des empreintes, là où Ansible les lira.
 //
 // Le fichier est écrit ICI et non laissé à `ansible-runner` : celui-ci pose bien
 // 0600 — c'est mesuré — mais s'en remettre à un comportement qu'on n'a pas écrit
@@ -549,11 +551,13 @@ func (r *Runner) poserLesExtravars() error {
 		vars["ansible_become_password"] = string(r.cfg.BecomePassword)
 	}
 	if len(r.cfg.ConnectionPassword) > 0 {
+		vars["ansible_password"] = string(r.cfg.ConnectionPassword)
+	}
+	if r.cfg.HostKeyChecking || len(r.cfg.ConnectionPassword) > 0 {
 		chemin, err := r.poserLesEmpreintes()
 		if err != nil {
 			return err
 		}
-		vars["ansible_password"] = string(r.cfg.ConnectionPassword)
 		// La vérification des empreintes, en extravars et non en variables
 		// d'environnement : MESURÉ, un inventaire portant
 		// `ansible_host_key_checking: false` ou `ansible_ssh_common_args:
@@ -589,8 +593,7 @@ func (r *Runner) poserLesExtravars() error {
 	return nil
 }
 
-// poserLesEmpreintes écrit le `known_hosts` d'un run à mot de passe et rend
-// son chemin. Il est écrit même vide : un fichier vide refuse toutes les
+// poserLesEmpreintes écrit le `known_hosts` du run et rend son chemin. Il est écrit même vide : un fichier vide refuse toutes les
 // machines, ce qui est exactement ce qu'on veut quand aucune n'est déclarée.
 func (r *Runner) poserLesEmpreintes() (string, error) {
 	chemin := filepath.Join(r.cfg.PrivateDataDir, "known_hosts")

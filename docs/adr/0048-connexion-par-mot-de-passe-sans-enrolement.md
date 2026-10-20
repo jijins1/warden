@@ -51,7 +51,7 @@ l'élévation. Il transite par la consigne et n'est jamais persisté.
 - **CA d'hôtes SSH** ❌ pour l'instant : suppose une CA côté infrastructure.
 - **Déclaration seule** ✅ : le nœud n'est pas enrôlé — rien n'y est posé —
   mais il est **déclaré** avec sa clé d'hôte (`warden host declare`). Un run
-  par mot de passe ne parle qu'aux nœuds dont l'empreinte est connue.
+  ne parle qu'aux nœuds dont l'empreinte est connue.
 
 ## Décision
 
@@ -79,11 +79,22 @@ l'élévation. Il transite par la consigne et n'est jamais persisté.
    extravars ont la priorité la plus haute d'Ansible, et `ssh_args` précède
    les autres arguments sur la ligne de ssh, où la première valeur d'une
    option l'emporte. Le prix : un `ansible_ssh_args` de l'inventaire est
-   ignoré pendant un run à mot de passe.
+   ignoré pendant un run vérifié.
 5. **Compte distant** : `--user` est le `-u` d'Ansible, donc de priorité
    inférieure à `ansible_user`. Les nœuds enrôlés gardent le compte de leur
    inventaire et leur clé ; les nœuds LDAP, sans `ansible_user`, prennent le
    compte de l'utilisateur. Un même run peut toucher les deux.
+6. **Tous les runs vérifient**, pas seulement ceux à mot de passe. Le même
+   mécanisme s'applique aux runs à clé (`wire.Order.HostKeyChecking`) : une
+   clé partagée n'est pas un secret qu'un nœud usurpé capture, mais lui
+   parler, c'est lui confier les variables du playbook, les fichiers qu'il
+   pose, et `-K`. Sans catalogue de machines, la vérification reste stricte
+   sur une liste vide — fermée par défaut.
+
+   `WARDEN_HOST_KEY_CHECKING=off` (`api.verifierEmpreintes: false` dans la
+   chart) la coupe pour les runs à clé, le temps de déclarer les clés d'hôte
+   d'une flotte existante : c'est un interrupteur de **transition**, journalisé
+   au démarrage. Il ne touche jamais un run à mot de passe.
 
 ## Conséquences
 
@@ -95,6 +106,12 @@ l'élévation. Il transite par la consigne et n'est jamais persisté.
   Secret Kubernetes le temps de la livraison, et vit en clair dans le
   conteneur du runner pendant le run — exactement comme celui d'élévation.
   Le playbook, code arbitraire (§2), peut le lire.
-- **Hors périmètre, et à traiter** : les runs à clé ne vérifient toujours
-  aucune empreinte. La même mécanique s'y appliquerait, au prix de refuser
-  les nœuds déclarés sans clé d'hôte.
+- **Changement de comportement à la mise à jour** : une machine absente de
+  `managed_host`, ou déclarée sans `host_key`, devient injoignable — y
+  compris par clé. La déclarer avec sa clé d'hôte (`warden host declare`) ou
+  l'enrôler en mode assisté, qui l'épingle ; d'ici là, l'interrupteur.
+- L'inventaire doit désigner une machine par son nom déclaré ou son adresse
+  déclarée : ce sont les deux seuls noms du `known_hosts`.
+- `ansible-runner` posait `ANSIBLE_HOST_KEY_CHECKING=False` sur tous les
+  runs, à l'encontre du §5.4.1 de la spec qui range cette variable parmi les
+  dangereuses (« MITM »). C'est cette situation que la décision 6 referme.

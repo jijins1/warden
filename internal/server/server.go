@@ -856,6 +856,20 @@ func runAPI(ctx context.Context) error {
 			// qui donne un sens à la révocation (§10.3). Sans ce branchement, le
 			// composeur refuserait toute clé — c'est le défaut voulu.
 			ob = ob.AvecDroits(st)
+			// Les empreintes des machines déclarées, vérifiées par chaque run
+			// (ADR-0048). Sans elles, la vérification resterait stricte sur une
+			// liste vide et aucune machine ne serait joignable.
+			ob = ob.AvecMachines(st)
+			switch v := os.Getenv(EnvHostKeyChecking); v {
+			case "", "strict":
+			case "off":
+				slog.Warn("empreintes non vérifiées pour les runs à clé",
+					slog.String("variable", EnvHostKeyChecking),
+					slog.String("effet", "un nœud usurpé reçoit la connexion ; les runs à mot de passe restent vérifiés"))
+				ob = ob.SansVerifierLesEmpreintes()
+			default:
+				return fmt.Errorf("%s=%q : `strict` ou `off` attendu", EnvHostKeyChecking, v)
+			}
 			// Facultatif comme `keys` : sans magasin de vault, l'ordre part
 			// sans clé et le run tourne — il échouera au premier `!vault |`
 			// qu'il ne peut pas déchiffrer, ce qui est un diagnostic honnête.
@@ -989,6 +1003,11 @@ const (
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
 	EnvGitClientURL     = "WARDEN_GIT_CLIENT_URL"     // adresse ANNONCÉE à la CLI avec son jeton de push : le port d'ÉCRITURE
 	EnvExigerConfig     = "WARDEN_EXIGER_CONFIG"      // "1" refuse les commits sans .ansibleproxy.yml (ADR-0009)
+	// EnvHostKeyChecking : `strict` (défaut) ou `off`. Interrupteur de
+	// TRANSITION, le temps de déclarer les clés d'hôte d'une flotte : `off`
+	// coupe la vérification des empreintes des runs à clé, jamais celle d'un
+	// run à mot de passe (ADR-0048).
+	EnvHostKeyChecking = "WARDEN_HOST_KEY_CHECKING"
 	// EnvDispatchRunnerURL est l'adresse du canal telle qu'un POD la joint. Comme
 	// pour git, elle diffère de l'adresse d'écoute : le service écoute dans le
 	// control plane, le pod appelle depuis le cluster.

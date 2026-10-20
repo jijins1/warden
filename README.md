@@ -337,8 +337,8 @@ hosts:
     address: 10.20.0.42     # where we connect: an address, or a name THE POD
                             # can resolve (it does not read your ssh_config)
     login: ansible
-    host_key: "ssh-ed25519 AAAA..."   # optional — and it is what protects
-                                      # you from a blind first contact
+    host_key: "ssh-ed25519 AAAA..."   # required for runs to reach it — and
+                                      # it protects you from a blind first contact
 ```
 
 **Assisted** — warden connects and installs the key itself. You supply a
@@ -385,6 +385,16 @@ destroyed when read. Because a spoofed machine would receive it in clear, a run
 with `-k` **verifies host keys strictly** against the declared ones — an
 undeclared machine, or one declared without `host_key`, is refused before the
 password is sent.
+
+**Every run verifies host keys**, with or without `-k`. A run only reaches the
+machines declared with their host key, under their declared name or address —
+assisted enrolment pins it for you. `ansible-runner` used to switch the check
+off on every run; a spoofed machine would then have received the playbook's
+variables, its files and the `-K` password. Upgrading a fleet whose machines are
+not all declared yet: `api.verifierEmpreintes: false` in the chart
+(`WARDEN_HOST_KEY_CHECKING=off`) suspends the check for key runs while you
+declare them — a transition switch, logged at startup, that never applies to
+`-k`.
 
 ---
 
@@ -569,7 +579,8 @@ tooled: replacing a key does **not** remove the old one from any
 `authorized_keys`.
 
 **Trust on first use.** Without a declared `host_key`, the first enrolment
-trusts whatever answers. The fingerprint is captured, displayed and confirmed —
+trusts whatever answers — and every run after it trusts what that enrolment
+pinned. The fingerprint is captured, displayed and confirmed —
 but that first contact is not protected. Prefer `warden host declare` with
 `host_key` in production.
 

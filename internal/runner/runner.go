@@ -159,9 +159,10 @@ func executer(ctx context.Context, ordre wire.Order, espace, token string) error
 		// Le mot de passe d'élévation vient de l'utilisateur, pas du serveur :
 		// il ne relève pas du magasin de l'ADR-0020 et ne fait que transiter.
 		BecomePassword: ordre.BecomePassword.Reveal(),
-		// Le mot de passe de connexion (ADR-0048), même provenance et même
-		// chemin, avec les empreintes qui seules l'autorisent à partir.
+		// Le mot de passe de connexion et les empreintes que chaque run
+		// vérifie (ADR-0048).
 		ConnectionPassword: ordre.ConnectionPassword.Reveal(),
+		HostKeyChecking:    ordre.HostKeyChecking,
 		KnownHosts:         ordre.KnownHosts,
 		// La clé de vault (ADR-0045) ne relève pas non plus du magasin de
 		// l'ADR-0020, mais elle en partage le chemin : émise par le serveur,

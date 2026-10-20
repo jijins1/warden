@@ -70,7 +70,7 @@ func TestLeMotDePasseDeConnexionPartAvecLesEmpreintesDeclarees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ordre2.ConnectionPassword) != 0 || len(ordre2.KnownHosts) != 0 {
+	if len(ordre2.ConnectionPassword) != 0 {
 		t.Error("le mot de passe doit être consommé par sa lecture")
 	}
 }
@@ -90,18 +90,67 @@ func TestSansCatalogueLeMotDePasseNePartPas(t *testing.T) {
 	}
 }
 
-// Sans mot de passe, aucune empreinte : rien ne change pour les runs à clé.
-func TestSansMotDePasseAucuneEmpreinte(t *testing.T) {
+// Un run à clé vérifie AUSSI les empreintes : c'est le défaut (ADR-0048).
+func TestUnRunACleVerifieLesEmpreintes(t *testing.T) {
 	run := runValide()
 	b, _ := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
-	b.AvecEnrolement(machinesFactices{{Name: "m", Environment: run.Environment, HostKey: cleHote}}, nil, &consigneOrdre{})
+	b.AvecMachines(machinesFactices{{Name: "m", Environment: run.Environment, Address: "m", HostKey: cleHote}})
 
 	ordre, err := b.OrderFor(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ordre.KnownHosts) != 0 {
-		t.Error("des empreintes sont parties sans mot de passe")
+	if !ordre.HostKeyChecking || !slices.Equal(ordre.KnownHosts, []string{"m " + cleHote}) {
+		t.Errorf("vérification = %v, empreintes = %q", ordre.HostKeyChecking, ordre.KnownHosts)
+	}
+}
+
+// Sans catalogue, la vérification reste stricte, sur une liste vide : fermé
+// par défaut.
+func TestSansCatalogueLaVerificationResteStricte(t *testing.T) {
+	run := runValide()
+	b, _ := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ordre.HostKeyChecking || len(ordre.KnownHosts) != 0 {
+		t.Errorf("vérification = %v, empreintes = %q", ordre.HostKeyChecking, ordre.KnownHosts)
+	}
+}
+
+// L'interrupteur de transition coupe la vérification des runs à clé…
+func TestLInterrupteurCoupeLaVerificationDesRunsACle(t *testing.T) {
+	run := runValide()
+	b, _ := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	b.AvecMachines(machinesFactices{{Name: "m", Environment: run.Environment, HostKey: cleHote}})
+	b.SansVerifierLesEmpreintes()
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordre.HostKeyChecking || len(ordre.KnownHosts) != 0 {
+		t.Errorf("vérification = %v, empreintes = %q", ordre.HostKeyChecking, ordre.KnownHosts)
+	}
+}
+
+// … mais jamais celle d'un run à mot de passe.
+func TestLInterrupteurNeTouchePasAuxRunsAMotDePasse(t *testing.T) {
+	run := runValide()
+	consigne := &consigneOrdre{}
+	_ = consigne.Stash(t.Context(), core.CleConnexion(run.RunRef), []byte("mdp-ldap"))
+	b, _ := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	b.AvecEnrolement(machinesFactices{{Name: "m", Environment: run.Environment, Address: "m", HostKey: cleHote}}, nil, consigne)
+	b.SansVerifierLesEmpreintes()
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ordre.HostKeyChecking || len(ordre.KnownHosts) != 1 {
+		t.Errorf("un run à mot de passe est parti sans vérification : %v", ordre.HostKeyChecking)
 	}
 }
 
