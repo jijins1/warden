@@ -243,6 +243,19 @@ postgres:
     # Explicite alors que le cluster a une classe par défaut : il en a même DEUX
     # marquées `(default)`, ce qui rend le choix implicite indéterminé.
     storageClass: local-path
+  # Sauvegardes par le plugin Barman Cloud de CNPG (CNPG-I) : archivage continu
+  # des WAL et sauvegarde complète planifiée. Le JOURNAL de l'ADR-0008 n'existe
+  # qu'ici ; une base sans sauvegarde perd l'audit de tous les runs passés.
+  #
+  # La DESTINATION (ObjectStore : bucket, identifiants, rétention) appartient à
+  # l'infrastructure de chaque environnement, pas à la chart : seul son nom est
+  # référencé. Le plugin doit être installé à côté de l'opérateur.
+  backup:
+    enabled: false
+    # Nom de l'ObjectStore (barmancloud.cnpg.io) dans le namespace de la release.
+    objectStoreName: ""
+    # Cron CNPG à SIX champs : les secondes viennent en tête.
+    schedule: "0 0 2 * * *"
 
 database:
   # Le Secret qui porte la chaîne de connexion. CNPG le publie sous ce nom.

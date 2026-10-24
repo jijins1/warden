@@ -37,6 +37,16 @@ spec:
     storageClass: {{ . }}
     {{- end }}
 
+  {{- if .Values.postgres.backup.enabled }}
+  # Le plugin archive les WAL en continu : une restauration peut viser n'importe
+  # quel instant, pas seulement la dernière sauvegarde complète.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ required "postgres.backup.objectStoreName est requis quand postgres.backup.enabled=true" .Values.postgres.backup.objectStoreName | quote }}
+  {{- end }}
+
   # CNPG publie les credentials dans un Secret `<cluster>-app`, dont la clé `uri`
   # est directement la chaîne de connexion attendue par le produit. Rien à
   # recopier, donc rien à désynchroniser.
@@ -64,4 +74,25 @@ spec:
       - name: warden_diff_reader
         ensure: present
         login: false
+{{- if .Values.postgres.backup.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "warden.fullname" . }}-db-daily
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "warden.labels" (dict "component" "database" "root" .) | nindent 4 }}
+spec:
+  schedule: {{ .Values.postgres.backup.schedule | quote }}
+  # Une première sauvegarde dès la création : sans elle, les WAL archivés
+  # n'ont aucune base à laquelle se rejouer avant la première nuit.
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: {{ include "warden.fullname" . }}-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+{{- end }}
 {{- end }}
