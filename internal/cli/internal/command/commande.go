@@ -34,6 +34,11 @@ type Commande struct {
 	// test vérifie la correspondance dans les deux sens.
 	Flags []string
 
+	// Valeurs donne, par drapeau, l'exemple de valeur que la complétion
+	// affiche, quand celui de la table commune ne convient pas à CETTE
+	// commande — `--name` nomme un dépôt ici, une personne là.
+	Valeurs map[string]string
+
 	// Exemples sont des invocations commentées.
 	Exemples []Exemple
 
