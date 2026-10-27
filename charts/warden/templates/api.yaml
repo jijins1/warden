@@ -152,6 +152,10 @@ spec:
             # rôle `controller` inscrit `interrupted / server_task_timeout`.
             - name: WARDEN_RUN_DEADLINE_SECONDS
               value: {{ .Values.api.runDeadlineSeconds | quote }}
+            # Les empreintes des machines déclarées, vérifiées par chaque run
+            # (ADR-0048). `off` n'est qu'une étape de transition.
+            - name: WARDEN_HOST_KEY_CHECKING
+              value: {{ if eq (toString .Values.api.verifierEmpreintes) "false" }}"off"{{ else }}"strict"{{ end }}
           ports:
             - { name: api,      containerPort: {{ include "warden.port.api" . }} }
             - { name: dispatch, containerPort: {{ include "warden.port.dispatch" . }} }

@@ -1,0 +1,15 @@
+@use '../../../styles/blocs' as b;
+
+.bloc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-gap-2);
+}
+
+pre {
+  @include b.carte;
+  margin: 0;
+  overflow-x: auto;
+}
+
+button { align-self: flex-start; }

@@ -570,6 +570,138 @@ func TestSansMotDePasseDElevationAucunExtravars(t *testing.T) {
 	}
 }
 
+// --- le mot de passe de connexion (ADR-0048) ---
+
+func lireExtravars(t *testing.T, cfg exec.Config) map[string]string {
+	t.Helper()
+	brut, err := os.ReadFile(filepath.Join(cfg.PrivateDataDir, "env", "extravars")) // #nosec G304 -- chemin construit par le test
+	if err != nil {
+		t.Fatalf("extravars absentes : %v", err)
+	}
+	var vars map[string]string
+	if err := json.Unmarshal(brut, &vars); err != nil {
+		t.Fatalf("extravars illisibles : %v", err)
+	}
+	return vars
+}
+
+// Le mot de passe part avec une vérification STRICTE des empreintes, sur un
+// known_hosts qui ne contient que les machines déclarées.
+func TestLeMotDePasseDeConnexionExigeLesEmpreintes(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.ConnectionPassword = []byte("mdp-ldap")
+	cfg.KnownHosts = []string{"cible,10.0.0.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemple"}
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	vars := lireExtravars(t, cfg)
+	if vars["ansible_password"] != "mdp-ldap" {
+		t.Errorf("ansible_password absent : %v", vars["ansible_password"] != "")
+	}
+	if vars["ansible_host_key_checking"] != "true" {
+		t.Errorf("vérification des empreintes : %q", vars["ansible_host_key_checking"])
+	}
+	known := filepath.Join(cfg.PrivateDataDir, "known_hosts")
+	for _, option := range []string{"StrictHostKeyChecking=yes", "UserKnownHostsFile=" + known, "GlobalKnownHostsFile=/dev/null"} {
+		if !strings.Contains(vars["ansible_ssh_args"], option) {
+			t.Errorf("ansible_ssh_args sans %s : %q", option, vars["ansible_ssh_args"])
+		}
+	}
+	brut, err := os.ReadFile(known) // #nosec G304 -- chemin construit par le test
+	if err != nil {
+		t.Fatalf("known_hosts absent : %v", err)
+	}
+	if string(brut) != cfg.KnownHosts[0]+"\n" {
+		t.Errorf("known_hosts = %q", brut)
+	}
+}
+
+// Aucune machine déclarée : le known_hosts existe et il est VIDE, donc tout est
+// refusé. Ne pas l'écrire laisserait ssh retomber sur un autre fichier.
+func TestSansMachineDeclareeLeKnownHostsEstVide(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.ConnectionPassword = []byte("mdp-ldap")
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(cfg.PrivateDataDir, "known_hosts"))
+	if err != nil || fi.Size() != 0 {
+		t.Errorf("known_hosts : %v, %v", fi, err)
+	}
+}
+
+// Une entrée ne peut pas en glisser une seconde.
+func TestUneEmpreinteMultiligneEstRefusee(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.ConnectionPassword = []byte("mdp-ldap")
+	cfg.KnownHosts = []string{"cible ssh-ed25519 AAAA\n* ssh-ed25519 BBBB"}
+	if _, _, err := lancer(t, cfg); err == nil {
+		t.Error("une empreinte multiligne a été acceptée")
+	}
+}
+
+// Élévation et connexion cohabitent dans le même fichier.
+func TestLesDeuxMotsDePasseCohabitent(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.BecomePassword = []byte("sudo")
+	cfg.ConnectionPassword = []byte("ldap")
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	vars := lireExtravars(t, cfg)
+	if vars["ansible_become_password"] != "sudo" || vars["ansible_password"] != "ldap" {
+		t.Error("un des deux mots de passe manque")
+	}
+}
+
+// Sans mot de passe de connexion, rien ne change : aucune vérification n'est
+// imposée aux runs à clé, et aucun known_hosts n'est écrit.
+func TestSansMotDePasseDeConnexionRienNeChange(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.BecomePassword = []byte("sudo")
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, ok := lireExtravars(t, cfg)["ansible_ssh_args"]; ok {
+		t.Error("des options ssh ont été imposées à un run sans mot de passe")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.PrivateDataDir, "known_hosts")); err == nil {
+		t.Error("un known_hosts a été écrit sans mot de passe")
+	}
+}
+
+// Un run à clé vérifie aussi les empreintes quand l'ordre le demande, sans
+// qu'aucun mot de passe ne soit posé.
+func TestUnRunACleVerifieLesEmpreintes(t *testing.T) {
+	fauxRunner(t, "flux-succes.jsonl", "")
+
+	cfg := config(t)
+	cfg.HostKeyChecking = true
+	cfg.KnownHosts = []string{"cible ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemple"}
+	if _, _, err := lancer(t, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	vars := lireExtravars(t, cfg)
+	if _, ok := vars["ansible_password"]; ok {
+		t.Error("un mot de passe est apparu sans avoir été fourni")
+	}
+	if vars["ansible_host_key_checking"] != "true" ||
+		!strings.Contains(vars["ansible_ssh_args"], "StrictHostKeyChecking=yes") {
+		t.Errorf("vérification absente : %v", vars)
+	}
+}
+
 // --- la clé de vault (ADR-0045) ---
 
 // Elle va dans `<pdd>/env/vault_password`, et `--vault-password-file` est

@@ -102,6 +102,7 @@ func submit() Commande {
 			"submit --playbook <fichier> [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
 			"submit --playbook <fichier> [--check] [--diff] [--limit <motif>] [-v|-vv|-vvv|-vvvv]",
 			"submit --playbook <fichier> [-b] [--become-user <compte>] [-K]",
+			"submit --playbook <fichier> -u <compte> -k   # machines sans enrôlement (annuaire LDAP)",
 			"submit --playbook <fichier> [-e <nom>=<valeur>]...",
 		},
 		Details: "Le dépôt est celui où vous vous trouvez. `--repo` est inutile quand le\n" +
@@ -141,7 +142,8 @@ func submit() Commande {
 		Flags: []string{"repo", "playbook", "env", "inventory", "run-ref",
 			"check", "diff", "limit", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
-			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
+			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin",
+			"k", "ask-pass", "pass-file", "pass-stdin", "u", "user"},
 		Exemples: []Exemple{
 			{Ligne: "warden submit --playbook play.yml --env prod --inventory hosts"},
 			{Pourquoi: "voir ce qui changerait, sans rien changer",
@@ -192,7 +194,8 @@ func run() Commande {
 		Flags: []string{"repo", "module", "m", "args", "a", "env", "inventory", "run-ref",
 			"check", "diff", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
-			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
+			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin",
+			"k", "ask-pass", "pass-file", "pass-stdin", "u", "user"},
 		Exemples: []Exemple{
 			{Ligne: "warden run all -m ping"},
 			{Pourquoi: "un diagnostic simple sur un groupe",

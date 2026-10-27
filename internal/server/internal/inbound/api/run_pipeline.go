@@ -96,8 +96,9 @@ type runADemarrer struct {
 	AuditSHA, BaseSHA        string
 	MainlineRef, MainlineSHA string
 
-	Effectif       core.Effectif
-	BecomePassword string
+	Effectif           core.Effectif
+	BecomePassword     string
+	ConnectionPassword string
 }
 
 // enregistrerEtDemarrer consigne les secrets, crée le run, le démarre, et
@@ -127,6 +128,22 @@ func (a *Server) enregistrerEtDemarrer(w http.ResponseWriter, r *http.Request, i
 		if err := a.deps.Stash.Stash(r.Context(), core.CleBecome(in.RunRef),
 			[]byte(in.BecomePassword)); err != nil {
 			slog.Error("consigne du mot de passe d'élévation en échec",
+				slog.String("run_ref", in.RunRef), slog.String("error", err.Error()))
+			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Le mot de passe de connexion (ADR-0048), même chemin et même raison.
+	if in.ConnectionPassword != "" {
+		if a.deps.Stash == nil {
+			http.Error(w, "connection password is not supported on this deployment",
+				http.StatusNotImplemented)
+			return
+		}
+		if err := a.deps.Stash.Stash(r.Context(), core.CleConnexion(in.RunRef),
+			[]byte(in.ConnectionPassword)); err != nil {
+			slog.Error("consigne du mot de passe de connexion en échec",
 				slog.String("run_ref", in.RunRef), slog.String("error", err.Error()))
 			http.Error(w, "could not prepare the run", http.StatusInternalServerError)
 			return

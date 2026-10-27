@@ -482,7 +482,11 @@ func TestRunsByHostSupporteUnRunDEnrolement(t *testing.T) {
 	}
 	defer s.Close()
 
-	user := mustUser(t, ctx, s, "test")
+	// Un nom distinct du sujet, pour qu'un Scan qui les intervertit se voie.
+	user, err := s.UpsertUser(ctx, store.Identity{Type: core.UserLocal, Subject: "test", DisplayName: "Test User"})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
 	id := mustCreateRun(t, ctx, s, runRef(t, "005"), user.ID, "prod", "inv", "play.yml")
 	if err := s.MarkRunning(ctx, id, "pod-test"); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
@@ -512,6 +516,9 @@ func TestRunsByHostSupporteUnRunDEnrolement(t *testing.T) {
 	}
 	if len(runs) != 1 {
 		t.Fatalf("%d runs, attendu 1", len(runs))
+	}
+	if a := runs[0].Auteur; a.Subject != "test" || a.DisplayName != "Test User" {
+		t.Errorf("auteur = %+v, attendu test / Test User", a)
 	}
 }
 

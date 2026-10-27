@@ -1,11 +1,17 @@
 package keyinventory
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/jijins1/warden/internal/server/internal/core"
 )
 
 // ErrPassphrase signale une clé privée protégée par une phrase secrète.
@@ -62,4 +68,50 @@ func ligneAutorisee(pub ssh.PublicKey) string {
 // retirer.
 func avecCommentaire(ligne, environnement string) string {
 	return fmt.Sprintf("%s warden-%s", ligne, environnement)
+}
+
+// frapper tire une paire ed25519 et rend la partie privée encodée, la ligne
+// `authorized_keys` commentée et l'empreinte.
+//
+// ed25519 et non RSA : clé courte, signature rapide, et acceptée par tout
+// OpenSSH depuis 6.5 (2014). Le choix ne se discute que si une cible refuse
+// l'algorithme, ce qui se verrait à l'enrôlement et pas en production.
+func frapper(environment string) (privee []byte, publique, empreinte string, err error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("frappe de la clé de %s: %w", environment, err)
+	}
+
+	bloc, err := ssh.MarshalPrivateKey(priv, "warden "+environment)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("encodage de la clé de %s: %w", environment, err)
+	}
+
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("partie publique de %s: %w", environment, err)
+	}
+
+	return pem.EncodeToMemory(bloc),
+		avecCommentaire(ligneAutorisee(sshPub), environment),
+		ssh.FingerprintSHA256(sshPub), nil
+}
+
+// cataloguer écrit le descripteur PUIS le relit.
+//
+// Le descripteur est RELU après écriture, et ce n'est pas de la
+// superstition : `created_at` et `rotated_at` sont posées par la BASE, donc
+// celui qu'on vient de composer les porte à zéro. Le rendre tel quel
+// affichait « posée le 0001-01-01 » à l'utilisateur.
+//
+// Une relecture qui échoue ne fait pas échouer la pose : la clé EST
+// installée, et prétendre le contraire enverrait l'opérateur la reposer.
+func cataloguer(ctx context.Context, catalogue core.KeyCatalog, d core.KeyDescriptor) (core.KeyDescriptor, error) {
+	if err := catalogue.SaveKey(ctx, d); err != nil {
+		return core.KeyDescriptor{}, err
+	}
+	if relu, err := catalogue.KeyByEnvironment(ctx, d.Environment); err == nil {
+		return relu, nil
+	}
+	return d, nil
 }

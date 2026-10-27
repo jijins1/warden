@@ -1,0 +1,17 @@
+@use '../../../styles/blocs' as b;
+
+.faits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--w-gap-3);
+  margin: 0;
+}
+
+dt {
+  @include b.etiquette;
+  margin-bottom: var(--w-gap-1);
+}
+
+dd { margin: 0; word-break: break-all; }
+
+.absente { margin: 0; }

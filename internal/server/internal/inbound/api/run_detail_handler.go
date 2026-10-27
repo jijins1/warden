@@ -28,6 +28,11 @@ type runDetail struct {
 	Inventory   string `json:"inventory,omitempty"`
 	Playbook    string `json:"playbook,omitempty"`
 
+	// Author nomme le compte qui a lancé le run. Depuis que la liste montre les
+	// runs d'autrui sur les environnements partagés, « qui » est la première
+	// question qu'on pose à un run qu'on n'a pas lancé.
+	Author runAuthor `json:"author"`
+
 	// Flags dit sous quels drapeaux le run a tourné (§5.5). Absent quand il n'y
 	// en avait pas, ce qui est le cas de la quasi-totalité des runs.
 	//
@@ -70,6 +75,12 @@ type runDetail struct {
 	ArtifactPrunedAt *string `json:"artifact_pruned_at,omitempty"`
 }
 
+// runAuthor est core.Auteur dans la convention de ce contrat.
+type runAuthor struct {
+	Subject     string `json:"subject"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
 // HandleGetRun rend un run seul.
 //
 // GET /runs/{run_ref} — la route qui manquait, et son absence cassait la
@@ -107,6 +118,7 @@ func versRunDetail(run core.Run) runDetail {
 		Environment:      run.Environment,
 		Inventory:        run.Inventory,
 		Playbook:         run.Playbook,
+		Author:           runAuthor{Subject: run.Auteur.Subject, DisplayName: run.Auteur.DisplayName},
 		Flags:            run.Flags,
 		Kind:             genre,
 		AuditSHA:         run.AuditSHA,

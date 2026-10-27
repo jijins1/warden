@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG } from '../config/app-config';
-import { KeyDescriptor } from './wire';
+import { KeyDescriptor, MesEnvironnements } from './wire';
 
 @Injectable({ providedIn: 'root' })
 export class EnvironmentsService {
@@ -16,5 +16,17 @@ export class EnvironmentsService {
    */
   async lister(): Promise<KeyDescriptor[]> {
     return firstValueFrom(this.#http.get<KeyDescriptor[]>(`${this.#base}/admin/keys`));
+  }
+
+  /**
+   * `GET /environments` — les environnements sur lesquels l'APPELANT a un droit
+   * vivant. Ouvert à tout compte, contrairement à `lister` : c'est la portée de
+   * ses propres runs et de ses clés de vault, pas la carte de l'organisation.
+   */
+  async mesEnvironnements(): Promise<string[]> {
+    const r = await firstValueFrom(
+      this.#http.get<MesEnvironnements>(`${this.#base}/environments`),
+    );
+    return r.environments ?? [];
   }
 }

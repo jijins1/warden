@@ -39,6 +39,19 @@ export interface RunDetail {
   playbook?: string;
   kind: RunKind;
 
+  /** Le compte qui a lancé le run. `subject` fait foi ; le nom peut manquer. */
+  author: { subject: string; display_name?: string };
+
+  /**
+   * Les drapeaux du run, dans l'ordre de `FlagsAnsible.Composer` : options
+   * d'abord, `--extra-vars=nom=valeur` en dernier. Absent sans drapeau.
+   *
+   * Les valeurs d'`extra_vars` y sont EN CLAIR, et c'est voulu (ADR-0039) :
+   * elles sont auditées. Les secrets passent par `forward_env`, dont les
+   * valeurs ne sont jamais enregistrées — elles n'ont donc rien à faire ici.
+   */
+  flags?: string[];
+
   audit_sha?: string;
   base_sha?: string;
   mainline_ref?: string;
@@ -70,6 +83,8 @@ export interface RunDetail {
  */
 export interface RunListItem {
   RunRef: string;
+  /** Le compte qui a lancé le run — `core.Auteur`, sérialisé tel quel. */
+  Author: { Subject: string; DisplayName: string };
   Repo: string;
   Environment: string;
   Inventory: string;
@@ -168,6 +183,45 @@ export interface KeyDescriptor {
  */
 export interface ProtectedEnvironments {
   environments: string[];
+}
+
+/**
+ * `GET /environments` — api/environments_handler.go.
+ *
+ * Les environnements sur lesquels l'appelant a un droit VIVANT : la portée de
+ * ses runs (`VisibleRunFilter`) et de ses clés de vault. Être administrateur
+ * n'y ajoute rien.
+ */
+export interface MesEnvironnements {
+  environments: string[];
+}
+
+/**
+ * `GET|POST /environments/{env}/vault` — api/vault_handler.go, `vaultKeyPayload`.
+ *
+ * Aucun champ ne porte la clé en clair, et aucun n'en portera (ADR-0045).
+ */
+export interface VaultKeyDescriptor {
+  environment: string;
+  fingerprint: string;
+  origin: KeyOrigin;
+  created_at: string;
+  rotated_at?: string;
+}
+
+/** `POST /environments/{env}/vault` — `putVaultKeyPayload`. Les deux modes sont exclusifs. */
+export type PoseCleDeVault = { generate: true } | { plaintext: string };
+
+/** `POST /environments/{env}/vault/encrypt` — `encryptPayload`. */
+export interface ChiffrementVault {
+  var_name: string;
+  plaintext: string;
+}
+
+/** Réponse de `POST /environments/{env}/vault/encrypt` — `encryptedPayload`. */
+export interface BlocVault {
+  /** `nom: !vault |` suivi du texte chiffré, prêt à coller dans un YAML. */
+  block: string;
 }
 
 /**

@@ -1,6 +1,6 @@
 <section class="page">
   <a class="retour" routerLink="/runs">
-    <mat-icon>arrow_back</mat-icon><span>My runs</span>
+    <mat-icon>arrow_back</mat-icon><span>Runs</span>
   </a>
 
   @if (chargement()) {
@@ -72,6 +72,10 @@
         <dd class="w-mono">{{ r.run_ref }}</dd>
       </div>
       <div>
+        <dt>Launched by</dt>
+        <dd><w-auteur [subject]="r.author.subject" [displayName]="r.author.display_name" /></dd>
+      </div>
+      <div>
         <dt>Repository</dt>
         <dd class="w-mono">{{ r.repo }}</dd>
       </div>
@@ -106,6 +110,8 @@
         <dd class="w-mono">{{ r.started_at | duree: r.ended_at }}</dd>
       </div>
     </dl>
+
+    <w-run-parametres [flags]="r.flags ?? []" />
 
     @if (flux(); as f) {
       <w-event-stream [flux]="f" [runRef]="r.run_ref" />

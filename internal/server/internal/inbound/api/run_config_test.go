@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -281,5 +282,25 @@ func TestSansExtraVarsDansLeCommitAucuneNePasse(t *testing.T) {
 	w := posterRun(t, s, administrateur(), corpsRun(`"flags":["--extra-vars=version=1"]`))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("statut %d, attendu 400 : %s", w.Code, w.Body.String())
+	}
+}
+
+// Le mot de passe de connexion part en consigne, sous sa propre clé, et
+// n'entre pas dans le run (ADR-0048).
+func TestRunConsigneLeMotDePasseDeConnexion(t *testing.T) {
+	s, c, consigne, _ := monterAvecConfigProjet(t, "default_env: staging\n")
+
+	w := posterRun(t, s, administrateur(), corpsRun(`"connection_password":"mdp-ldap"`))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("statut %d : %s", w.Code, w.Body.String())
+	}
+	if string(consigne.valeurs[core.CleConnexion(runAlice)]) != "mdp-ldap" {
+		t.Error("le mot de passe de connexion n'a pas été consigné")
+	}
+	if len(c.recus) != 1 {
+		t.Fatalf("%d runs créés", len(c.recus))
+	}
+	if strings.Contains(fmt.Sprintf("%+v", c.recus[0]), "mdp-ldap") {
+		t.Error("le mot de passe est entré dans le run")
 	}
 }

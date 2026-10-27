@@ -2,14 +2,11 @@ package vaultinventory
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 
-	ansiblevault "github.com/sosedoff/ansible-vault-go"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -115,15 +112,10 @@ func (k *Kubernetes) Generate(ctx context.Context, environment string, by int64)
 		return core.VaultKeyDescriptor{}, err
 	}
 
-	brut := make([]byte, tailleMotDePasse)
-	if _, err := rand.Read(brut); err != nil {
-		return core.VaultKeyDescriptor{}, fmt.Errorf("tirage de la clé de vault de %s: %w", environment, err)
+	plaintext, err := tirer(environment)
+	if err != nil {
+		return core.VaultKeyDescriptor{}, err
 	}
-	// Encodé en texte : `ansible-vault` prend un mot de passe, pas des octets
-	// bruts, et base64 URL-safe évite tout caractère qui poserait problème
-	// dans un fichier de mot de passe collé à la main.
-	plaintext := []byte(base64.RawURLEncoding.EncodeToString(brut))
-
 	return k.poser(ctx, environment, plaintext, core.VaultKeyGenerated, by)
 }
 
@@ -134,14 +126,6 @@ func (k *Kubernetes) Generate(ctx context.Context, environment string, by int64)
 func (k *Kubernetes) Describe(ctx context.Context, environment string) (core.VaultKeyDescriptor, error) {
 	return k.catalogue.VaultKeyByEnvironment(ctx, environment)
 }
-
-// indentationEncryptString est l'indentation que `ansible-vault
-// encrypt_string` pose devant chaque ligne du bloc chiffré.
-//
-// MESURÉ contre la sortie de `ansible-vault encrypt_string` : elle est fixe,
-// dix espaces, quelle que soit la longueur du nom de variable qui précède
-// `!vault |`.
-const indentationEncryptString = "          "
 
 // EncryptString chiffre une valeur avec la clé de l'environnement et rend le
 // bloc `!vault |` prêt à coller dans un fichier YAML.
@@ -154,25 +138,7 @@ func (k *Kubernetes) EncryptString(ctx context.Context, environment string, plai
 	if err != nil {
 		return "", err
 	}
-
-	// Format du corps chiffré délégué à une bibliothèque tierce plutôt que
-	// réimplémenté : l'algorithme `$ANSIBLE_VAULT;1.1;AES256` (PBKDF2-HMAC-
-	// SHA256, AES-256-CTR, HMAC-SHA256 en chiffrement-puis-authentification)
-	// est un format à interopérabilité stricte avec Ansible — une erreur d'un
-	// octet dans une implémentation maison ne se verrait qu'au déchiffrement,
-	// en production.
-	corps, err := ansiblevault.Encrypt(string(plaintext), string(cle.Reveal()))
-	if err != nil {
-		return "", fmt.Errorf("chiffrement pour %s: %w", environment, err)
-	}
-
-	var indente []byte
-	for _, ligne := range splitLignes(corps) {
-		indente = append(indente, indentationEncryptString...)
-		indente = append(indente, ligne...)
-		indente = append(indente, '\n')
-	}
-	return fmt.Sprintf("%s: !vault |\n%s", varName, indente), nil
+	return chiffrer(environment, cle, plaintext, varName)
 }
 
 // splitLignes découpe sur `\n`, sans dépendre de `strings.Split` pour un
@@ -226,21 +192,11 @@ func (k *Kubernetes) poser(ctx context.Context, environment string,
 		return core.VaultKeyDescriptor{}, fmt.Errorf("écriture de la clé de vault de %s: %w", environment, err)
 	}
 
-	d := core.VaultKeyDescriptor{
+	return cataloguer(ctx, k.catalogue, core.VaultKeyDescriptor{
 		Environment: environment,
 		Fingerprint: empreinte,
 		SecretName:  nom,
 		Origin:      origine,
 		CreatedBy:   by,
-	}
-	if err := k.catalogue.SaveVaultKey(ctx, d); err != nil {
-		return core.VaultKeyDescriptor{}, err
-	}
-
-	// Relu après écriture pour la même raison que `keyinventory` : `created_at`
-	// et `rotated_at` sont posées par la base.
-	if relu, err := k.catalogue.VaultKeyByEnvironment(ctx, environment); err == nil {
-		return relu, nil
-	}
-	return d, nil
+	})
 }

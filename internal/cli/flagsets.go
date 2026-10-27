@@ -99,6 +99,11 @@ type drapeauxSubmit struct {
 	repo, playbook, environnement, inventaire, runRef *string
 	become                                            *prompt.Source
 
+	// connexion est la saisie du mot de passe de connexion SSH (`-k`), et
+	// compte le compte distant (`-u`) — ADR-0048.
+	connexion *prompt.Source
+	compte    *string
+
 	// Les trois du §5.5 que l'ADR-0038 ouvre. Ils portent LE MÊME NOM que chez
 	// `ansible-playbook`, et ce n'est pas de la coquetterie : la commande se
 	// retrouve dans un historique de shell, et un `--dry-run` qui veut dire
@@ -160,6 +165,13 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
 	// `-K` est le nom qu'`ansible-playbook` lui donne. Voir Abreger.
 	f.become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	// `-k` et `-u` sont les noms d'`ansible-playbook` : le mot de passe de
+	// connexion et le compte distant, pour les machines où chacun se connecte
+	// en son nom (annuaire LDAP, ADR-0048).
+	f.connexion = prompt.Declarer(fs, "pass", "le mot de passe de connexion")
+	f.connexion.Abreger(fs, "k", "abréviation d'--ask-pass, comme ansible-playbook")
+	f.compte = fs.String("user", "", "compte distant, pour les machines dont l'inventaire ne le nomme pas")
+	fs.StringVar(f.compte, "u", "", "abréviation de --user, comme ansible-playbook")
 	return fs, f
 }
 
@@ -171,6 +183,9 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 type drapeauxRun struct {
 	repo, environnement, inventaire, runRef *string
 	become                                  *prompt.Source
+
+	connexion *prompt.Source
+	compte    *string
 
 	module, args *string
 
@@ -216,6 +231,13 @@ func fsRun() (*flag.FlagSet, drapeauxRun) {
 	fs.Var(f.extraVars, "extra-vars", "identique à -e")
 	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
 	f.become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	// `-k` et `-u` sont les noms d'`ansible-playbook` : le mot de passe de
+	// connexion et le compte distant, pour les machines où chacun se connecte
+	// en son nom (annuaire LDAP, ADR-0048).
+	f.connexion = prompt.Declarer(fs, "pass", "le mot de passe de connexion")
+	f.connexion.Abreger(fs, "k", "abréviation d'--ask-pass, comme ansible-playbook")
+	f.compte = fs.String("user", "", "compte distant, pour les machines dont l'inventaire ne le nomme pas")
+	fs.StringVar(f.compte, "u", "", "abréviation de --user, comme ansible-playbook")
 	return fs, f
 }
 

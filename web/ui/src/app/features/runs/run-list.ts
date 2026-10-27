@@ -6,21 +6,23 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { EnvironmentsService } from '../../core/api/environments.service';
 import { FiltreRuns, RunsService } from '../../core/api/runs.service';
 import { RunListItem } from '../../core/api/wire';
 import { ApiError } from '../../core/http/api-error';
 import { StateChip } from '../../shared/state-chip/state-chip';
 import { EnvBadge } from '../../shared/env-badge/env-badge';
+import { Auteur } from '../../shared/auteur/auteur';
 import { DureePipe } from '../../shared/pipes/duree.pipe';
 
 /**
- * Mes runs.
+ * Les runs que l'appelant peut voir.
  *
- * « Mes », et le titre le dit : le serveur RESTREINT la liste à l'appelant —
- * `VisibleRunFilter` écrase le propriétaire au lieu de le valider, de sorte
- * qu'aucun paramètre ne peut élargir la portée. Intituler cet écran « Runs »
- * laisserait croire à une vue de parc, qui n'existe pas et dont l'absence est
- * une décision de politique, pas une lacune d'interface.
+ * Les siens, et TOUS ceux des environnements sur lesquels il a un droit vivant,
+ * quel qu'en soit l'auteur — la portée est posée par le serveur
+ * (`VisibleRunFilter`), qui écrase le propriétaire au lieu de le valider : aucun
+ * paramètre ne l'élargit, et être administrateur non plus. Ce n'est pas une vue
+ * de parc.
  */
 @Component({
   selector: 'w-run-list',
@@ -30,6 +32,7 @@ import { DureePipe } from '../../shared/pipes/duree.pipe';
     DureePipe,
     StateChip,
     EnvBadge,
+    Auteur,
     MatButtonModule,
     MatIconModule,
     MatProgressBarModule,
@@ -41,6 +44,7 @@ import { DureePipe } from '../../shared/pipes/duree.pipe';
 })
 export class RunList {
   readonly #runs = inject(RunsService);
+  readonly #environnements = inject(EnvironmentsService);
   readonly #route = inject(ActivatedRoute);
   readonly #router = inject(Router);
 
@@ -50,6 +54,8 @@ export class RunList {
   protected readonly erreur = signal<string | null>(null);
   /** Faux tant que la première page n'a pas répondu : distingue « vide » de « pas encore ». */
   protected readonly charge = signal(false);
+  /** Les environnements de l'appelant, pour le filtre. Vide tant qu'ils ne sont pas lus. */
+  protected readonly environnements = signal<string[]>([]);
 
   /**
    * Les filtres sont dans l'URL, donc la vue se PARTAGE.
@@ -70,6 +76,20 @@ export class RunList {
       this.filtre();
       void this.recharger();
     });
+    void this.#chargerEnvironnements();
+  }
+
+  /**
+   * Un échec ici n'est PAS une erreur d'écran : la liste reste juste, le filtre
+   * manque. L'annoncer en rouge au-dessus de runs bien chargés ferait douter
+   * des runs.
+   */
+  async #chargerEnvironnements(): Promise<void> {
+    try {
+      this.environnements.set(await this.#environnements.mesEnvironnements());
+    } catch {
+      this.environnements.set([]);
+    }
   }
 
   /** Première page : remplace tout. */
@@ -103,8 +123,17 @@ export class RunList {
     void this.#appliquer({ changed_min: actif ? null : 1 });
   }
 
+  protected basculerMiens(): void {
+    const actif = this.filtre()['mine'] === '1';
+    void this.#appliquer({ mine: actif ? null : 1 });
+  }
+
   protected filtrerEtat(etat: string | null): void {
     void this.#appliquer({ state: etat });
+  }
+
+  protected filtrerEnvironnement(env: string | null): void {
+    void this.#appliquer({ env });
   }
 
   private async charger(cursor: string | undefined, remplace: boolean): Promise<void> {
@@ -135,6 +164,7 @@ export class RunList {
       since: q['since'] ?? undefined,
       until: q['until'] ?? undefined,
       changed_min: Number.isFinite(changed) && changed > 0 ? changed : undefined,
+      mine: q['mine'] === '1' ? 1 : undefined,
     };
   }
 }

@@ -41,6 +41,12 @@ type FlagsAnsible struct {
 	// d'Ansible — `root`. Il n'a de sens qu'avec Become.
 	BecomeUser string
 
+	// User est `--user`, le `-u` d'Ansible : le compte distant, vide pour
+	// celui de l'inventaire (ADR-0048). De priorité inférieure à
+	// `ansible_user`, il ne s'applique qu'aux machines dont l'inventaire ne
+	// nomme pas le compte.
+	User string
+
 	// Limit est la valeur de `--limit`, vide quand il n'a pas été demandé.
 	Limit string
 
@@ -117,6 +123,12 @@ func (f FlagsAnsible) Composer() ([]string, error) {
 			return nil, fmt.Errorf("--become-user %q : un nom de compte est attendu", f.BecomeUser)
 		}
 		flags = append(flags, "--become-user="+f.BecomeUser)
+	}
+	if f.User != "" {
+		if !motifCompte.MatchString(f.User) {
+			return nil, fmt.Errorf("--user %q : un nom de compte est attendu", f.User)
+		}
+		flags = append(flags, "--user="+f.User)
 	}
 	if f.Verbosite > 0 {
 		if f.Verbosite > VerbositeMax {

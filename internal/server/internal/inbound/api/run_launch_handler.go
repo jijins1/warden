@@ -35,8 +35,9 @@ type launchRunPayload struct {
 	// son décodage EST une validation (ADR-0038), et core.FlagsDemandes la fait.
 	Flags json.RawMessage `json:"flags,omitempty"`
 
-	BecomePassword string            `json:"become_password,omitempty"`
-	ForwardEnv     map[string]string `json:"forward_env,omitempty"`
+	BecomePassword     string            `json:"become_password,omitempty"`
+	ConnectionPassword string            `json:"connection_password,omitempty"`
+	ForwardEnv         map[string]string `json:"forward_env,omitempty"`
 }
 
 // HandleLaunchRun lance un run sur la branche protégée, sans qu'aucun client ne
@@ -195,5 +196,6 @@ func (a *Server) HandleLaunchRun(w http.ResponseWriter, r *http.Request) {
 		AuditSHA: mainlineSHA, BaseSHA: mainlineSHA,
 		MainlineRef: repo.MainlineRef, MainlineSHA: mainlineSHA,
 		Effectif: effectif, BecomePassword: payload.BecomePassword,
+		ConnectionPassword: payload.ConnectionPassword,
 	})
 }

@@ -1,0 +1,50 @@
+// Les blocs communs aux écrans : la carte, l'étiquette de fait, les segments.
+//
+// Des mixins et non des classes globales, comme `_table.scss` : le composant
+// qui les inclut choisit ses sélecteurs, et l'encapsulation d'Angular reste
+// intacte.
+
+// Un bloc encadré : la page d'un run, un formulaire, un panneau.
+@mixin carte {
+  padding: var(--w-gap-4);
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-lg);
+  background: var(--mat-sys-surface-container-low);
+}
+
+// Le titre d'un fait ou d'une section, en petites capitales.
+@mixin etiquette {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+// Un choix exclusif en rangée de boutons accolés — état, environnement.
+@mixin segments {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--w-radius-md);
+  overflow: hidden;
+
+  button {
+    padding: 5px 11px;
+    border: none;
+    border-right: 1px solid var(--mat-sys-outline-variant);
+    background: var(--mat-sys-surface-container-low);
+    color: var(--mat-sys-on-surface-variant);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+
+    &:last-child { border-right: none; }
+    &:hover { background: var(--mat-sys-surface-container-high); }
+    &.actif {
+      background: var(--w-primary-bg);
+      color: var(--mat-sys-on-surface);
+      font-weight: 600;
+    }
+  }
+}

@@ -1,6 +1,7 @@
 @use '../../../styles/table' as t;
+@use '../../../styles/blocs' as b;
 
-@include t.table-de-runs(108px minmax(160px, 1fr) 108px minmax(190px, auto) 82px 84px 66px);
+@include t.table-de-runs(108px minmax(160px, 1fr) 108px minmax(90px, 140px) minmax(190px, auto) 82px 84px 66px);
 @include t.encarts;
 
 .entete {
@@ -29,29 +30,7 @@ h1 {
 }
 
 .segments {
-  display: inline-flex;
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: var(--w-radius-md);
-  overflow: hidden;
-
-  button {
-    padding: 5px 11px;
-    border: none;
-    border-right: 1px solid var(--mat-sys-outline-variant);
-    background: var(--mat-sys-surface-container-low);
-    color: var(--mat-sys-on-surface-variant);
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
-
-    &:last-child { border-right: none; }
-    &:hover { background: var(--mat-sys-surface-container-high); }
-    &.actif {
-      background: var(--w-primary-bg);
-      color: var(--mat-sys-on-surface);
-      font-weight: 600;
-    }
-  }
+  @include b.segments;
 }
 
 button.actif { background: var(--w-primary-bg); }

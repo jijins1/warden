@@ -1,8 +1,9 @@
 <section class="page">
   <header class="entete">
-    <h1>My runs</h1>
+    <h1>Runs</h1>
     <p class="sous-titre">
-      Scoped to you by the server. Being an administrator does not widen it.
+      Yours, and every run on the environments you have access to. Being an
+      administrator does not widen it.
     </p>
   </header>
 
@@ -12,6 +13,13 @@
       [class.actif]="filtre()['changed_min'] === '1'"
       (click)="basculerChanges()">
       Changed only
+    </button>
+
+    <button
+      mat-stroked-button
+      [class.actif]="filtre()['mine'] === '1'"
+      (click)="basculerMiens()">
+      Mine only
     </button>
 
     <span class="segments">
@@ -24,6 +32,19 @@
         </button>
       }
     </span>
+
+    @if (environnements().length > 0) {
+      <span class="segments" aria-label="Environment">
+        @for (env of environnements(); track env) {
+          <button
+            type="button"
+            [class.actif]="filtre()['env'] === env"
+            (click)="filtrerEnvironnement(filtre()['env'] === env ? null : env)">
+            {{ env }}
+          </button>
+        }
+      </span>
+    }
 
     <span class="espace"></span>
     <span class="compte w-mono">{{ items().length }} shown</span>
@@ -53,6 +74,7 @@
         <span role="columnheader">Run</span>
         <span role="columnheader">Playbook</span>
         <span role="columnheader">Environment</span>
+        <span role="columnheader">By</span>
         <span role="columnheader">State</span>
         <span role="columnheader" class="droite">Changed</span>
         <span role="columnheader" class="droite">Duration</span>
@@ -78,6 +100,10 @@
           </span>
 
           <span role="cell"><w-env-badge [env]="run.Environment" /></span>
+
+          <span role="cell" class="attenue">
+            <w-auteur [subject]="run.Author.Subject" [displayName]="run.Author.DisplayName" />
+          </span>
 
           <span role="cell">
             <w-state-chip [state]="run.State" [cause]="run.TerminationCause" />

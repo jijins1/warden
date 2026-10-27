@@ -279,6 +279,131 @@ func TestListRunsShowsEnvironmentWideWithGrant(t *testing.T) {
 	}
 }
 
+// TestListRunsWithoutEnvironmentCoversGrants verifies that /runs with no
+// environment named returns the caller's own runs AND every run on an
+// environment they hold a live grant on — and nothing on the others. It is the
+// home screen of the UI: without this, a teammate's run on a shared
+// environment was only reachable by typing ?env= by hand.
+func TestListRunsWithoutEnvironmentCoversGrants(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+
+	h.createRun(t, ctx)
+
+	other, err := h.store.UpsertUser(ctx, core.Identity{
+		Type: core.UserLocal, Subject: "mallory", DisplayName: "Mallory",
+	})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	const surProd, surStaging = "01JZQ0000000000000000006ND", "01JZQ0000000000000000007ND"
+	for ref, env := range map[string]string{surProd: "prod", surStaging: "staging"} {
+		if _, err := h.store.CreateRun(ctx, store.NewRun{
+			RunRef:      ref,
+			UserID:      other.ID,
+			Repo:        "warden",
+			Environment: env,
+			Inventory:   "inv/" + env,
+			Playbook:    "deploy.yml",
+			AuditSHA:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			BaseSHA:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			MainlineRef: "refs/heads/main",
+			MainlineSHA: "cccccccccccccccccccccccccccccccccccccccc",
+		}); err != nil {
+			t.Fatalf("CreateRun %s: %v", env, err)
+		}
+	}
+	if _, err := h.store.Grant(ctx, h.userSubject, "prod", other.ID); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	resp := h.get(t, "/runs", h.userSubject)
+	var result core.RunListResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	vus := map[string]bool{}
+	for _, run := range result.Runs {
+		vus[run.RunRef] = true
+		if run.UserID != h.userID && run.Environment != "prod" {
+			t.Errorf("listing leaked run %s on %s, no grant there", run.RunRef, run.Environment)
+		}
+	}
+	if !vus[surProd] {
+		t.Errorf("mallory's run on prod is missing despite the grant, got %+v", result.Runs)
+	}
+	if vus[surStaging] {
+		t.Errorf("mallory's run on staging is listed without a grant")
+	}
+	if len(result.Runs) != 2 {
+		t.Errorf("expected the caller's run and mallory's prod run, got %d runs", len(result.Runs))
+	}
+	for _, run := range result.Runs {
+		if run.RunRef == surProd && (run.Auteur.Subject != "mallory" || run.Auteur.DisplayName != "Mallory") {
+			t.Errorf("mallory's run must name its author, got %+v", run.Auteur)
+		}
+	}
+
+	// Le détail le nomme aussi : c'est la question qu'on pose à un run qu'on
+	// n'a pas lancé.
+	resp = h.get(t, "/runs/"+surProd, h.userSubject)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /runs/%s: expected 200 with a grant, got %d", surProd, resp.StatusCode)
+	}
+	var detail struct {
+		Author struct {
+			Subject     string `json:"subject"`
+			DisplayName string `json:"display_name"`
+		} `json:"author"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatalf("decoding detail: %v", err)
+	}
+	if detail.Author.Subject != "mallory" || detail.Author.DisplayName != "Mallory" {
+		t.Errorf("run detail must name its author, got %+v", detail.Author)
+	}
+
+	// mine=1 ramène la liste aux runs de l'appelant, droits ou pas.
+	resp = h.get(t, "/runs?mine=1", h.userSubject)
+	var mine core.RunListResult
+	if err := json.NewDecoder(resp.Body).Decode(&mine); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(mine.Runs) != 1 || mine.Runs[0].UserID != h.userID {
+		t.Errorf("mine=1 must list only the caller's runs, got %+v", mine.Runs)
+	}
+}
+
+// TestListMyEnvironmentsReturnsLiveGrants verifies that GET /environments lists
+// the caller's live grants only: a revoked grant drops out of it.
+func TestListMyEnvironmentsReturnsLiveGrants(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+
+	for _, env := range []string{"staging", "prod"} {
+		if _, err := h.store.Grant(ctx, h.userSubject, env, h.userID); err != nil {
+			t.Fatalf("Grant %s: %v", env, err)
+		}
+	}
+	if err := h.store.Revoke(ctx, h.userSubject, "staging"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	resp := h.get(t, "/environments", h.userSubject)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Environments []string `json:"environments"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(out.Environments) != 1 || out.Environments[0] != "prod" {
+		t.Errorf("expected [prod], got %v", out.Environments)
+	}
+}
+
 // TestListPlaybooksByHostHonorsEnvironmentGrant mirrors
 // TestListByHostHonorsEnvironmentGrant for the deduplicated playbook view: a
 // non-owned playbook is hidden without a grant on its environment, shown with

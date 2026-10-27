@@ -50,6 +50,12 @@ type EnvironmentGrants interface {
 	// lui-même — c'est-à-dire à dupliquer la règle.
 	PeutAtteindre(ctx context.Context, userID int64, environment string) (bool, error)
 
+	// EnvironnementsAtteignables rend, triés, les environnements sur lesquels
+	// l'utilisateur a un droit VIVANT. Même règle que PeutAtteindre, posée sur
+	// tous les environnements à la fois : c'est ce qui permet de lister les runs
+	// de chacun sans une question par environnement.
+	EnvironnementsAtteignables(ctx context.Context, userID int64) ([]string, error)
+
 	// ListGrants rend les droits, tous ou ceux d'un compte. Les RÉVOQUÉS sont
 	// inclus : c'est une vue d'audit, pas une liste de ce qui est permis.
 	ListGrants(ctx context.Context, subject string) ([]EnvironmentGrant, error)

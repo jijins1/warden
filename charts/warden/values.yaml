@@ -121,6 +121,16 @@ api:
   # qui ne dépende d'aucun processus du produit.
   runDeadlineSeconds: 7200
 
+  # Vérification des empreintes SSH par les runs (ADR-0048).
+  #
+  # Chaque run ne joint que les machines DÉCLARÉES avec leur clé d'hôte
+  # (`warden host declare`, ou un enrôlement assisté) ; les autres sont
+  # refusées par ssh. `false` coupe la vérification des runs à clé, le temps
+  # de compléter les déclarations d'une flotte existante — c'est un
+  # interrupteur de TRANSITION. Les runs à mot de passe (`-k`) vérifient
+  # toujours.
+  verifierEmpreintes: true
+
   resources: {}
 
 git:

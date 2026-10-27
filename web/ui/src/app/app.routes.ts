@@ -17,7 +17,7 @@ export const routes: Routes = [
     children: [
       {
         path: 'runs',
-        title: 'My runs — warden',
+        title: 'Runs — warden',
         loadComponent: () => import('./features/runs/run-list').then((m) => m.RunList),
       },
       {
@@ -52,6 +52,19 @@ export const routes: Routes = [
         path: 'hosts/:host',
         title: 'Runs by machine — warden',
         loadComponent: () => import('./features/hosts/host-runs').then((m) => m.HostRuns),
+      },
+      {
+        // `authGuard` seul, comme `runs/new` : la clé de vault d'un
+        // environnement se gère avec le droit d'y lancer un run (ADR-0045),
+        // pas avec l'administration. Deux chemins, un composant, comme `hosts`.
+        path: 'vault',
+        title: 'Vault keys — warden',
+        loadComponent: () => import('./features/vault/vault').then((m) => m.Vault),
+      },
+      {
+        path: 'vault/:environment',
+        title: 'Vault keys — warden',
+        loadComponent: () => import('./features/vault/vault').then((m) => m.Vault),
       },
       {
         path: 'account',

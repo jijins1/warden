@@ -18,6 +18,7 @@ const unRun = (ref: string) => ({
   environment: 'prod',
   state: 'succeeded',
   playbook: 'play.yml',
+  author: { subject: 'alice' },
 });
 
 function monter(parReference: (r: string) => Promise<unknown>) {

@@ -1,0 +1,16 @@
+@if (erreur(); as message) {
+  <p class="erreur" role="alert">
+    <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+  </p>
+} @else if (environnements(); as envs) {
+  @if (envs.length === 0) {
+    <p class="vide">
+      You have no access to any environment, so there is no vault key to manage.
+    </p>
+  } @else {
+    <w-choix-environnement
+      [environnements]="envs"
+      [selection]="selection()"
+      (choisi)="choisir($event)" />
+  }
+}

@@ -30,6 +30,38 @@ SELECT EXISTS (
 	return ok, nil
 }
 
+// EnvironnementsAtteignables rend les environnements sur lesquels
+// l'utilisateur a un droit VIVANT, triés.
+//
+// La condition de vie est dans le WHERE, pour la même raison que dans
+// PeutAtteindre. DISTINCT par prudence seulement : l'index partiel interdit
+// déjà deux droits vivants sur le même couple.
+func (s *Store) EnvironnementsAtteignables(ctx context.Context, userID int64) ([]string, error) {
+	const q = `
+SELECT DISTINCT environment FROM environment_grant
+ WHERE user_id = $1 AND revoked_at IS NULL
+ ORDER BY environment`
+
+	lignes, err := s.pool.Query(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("environnements atteignables: %w", err)
+	}
+	defer lignes.Close()
+
+	out := []string{}
+	for lignes.Next() {
+		var env string
+		if err := lignes.Scan(&env); err != nil {
+			return nil, fmt.Errorf("lecture d'un environnement atteignable: %w", err)
+		}
+		out = append(out, env)
+	}
+	if err := lignes.Err(); err != nil {
+		return nil, fmt.Errorf("environnements atteignables: %w", err)
+	}
+	return out, nil
+}
+
 // colonnesGrant projette un droit avec les sujets des deux comptes.
 //
 // Les SUJETS et non les identifiants : ces lignes s'affichent, et un tableau

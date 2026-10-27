@@ -12,7 +12,7 @@ import { ApiError } from '../../core/http/api-error';
  *
  * `GET /admin/repos` rend TOUTE la configuration — une carte de l'organisation,
  * pas une vue par utilisateur (voir le commentaire de `HandleListRepos`). C'est
- * pourquoi cet écran est derrière `adminGuard`, contrairement à « My runs ».
+ * pourquoi cet écran est derrière `adminGuard`, contrairement à « Runs ».
  */
 @Component({
   selector: 'w-repo-list',
