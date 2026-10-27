@@ -253,15 +253,16 @@ func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
 	repo, environnement, inventaire := f.repo, f.environnement, f.inventaire
 	runRef, become, module, moduleArgs := f.runRef, f.become, f.module, f.args
 
-	if err := fs.Parse(args); err != nil {
+	positionnels, err := parserEntremele(fs, args)
+	if err != nil {
 		return erreurDrapeaux("run", err)
 	}
-	if fs.NArg() != 1 {
+	if len(positionnels) != 1 {
 		//nolint:staticcheck // ST1005 : message terminal, jamais enveloppé.
 		return errors.New("« warden run » attend un motif de machines, comme `ansible " +
 			"<motif> -m <module>`.\nExemple : « warden run all -m ping ».")
 	}
-	motif := fs.Arg(0)
+	motif := positionnels[0]
 	if *module == "" {
 		return errors.New("--module (ou -m) est requis : un run ad-hoc exécute un module")
 	}

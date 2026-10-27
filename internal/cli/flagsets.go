@@ -32,6 +32,31 @@ func neuf(nom string) *flag.FlagSet {
 	return fs
 }
 
+// parserEntremele parse `args` en acceptant les positionnels AU MILIEU des
+// drapeaux, et rend ces positionnels dans l'ordre.
+//
+// `flag` s'arrête au premier argument qui n'est pas un drapeau : `warden run
+// all -m ping` — la forme d'`ansible`, motif en tête — y laisserait `-m ping`
+// non lu. On reprend donc le parse après chaque positionnel. `--` garde son
+// sens : tout ce qui le suit est positionnel.
+func parserEntremele(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionnels []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		reste := fs.Args()
+		if lus := len(args) - len(reste); lus > 0 && args[lus-1] == "--" {
+			return append(positionnels, reste...), nil
+		}
+		if len(reste) == 0 {
+			return positionnels, nil
+		}
+		positionnels = append(positionnels, reste[0])
+		args = reste[1:]
+	}
+}
+
 // verbosite porte les quatre drapeaux `-v`…`-vvvv` d'un FlagSet.
 //
 // QUATRE booléens et non un compteur, parce que `flag` ne sait pas répéter :
