@@ -5,7 +5,7 @@
 # Même construction que la cible des tests d'enrôlement
 # (`internal/runner/internal/enroll/testdata/cible`), Python en plus : le mot
 # de passe et la clé d'hôte sont posés au démarrage, jamais dans une couche.
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN apk add --no-cache openssh-server python3 \
  && adduser -D -u 4242 ansible
