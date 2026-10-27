@@ -291,7 +291,7 @@ func lancerScript(t *testing.T, shell string, script []byte, sortie, appel strin
 	ecrire("warden", "#!/bin/sh\ncat \""+filepath.Join(dir, "sortie")+"\"\n", 0o700)
 	chemin := ecrire("script", string(script), 0o600)
 
-	cmd := exec.Command(shell, "-c", "source "+chemin+"\n"+appel) // #nosec G204 -- shell fixé par le test
+	cmd := exec.CommandContext(t.Context(), shell, "-c", "source "+chemin+"\n"+appel) // #nosec G204 -- shell fixé par le test
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "LC_ALL=C.UTF-8")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

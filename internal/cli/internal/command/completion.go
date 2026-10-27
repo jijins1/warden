@@ -105,6 +105,7 @@ func (c *Commande) ExempleDeValeur(nom string) string {
 // `Commande.Valeurs` ne sert qu'aux rares noms qui changent de sens.
 //
 // Un test vérifie que tout drapeau à valeur documenté en a un.
+// #nosec G101 -- des exemples de chemins et de valeurs, aucun secret
 var exemplesDeValeur = map[string]string{
 	"env":                   "prod",
 	"repo":                  "mon-depot",

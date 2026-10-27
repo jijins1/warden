@@ -72,8 +72,8 @@ func (f *fauxVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 
 	chemin := strings.TrimPrefix(r.URL.Path, "/v1/")
-	switch {
-	case chemin == "auth/approle/login":
+	switch chemin {
+	case "auth/approle/login":
 		var in map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in["role_id"] != roleTest || in["secret_id"] != secretTest {
@@ -86,7 +86,7 @@ func (f *fauxVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.jetons[jeton] = true
 		f.repondreAuth(w, jeton)
 		return
-	case chemin == "auth/token/renew-self":
+	case "auth/token/renew-self":
 		jeton := r.Header.Get("X-Vault-Token")
 		if !f.jetons[jeton] || !f.renouvelable {
 			w.WriteHeader(http.StatusForbidden)

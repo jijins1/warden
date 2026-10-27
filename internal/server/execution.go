@@ -40,11 +40,11 @@ const (
 	// redémarrage.
 	EnvVaultAddr           = "WARDEN_VAULT_ADDR"
 	EnvVaultRoleID         = "WARDEN_VAULT_ROLE_ID"
-	EnvVaultSecretIDFile   = "WARDEN_VAULT_SECRET_ID_FILE"
-	EnvVaultCACert         = "WARDEN_VAULT_CACERT"        // facultatif
-	EnvVaultAppRoleMount   = "WARDEN_VAULT_APPROLE_MOUNT" // `approle` par défaut
-	EnvVaultKVMount        = "WARDEN_VAULT_KV_MOUNT"      // clés d'accès et de vault, `warden` par défaut
-	EnvVaultTransitMount   = "WARDEN_VAULT_TRANSIT_MOUNT" // consigne, `warden-transit` par défaut
+	EnvVaultSecretIDFile   = "WARDEN_VAULT_SECRET_ID_FILE" // #nosec G101 -- le NOM de la variable, pas le secret
+	EnvVaultCACert         = "WARDEN_VAULT_CACERT"         // facultatif
+	EnvVaultAppRoleMount   = "WARDEN_VAULT_APPROLE_MOUNT"  // `approle` par défaut
+	EnvVaultKVMount        = "WARDEN_VAULT_KV_MOUNT"       // clés d'accès et de vault, `warden` par défaut
+	EnvVaultTransitMount   = "WARDEN_VAULT_TRANSIT_MOUNT"  // consigne, `warden-transit` par défaut
 	EnvVaultTransitTTLSecs = "WARDEN_VAULT_TRANSIT_TTL_SECONDS"
 )
 
@@ -100,7 +100,7 @@ func lanceurDocker(dispatchURL, ingestURL string, deadline int64) (*docker.Docke
 		auth = strings.TrimSpace(string(brut))
 	}
 
-	cli, err := dockerclient.New(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	cli, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("client Docker : %w", err)
 	}
