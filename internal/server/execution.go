@@ -2,6 +2,9 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -119,6 +122,22 @@ type magasinsVault struct {
 	vault    *vaultinventory.Vault
 }
 
+// vaultEnClair dit si l'adresse de Vault fait passer les secrets en clair
+// sur un réseau. La boucle locale ne quitte pas la machine : elle n'est pas
+// concernée.
+func vaultEnClair(adresse string) bool {
+	u, err := url.Parse(adresse)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	hote := u.Hostname()
+	if hote == "localhost" {
+		return false
+	}
+	ip := net.ParseIP(hote)
+	return ip == nil || !ip.IsLoopback()
+}
+
 func ouvrirVault(st *store.Store) (magasinsVault, error) {
 	kv, err := vault.New(vault.Config{
 		Addr:         os.Getenv(EnvVaultAddr),
@@ -130,6 +149,13 @@ func ouvrirVault(st *store.Store) (magasinsVault, error) {
 	if err != nil {
 		return magasinsVault{}, fmt.Errorf("%s=%s : %w (voir %s, %s, %s)",
 			EnvSecrets, modeVault, err, EnvVaultAddr, EnvVaultRoleID, EnvVaultSecretIDFile)
+	}
+	// Un avertissement et non un refus : la stack compose parle à Vault en
+	// clair sur son réseau, et c'est un choix de développement, pas une panne.
+	if vaultEnClair(os.Getenv(EnvVaultAddr)) {
+		slog.Warn("Vault joint en clair",
+			slog.String("variable", EnvVaultAddr),
+			slog.String("effet", "secret_id, jeton, clés SSH et de vault, consigne passent sans TLS sur le réseau"))
 	}
 
 	ttl := time.Duration(0)

@@ -51,6 +51,24 @@ func TestLeModeDockerExigeSonReseau(t *testing.T) {
 	}
 }
 
+// Seule une adresse http hors de la boucle locale fait passer les secrets en
+// clair.
+func TestVaultEnClair(t *testing.T) {
+	cas := map[string]bool{
+		"http://vault:8200":     true,
+		"http://10.0.0.5:8200":  true,
+		"https://vault:8200":    false,
+		"http://localhost:8200": false,
+		"http://127.0.0.1:8200": false,
+		"http://[::1]:8200":     false,
+	}
+	for adresse, attendu := range cas {
+		if got := vaultEnClair(adresse); got != attendu {
+			t.Errorf("vaultEnClair(%q) = %v, attendu %v", adresse, got, attendu)
+		}
+	}
+}
+
 // Le mode Vault sans identifiants échoue au démarrage.
 func TestLeModeVaultExigeSesIdentifiants(t *testing.T) {
 	t.Setenv(EnvVaultAddr, "http://vault:8200")
