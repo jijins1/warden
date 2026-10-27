@@ -1,0 +1,1 @@
+- [Docker observer : intégration écartée](decision_docker_observer_integration.md) — ne pas reproposer d'assertion filtre/borne contre le vrai démon

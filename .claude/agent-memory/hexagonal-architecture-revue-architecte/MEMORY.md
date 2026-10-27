@@ -1,0 +1,2 @@
+- [Domain et port in dans warden](convention_core_go.md) — core = domain + ports, pas de port/in ; tags json existants ; Policy dans inbound/api sauf RunsVisibles
+- [Écarté : tags json des listes de runs](decision_tags_json_listes_runs.md) — 2026-10-27, RunListItem & co servis sans DTO, ne pas reproposer
