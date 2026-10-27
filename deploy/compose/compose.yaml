@@ -118,7 +118,6 @@ services:
       - depots:/var/lib/warden
     ports:
       - "127.0.0.1:8082:8082" # push depuis la CLI
-    networks: [default, warden-runners]
 
   api:
     <<: *wardend
@@ -129,12 +128,12 @@ services:
       WARDEN_API_ADDR: ":8080"
       WARDEN_GIT_INTERNAL_URL: http://git:8081
       WARDEN_GIT_INTERNAL_TOKEN: secret-interne-de-dev
-      WARDEN_GIT_RUNNER_URL: http://git:8083
+      WARDEN_GIT_RUNNER_URL: http://passerelle:8083
       WARDEN_GIT_CLIENT_URL: http://localhost:8082
       WARDEN_DISPATCH_ADDR: ":8084"
-      WARDEN_DISPATCH_RUNNER_URL: http://api:8084
+      WARDEN_DISPATCH_RUNNER_URL: http://passerelle:8084
       WARDEN_INGEST_ADDR: ":8085"
-      WARDEN_INGEST_RUNNER_URL: http://api:8085
+      WARDEN_INGEST_RUNNER_URL: http://passerelle:8085
       WARDEN_RUNNER_IMAGE: ${WARDEN_RUNNER_IMAGE:-warden/warden-runner:dev}
       WARDEN_VAULT_ADDR: http://vault:8200
       WARDEN_VAULT_ROLE_ID: warden
@@ -148,6 +147,16 @@ services:
         condition: service_completed_successfully
       vault-init:
         condition: service_completed_successfully
+
+  # La seule porte entre les runners et warden : un réseau Docker ne filtre
+  # pas les ports, donc `api` et `git` restent hors de `warden-runners` et
+  # celle-ci n'en relaie que trois (voir passerelle.conf).
+  passerelle:
+    image: nginx:1.27.3-alpine
+    restart: unless-stopped
+    volumes:
+      - ./passerelle.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [api, git]
     networks: [default, warden-runners]
 
   controller:

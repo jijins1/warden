@@ -17,11 +17,16 @@ les runners sont lancés par l'API Docker, tous les secrets sont dans Vault.
 | `api` | API, canal de dispatch, ingestion ; lance les runners |
 | `git` | dépôts d'audit ; push de la CLI sur `localhost:8082` |
 | `controller` | droits, réconciliation des runs, ramassage et borne de durée des conteneurs |
+| `passerelle` | la seule porte des runners vers warden : trois ports relayés, rien d'autre |
 | `cible` | une machine gérée (sshd + Python), joignable des seuls runners |
 | `forge` | une forge git en HTTP, qui sert `$WARDEN_FORGE_DIR` |
 
-Les runners rejoignent le réseau `warden-runners`, où ils joignent `api`,
-`git` et `cible` par leur nom.
+Les runners rejoignent le réseau `warden-runners`, où ils joignent `cible` et
+la `passerelle`. Celle-ci ne relaie que trois ports : l'ordre (`api:8084`), les
+événements (`api:8085`) et la lecture du dépôt (`git:8083`). `api` et `git` ne
+sont pas sur ce réseau : un réseau Docker ne filtre pas les ports, et le code
+d'un playbook joindrait sinon l'API, avec son authentification de dev, et le
+git interne.
 
 ## Démarrer
 
