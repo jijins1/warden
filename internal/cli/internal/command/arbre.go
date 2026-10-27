@@ -85,9 +85,10 @@ func completion() Commande {
 			"par cœur, donc il ne peut jamais proposer un verbe ou un drapeau que\n" +
 			"cette CLI n'a pas.\n\n" +
 			"Un geste de mise en place, comme `warden login` : à faire une fois, dans\n" +
-			"le fichier de démarrage du shell.",
+			"le fichier de démarrage du shell. C'est la ligne `source` qu'on y pose,\n" +
+			"pas le script : régénéré à chaque shell, il suit toujours le binaire.",
 		Exemples: []Exemple{
-			{Pourquoi: "bash, une fois pour toutes", Ligne: "warden completion bash >> ~/.bashrc"},
+			{Pourquoi: "bash, une fois pour toutes", Ligne: "echo 'source <(warden completion bash)' >> ~/.bashrc"},
 			{Pourquoi: "zsh, une fois pour toutes", Ligne: "echo 'source <(warden completion zsh)' >> ~/.zshrc"},
 		},
 	}
@@ -246,7 +247,8 @@ func repo() Commande {
 					"feature épinglerait le mauvais point de comparaison pour tous les runs.\n\n" +
 					"Le serveur ne sait cloner qu'en http(s) : si votre origin est une URL\n" +
 					"SSH, donnez la forme http du même dépôt avec --remote-url.",
-				Flags: []string{"name", "remote-url", "mainline-ref", "remote", "yes"},
+				Flags:   []string{"name", "remote-url", "mainline-ref", "remote", "yes"},
+				Valeurs: map[string]string{"name": "mon-depot"},
 				Exemples: []Exemple{
 					{Pourquoi: "tout est déduit du dépôt où l'on se trouve", Ligne: "warden repo declare"},
 					{Pourquoi: "origin est en SSH", Ligne: "warden repo declare --remote-url https://forge.example.com/equipe/mon-depot.git"},
@@ -274,6 +276,7 @@ func utilisateur() Commande {
 				Details: "Le mot de passe est TIRÉ par le serveur et affiché une seule fois : il\n" +
 					"n'est stocké nulle part en clair, et personne ne peut le relire.",
 				Flags:    []string{"subject", "name", "admin"},
+				Valeurs:  map[string]string{"name": "Alice"},
 				Exemples: []Exemple{{Ligne: "warden user add --subject alice --name Alice"}},
 			},
 			{Nom: "list", Resume: "affiche les comptes", Usage: []string{"user list"}},

@@ -64,15 +64,17 @@ func commandeInterneComplete(ctx context.Context, args []string, sortie io.Write
 
 	noeud, _, fs := command.Arbre().Localiser(avant, flagsPour)
 
-	var candidats []string
+	var candidats []command.Candidat
 	switch {
 	case len(avant) > 0 && drapeauAvecValeur(fs, avant[len(avant)-1]):
-		candidats = valeursDynamiques(ctx, strings.TrimLeft(avant[len(avant)-1], "-"), avant)
+		for _, v := range valeursDynamiques(ctx, strings.TrimLeft(avant[len(avant)-1], "-"), avant) {
+			candidats = append(candidats, command.Candidat{Mot: v})
+		}
 	case len(noeud.Sous) > 0:
 		// Un GROUPE n'accepte jamais de drapeau avant qu'un verbe soit choisi
 		// (`commandeHote` et ses pareilles ne parsent les drapeaux qu'À PARTIR
 		// du second argument) : seuls des verbes ont un sens ici.
-		candidats = noeud.Verbes()
+		candidats = noeud.CandidatsVerbes()
 	default:
 		// Une FEUILLE n'a que des drapeaux. Un positionnel comme le
 		// <run-ref> de `warden logs` n'a pas de candidat statique — et pas
@@ -80,9 +82,17 @@ func commandeInterneComplete(ctx context.Context, args []string, sortie io.Write
 		candidats = noeud.CandidatsDrapeaux(fs)
 	}
 
+	// Un candidat par ligne, sa description après une tabulation : c'est le
+	// script du shell qui décide de l'afficher (zsh) ou de la mettre en forme
+	// (bash), pas ce backend.
 	for _, c := range candidats {
-		if strings.HasPrefix(c, cur) {
-			_, _ = fmt.Fprintln(sortie, c)
+		if !strings.HasPrefix(c.Mot, cur) {
+			continue
+		}
+		if c.Description == "" {
+			_, _ = fmt.Fprintln(sortie, c.Mot)
+		} else {
+			_, _ = fmt.Fprintf(sortie, "%s\t%s\n", c.Mot, c.Description)
 		}
 	}
 	return nil
