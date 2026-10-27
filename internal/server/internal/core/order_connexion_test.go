@@ -120,6 +120,38 @@ func TestSansCatalogueLaVerificationResteStricte(t *testing.T) {
 	}
 }
 
+// Un run sans environnement n'a passé aucun contrôle de droit : il ne reçoit
+// les empreintes d'aucun environnement, et la vérification reste stricte.
+func TestSansEnvironnementAucuneEmpreinte(t *testing.T) {
+	run := runValide()
+	run.Environment = ""
+	b, _ := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	b.AvecMachines(machinesFactices{{Name: "prod-01", Environment: "prod", Address: "10.0.0.1", HostKey: cleHote}})
+
+	ordre, err := b.OrderFor(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ordre.HostKeyChecking || len(ordre.KnownHosts) != 0 {
+		t.Errorf("vérification = %v, empreintes = %q", ordre.HostKeyChecking, ordre.KnownHosts)
+	}
+}
+
+// Sans environnement, le mot de passe ne part pas : il n'aurait aucune
+// empreinte contre laquelle se vérifier.
+func TestSansEnvironnementLeMotDePasseNePartPas(t *testing.T) {
+	run := runValide()
+	run.Environment = ""
+	consigne := &consigneOrdre{}
+	_ = consigne.Stash(t.Context(), core.CleConnexion(run.RunRef), []byte("mdp-ldap"))
+	b, _ := core.NewOrderBuilder(runsFactices{1: run}, &frappeurFactice{}, nil, "https://git.invalid")
+	b.AvecEnrolement(machinesFactices{{Name: "prod-01", Environment: "prod", Address: "10.0.0.1", HostKey: cleHote}}, nil, consigne)
+
+	if _, err := b.OrderFor(t.Context(), 1); err == nil {
+		t.Error("un mot de passe est parti pour un run sans environnement")
+	}
+}
+
 // L'interrupteur de transition coupe la vérification des runs à clé…
 func TestLInterrupteurCoupeLaVerificationDesRunsACle(t *testing.T) {
 	run := runValide()

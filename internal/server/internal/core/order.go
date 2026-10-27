@@ -491,7 +491,18 @@ func CleConnexion(runRef string) string { return runRef + "-connection" }
 // Sans catalogue de machines, la liste est vide : la vérification reste
 // stricte et refuse toute machine SSH — fermé par défaut. Un run à mot de
 // passe, lui, échoue à la livraison : il n'a rien à faire sans empreintes.
+//
+// Un run sans environnement est traité de même. Il n'a passé aucun contrôle de
+// droit (VerifierLAcces), et ListHosts lirait la chaîne vide comme « toutes les
+// machines » : son ordre porterait les machines de chaque environnement, que
+// le playbook lirait dans son known_hosts.
 func (b *OrderBuilder) empreintesDeclarees(ctx context.Context, environment string, motDePasse bool) ([]string, error) {
+	if environment == "" {
+		if motDePasse {
+			return nil, errors.New("mot de passe de connexion : run sans environnement, aucune machine dont vérifier les empreintes")
+		}
+		return nil, nil
+	}
 	if b.hosts == nil {
 		if motDePasse {
 			return nil, errors.New("mot de passe de connexion : aucun catalogue de machines pour en vérifier les empreintes")
