@@ -4,7 +4,7 @@
 # cas qu'un enrôlement doit couvrir — une machine fraîchement installée — et la
 # raison pour laquelle ce paquet n'utilise pas `ansible.posix.authorized_key`,
 # qui exigerait Python sur la cible.
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN apk add --no-cache openssh-server \
  && adduser -D -u 4242 ansible

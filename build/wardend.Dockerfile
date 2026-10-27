@@ -36,7 +36,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/wardend ./cmd/wardend
 
 
-FROM alpine:3.22
+FROM alpine:3.24
 
 # git est le MOTEUR du rôle `git` (ADR-0005) : jamais une réimplémentation Go du
 # protocole. ca-certificates sert au fetch vers la forge, qui sort en HTTPS.

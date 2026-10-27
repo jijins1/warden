@@ -34,7 +34,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/warden-runner ./cmd/warden-runner
 
 
-FROM alpine:3.22
+FROM alpine:3.24
 
 # ansible-core et non ansible : les collections viennent de l'image déclarée par
 # le projet (ADR-0014), pas d'un méta-paquet qui en embarque un jeu arbitraire.
