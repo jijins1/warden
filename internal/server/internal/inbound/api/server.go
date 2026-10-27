@@ -382,6 +382,12 @@ func (a *Server) Handler() http.Handler {
 	// Ça ne révèle rien que le nom de l'environnement, déjà visible ailleurs.
 	router.HandleFunc("GET /environments/protected", a.HandleListProtectedEnvironments)
 
+	// Les environnements de l'APPELANT, ceux sur lesquels il a un droit vivant.
+	// Ouverts à tout compte authentifié pour la même raison : ils bornent ce
+	// que l'appelant voit déjà (ses runs, ses clés de vault), et ne révèlent
+	// rien de l'organisation au-delà.
+	router.HandleFunc("GET /environments", a.HandleListMyEnvironments)
+
 	// La clé de vault d'un environnement (ADR-0045). PAS sous `/admin`,
 	// contrairement aux clés SSH : le droit qui gouverne ces trois routes est
 	// `autoriserLEnvironnement` (ADR-0033), le même que celui d'un run sur cet

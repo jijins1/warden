@@ -63,6 +63,8 @@ func (h *harness) remonter(t *testing.T, deps api.Deps) {
 	mux.HandleFunc("GET /runs/{run_ref}/diff", server.HandleGetRunDiff)
 	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
 	mux.HandleFunc("GET /hosts/{host}/playbooks", server.HandleListPlaybooksByHost)
+	mux.HandleFunc("GET /environments", server.HandleListMyEnvironments)
+	mux.HandleFunc("GET /runs/{run_ref}", server.HandleGetRun)
 
 	h.httpSrv.Config.Handler = server.AuthnMiddleware(mux)
 	h.server = server
@@ -139,6 +141,8 @@ func setup(t *testing.T) *harness {
 	mux.HandleFunc("GET /runs/{run_ref}/diff", server.HandleGetRunDiff)
 	mux.HandleFunc("GET /hosts/{host}/runs", server.HandleListByHost)
 	mux.HandleFunc("GET /hosts/{host}/playbooks", server.HandleListPlaybooksByHost)
+	mux.HandleFunc("GET /environments", server.HandleListMyEnvironments)
+	mux.HandleFunc("GET /runs/{run_ref}", server.HandleGetRun)
 	httpSrv := httptest.NewServer(server.AuthnMiddleware(mux))
 	t.Cleanup(httpSrv.Close)
 

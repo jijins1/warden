@@ -78,7 +78,12 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, 
 		       -- d'accueil du produit, pour un run parfaitement valide.
 		       COALESCE(inventory, ''), COALESCE(playbook, ''),
 		       state, COALESCE(termination_cause, ''), started_at, ended_at, changed_count,
-		       secrets_unmasked
+		       secrets_unmasked,
+		       -- Une sous-requête et non une jointure : les filtres ci-dessous
+		       -- nomment les colonnes de run sans préfixe, et users en partage
+		       -- plusieurs (id, created_at…).
+		       (SELECT subject FROM users u WHERE u.id = run.user_id),
+		       (SELECT display_name FROM users u WHERE u.id = run.user_id)
 		FROM run
 		WHERE 1=1
 	`
@@ -97,7 +102,11 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, 
 		args = append(args, filter.Inventory)
 		argNum++
 	}
-	if filter.UserID > 0 {
+	if filter.UserID > 0 && len(filter.AussiEnvironnements) > 0 {
+		query += fmt.Sprintf(" AND (user_id = $%d OR environment = ANY($%d))", argNum, argNum+1)
+		args = append(args, filter.UserID, filter.AussiEnvironnements)
+		argNum += 2
+	} else if filter.UserID > 0 {
 		query += fmt.Sprintf(" AND user_id = $%d", argNum)
 		args = append(args, filter.UserID)
 		argNum++
@@ -147,7 +156,8 @@ func (s *Store) ListRuns(ctx context.Context, filter RunFilter) (RunListResult, 
 		var item RunListItem
 		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Repo, &item.Environment, &item.Inventory,
 			&item.Playbook, &item.State, &item.TerminationCause, &item.StartedAt, &item.EndedAt,
-			&item.ChangedCount, &item.SecretsUnmasked); err != nil {
+			&item.ChangedCount, &item.SecretsUnmasked,
+			&item.Auteur.Subject, &item.Auteur.DisplayName); err != nil {
 			return RunListResult{}, fmt.Errorf("scanning run: %w", err)
 		}
 		items = append(items, item)
@@ -191,9 +201,11 @@ func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.T
 		       -- machine enrôlée échouerait entièrement.
 		       COALESCE(r.inventory, ''), COALESCE(r.playbook, ''),
 		       r.state, COALESCE(r.termination_cause, ''), r.started_at, r.ended_at,
-		       r.changed_count, r.secrets_unmasked
+		       r.changed_count, r.secrets_unmasked,
+		       u.subject, u.display_name
 		FROM event e
 		JOIN run r ON e.run_id = r.id
+		JOIN users u ON u.id = r.user_id
 		WHERE e.host = $1
 	`
 	args := []interface{}{host}
@@ -224,7 +236,8 @@ func (s *Store) RunsByHost(ctx context.Context, host string, since, until time.T
 		var item RunListItem
 		if err := rows.Scan(&item.ID, &item.RunRef, &item.UserID, &item.Repo, &item.Environment, &item.Inventory,
 			&item.Playbook, &item.State, &item.TerminationCause, &item.StartedAt, &item.EndedAt,
-			&item.ChangedCount, &item.SecretsUnmasked); err != nil {
+			&item.ChangedCount, &item.SecretsUnmasked,
+			&item.Auteur.Subject, &item.Auteur.DisplayName); err != nil {
 			return nil, fmt.Errorf("scanning run: %w", err)
 		}
 		items = append(items, item)
