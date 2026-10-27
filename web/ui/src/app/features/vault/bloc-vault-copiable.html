@@ -1,0 +1,11 @@
+<div class="bloc">
+  <pre class="w-mono">{{ bloc() }}</pre>
+  <button
+    mat-stroked-button
+    type="button"
+    [cdkCopyToClipboard]="bloc()"
+    (cdkCopyToClipboardCopied)="copie.set($event)">
+    <mat-icon>{{ copie() ? 'check' : 'content_copy' }}</mat-icon>
+    <span>{{ copie() ? 'Copied' : 'Copy' }}</span>
+  </button>
+</div>

@@ -1,0 +1,20 @@
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { VaultKeyDescriptor } from '../../core/api/wire';
+
+/**
+ * Ce qu'on peut dire d'une clé de vault sans la révéler : son empreinte, son
+ * origine, ses dates. Il n'y a rien d'autre à afficher — le serveur ne rend
+ * jamais la clé (ADR-0045).
+ */
+@Component({
+  selector: 'w-descripteur-cle-vault',
+  imports: [DatePipe],
+  templateUrl: './descripteur-cle-vault.html',
+  styleUrl: './descripteur-cle-vault.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class DescripteurCleVault {
+  /** `null` : pas encore de clé sur cet environnement. */
+  readonly descripteur = input.required<VaultKeyDescriptor | null>();
+}

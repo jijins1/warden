@@ -19,10 +19,12 @@ import { APP_CONFIG } from '../../core/config/app-config';
 import { RunStream, versWebSocket } from '../../core/api/run-stream';
 import { EventStream } from './event-stream';
 import { RunDiff } from './run-diff';
+import { RunParametres } from './run-parametres';
 import { RunDetail as RunDetailDTO } from '../../core/api/wire';
 import { ApiError } from '../../core/http/api-error';
 import { StateChip } from '../../shared/state-chip/state-chip';
 import { EnvBadge } from '../../shared/env-badge/env-badge';
+import { Auteur } from '../../shared/auteur/auteur';
 import { DureePipe } from '../../shared/pipes/duree.pipe';
 
 /**
@@ -40,8 +42,10 @@ import { DureePipe } from '../../shared/pipes/duree.pipe';
     DureePipe,
     StateChip,
     EnvBadge,
+    Auteur,
     EventStream,
     RunDiff,
+    RunParametres,
     MatButtonModule,
     MatIconModule,
     MatProgressBarModule,

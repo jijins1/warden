@@ -1,0 +1,36 @@
+<form class="formulaire" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+  <mat-radio-group formControlName="mode" class="modes" aria-label="How to set the key">
+    <mat-radio-button value="generate">Generate a new password</mat-radio-button>
+    <mat-radio-button value="import">Import an existing password</mat-radio-button>
+  </mat-radio-group>
+
+  @if (modeImport()) {
+    <mat-form-field appearance="outline">
+      <mat-label>Vault password</mat-label>
+      <input
+        matInput
+        type="password"
+        formControlName="plaintext"
+        autocomplete="new-password" />
+      <mat-hint>The one your repository's <code>!vault</code> values are already encrypted with.</mat-hint>
+    </mat-form-field>
+  }
+
+  @if (rotation()) {
+    <mat-checkbox formControlName="confirmation">
+      I understand that values already encrypted with the current key will no
+      longer decrypt until they are re-encrypted with the new one.
+    </mat-checkbox>
+  }
+
+  <button
+    mat-flat-button
+    type="submit"
+    [disabled]="envoiImpossible()">
+    @if (enCours()) {
+      Saving…
+    } @else {
+      {{ rotation() ? 'Rotate the key' : 'Set the key' }}
+    }
+  </button>
+</form>

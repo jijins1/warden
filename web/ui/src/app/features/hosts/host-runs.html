@@ -123,6 +123,7 @@
             <span role="columnheader">Run</span>
             <span role="columnheader">Playbook</span>
             <span role="columnheader">Environment</span>
+            <span role="columnheader">By</span>
             <span role="columnheader">State</span>
             <span role="columnheader" class="droite">Changed</span>
             <span role="columnheader" class="droite">Duration</span>
@@ -134,6 +135,9 @@
               <span role="cell" class="w-mono ref">{{ run.RunRef.slice(0, 10) }}</span>
               <span role="cell" class="playbook">{{ run.Playbook || '—' }}</span>
               <span role="cell"><w-env-badge [env]="run.Environment" /></span>
+              <span role="cell" class="attenue">
+                <w-auteur [subject]="run.Author.Subject" [displayName]="run.Author.DisplayName" />
+              </span>
               <span role="cell">
                 <w-state-chip [state]="run.State" [cause]="run.TerminationCause" />
               </span>

@@ -1,0 +1,20 @@
+<section class="carte" aria-labelledby="titre-chiffrement">
+  <h2 id="titre-chiffrement">Encrypt a value</h2>
+  <p class="explication">
+    Produces a <code>!vault |</code> block to paste into a versioned YAML file.
+    The value is sent once, encrypted with this environment's key, and not
+    kept.
+  </p>
+
+  <w-chiffrement-vault-form [enCours]="enCours()" (soumis)="chiffrer($event)" />
+
+  @if (erreur(); as message) {
+    <p class="erreur" role="alert">
+      <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+    </p>
+  }
+
+  @if (bloc(); as b) {
+    <w-bloc-vault-copiable [bloc]="b" />
+  }
+</section>

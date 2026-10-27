@@ -27,6 +27,8 @@ export interface FiltreRuns {
   since?: string;
   until?: string;
   changed_min?: number;
+  /** `1` restreint aux runs de l'appelant, APRÈS sa portée : il ne l'élargit jamais. */
+  mine?: 1;
   limit?: number;
 }
 

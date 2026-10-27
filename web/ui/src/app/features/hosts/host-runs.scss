@@ -1,6 +1,6 @@
 @use '../../../styles/table' as t;
 
-@include t.table-de-runs(108px minmax(160px, 1fr) 108px minmax(190px, auto) 82px 84px 84px);
+@include t.table-de-runs(108px minmax(160px, 1fr) 108px minmax(90px, 140px) minmax(190px, auto) 82px 84px 84px);
 @include t.encarts;
 
 .entete { margin-bottom: var(--w-gap-4); }

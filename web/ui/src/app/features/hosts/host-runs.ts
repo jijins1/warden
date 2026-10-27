@@ -13,6 +13,7 @@ import { PlaybookSummary, RunListItem } from '../../core/api/wire';
 import { ApiError } from '../../core/http/api-error';
 import { StateChip } from '../../shared/state-chip/state-chip';
 import { EnvBadge } from '../../shared/env-badge/env-badge';
+import { Auteur } from '../../shared/auteur/auteur';
 import { DureePipe } from '../../shared/pipes/duree.pipe';
 import { RunDiff } from '../runs/run-diff';
 
@@ -38,6 +39,7 @@ type Onglet = 'playbooks' | 'runs';
     ReactiveFormsModule,
     StateChip,
     EnvBadge,
+    Auteur,
     RunDiff,
     MatButtonModule,
     MatFormFieldModule,
