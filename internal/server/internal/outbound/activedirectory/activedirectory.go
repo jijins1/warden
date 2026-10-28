@@ -119,7 +119,7 @@ func (a *Annuaire) Authentifier(ctx context.Context, login string, motDePasse []
 	if err != nil {
 		return core.IdentiteAnnuaire{}, err
 	}
-	defer svc.Close()
+	defer func() { _ = svc.Close() }()
 	if err := svc.Bind(a.cfg.BindDN, a.cfg.BindPassword); err != nil {
 		return core.IdentiteAnnuaire{}, fmt.Errorf("bind du compte de service : %w", err)
 	}
@@ -170,11 +170,11 @@ func (a *Annuaire) connecter(ctx context.Context) (*ldap.Conn, error) {
 	// garderait une place de la file jusqu'au timeout. Une double fermeture est
 	// sans effet, donc le rappel n'a pas à être retiré après le Close de
 	// l'appelant.
-	context.AfterFunc(ctx, func() { conn.Close() })
+	context.AfterFunc(ctx, func() { _ = conn.Close() })
 
 	if a.cfg.StartTLS {
 		if err := conn.StartTLS(a.tls); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("StartTLS vers %s : %w", a.cfg.URL, err)
 		}
 	}
@@ -215,7 +215,7 @@ func (a *Annuaire) verifierLeMotDePasse(ctx context.Context, dn string, motDePas
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	err = conn.Bind(dn, string(motDePasse))
 	switch {

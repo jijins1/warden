@@ -1130,7 +1130,7 @@ const (
 	// EnvLDAPBindDN et EnvLDAPBindPassword sont le compte de service, en
 	// lecture seule, qui cherche les comptes et leurs groupes.
 	EnvLDAPBindDN       = "WARDEN_LDAP_BIND_DN"
-	EnvLDAPBindPassword = "WARDEN_LDAP_BIND_PASSWORD"
+	EnvLDAPBindPassword = "WARDEN_LDAP_BIND_PASSWORD" // #nosec G101 -- le NOM de la variable, pas le secret
 	// EnvLDAPCAFile est l'autorité des contrôleurs de domaine, au format PEM.
 	EnvLDAPCAFile = "WARDEN_LDAP_CA_FILE"
 	// EnvLDAPSessionTTL est la validité d'une session AD, en HEURES. Défaut
