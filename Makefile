@@ -109,7 +109,7 @@ IMAGE_BASE := $(REGISTRY)/$(REGISTRY_OWNER)
 
 .PHONY: images
 images: ## Construit les trois images en local, sans rien pousser
-	docker build -f build/wardend.Dockerfile -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) .
+	docker build -f build/wardend.Dockerfile --build-arg VERSION=$(IMAGE_TAG) -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) .
 	docker build -f build/runner.Dockerfile  -t $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) .
 	docker build -f build/ui.Dockerfile      -t $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG) .
 
@@ -157,7 +157,7 @@ test-runner-image: images ## Vérifie le pilotage d'ansible-runner dans l'image 
 # un builder buildx, ex. `docker buildx create --use`).
 .PHONY: images-push
 images-push: ## Construit et pousse les trois images pour $(PLATFORMS)
-	docker buildx build --platform $(PLATFORMS) -f build/wardend.Dockerfile -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) --push .
+	docker buildx build --platform $(PLATFORMS) -f build/wardend.Dockerfile --build-arg VERSION=$(IMAGE_TAG) -t $(IMAGE_BASE)/wardend:$(IMAGE_TAG) --push .
 	docker buildx build --platform $(PLATFORMS) -f build/runner.Dockerfile  -t $(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) --push .
 	docker buildx build --platform $(PLATFORMS) -f build/ui.Dockerfile      -t $(IMAGE_BASE)/warden-ui:$(IMAGE_TAG) --push .
 

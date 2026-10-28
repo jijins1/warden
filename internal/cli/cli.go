@@ -100,6 +100,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeEnroler(ctx, args[1:], os.Stdout)
 	case "completion":
 		return commandeCompletion(args[1:], os.Stdout)
+	case "upgrade":
+		return commandeUpgrade(ctx, args[1:], os.Stdout)
 	default:
 		return command.Inconnue(nil, args[0])
 	}
@@ -177,6 +179,12 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 
 	api, err := clientPour(adresse)
 	if err != nil {
+		return err
+	}
+
+	// AVANT les mots de passe et la capture : une CLI décalée ne soumet rien, et
+	// le découvrir après avoir saisi un secret serait du temps perdu (ADR-0049).
+	if err := aligneeSurLeServeur(ctx, api, os.Stdin, sortie); err != nil {
 		return err
 	}
 
@@ -295,6 +303,10 @@ func commandeRun(ctx context.Context, args []string, sortie io.Writer) error {
 
 	api, err := clientPour(adresse)
 	if err != nil {
+		return err
+	}
+
+	if err := aligneeSurLeServeur(ctx, api, os.Stdin, sortie); err != nil {
 		return err
 	}
 

@@ -61,6 +61,7 @@ d'implémentation prises en cours de route.
 | [0046](0046-la-sortie-de-la-cli-est-celle-dansible.md) | La sortie de la CLI est celle d'Ansible, couleurs comprises | Accepted |
 | [0047](0047-runners-docker-et-secrets-dans-vault.md) | Runners lancés par l'API Docker, secrets dans Vault | Proposed |
 | [0048](0048-connexion-par-mot-de-passe-sans-enrolement.md) | Connexion par mot de passe, sans enrôlement, empreintes vérifiées | Proposed |
+| [0049](0049-mise-a-jour-de-la-cli-alignee-sur-le-serveur.md) | Mise à jour de la CLI alignée sur le serveur, binaires signés par minisign | Proposed |
 
 ## Convention
 

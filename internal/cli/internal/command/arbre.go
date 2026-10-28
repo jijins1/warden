@@ -21,7 +21,7 @@ func Arbre() *Commande {
 		Resume: "warden — exécution auditée de playbooks Ansible",
 		Sous: []Commande{
 			login(), logout(), whoami(), passwd(),
-			completion(),
+			completion(), upgrade(),
 			submit(), run(),
 			logs(),
 			repo(), utilisateur(), droit(), cle(), vault(), hote(), enroler(),
@@ -91,6 +91,23 @@ func completion() Commande {
 			{Pourquoi: "bash, une fois pour toutes", Ligne: "echo 'source <(warden completion bash)' >> ~/.bashrc"},
 			{Pourquoi: "zsh, une fois pour toutes", Ligne: "echo 'source <(warden completion zsh)' >> ~/.zshrc"},
 		},
+	}
+}
+
+func upgrade() Commande {
+	return Commande{
+		Nom: "upgrade", Rubrique: RubriqueSession,
+		Resume: "met la CLI à la version du serveur",
+		Usage:  []string{"upgrade"},
+		Details: "Télécharge la release de la version qu'annonce le serveur, vérifie sa\n" +
+			"signature minisign par la clé inscrite dans cette CLI, puis remplace le\n" +
+			"binaire. Rien n'est installé qui ne soit signé pour CETTE version.\n\n" +
+			"« warden submit » et « warden run » font la même vérification et\n" +
+			"refusent de soumettre tant que la CLI n'est pas à la version du serveur.\n\n" +
+			"WARDEN_UPDATE_URL remplace l'hôte des releases par un miroir, qui\n" +
+			"reproduit l'arborescence v<version>/… ; la signature y est vérifiée de\n" +
+			"la même façon.",
+		Exemples: []Exemple{{Ligne: "warden upgrade"}},
 	}
 }
 

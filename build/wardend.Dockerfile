@@ -33,7 +33,14 @@ COPY . .
 # -trimpath retire les chemins de compilation du binaire. Ils décriraient
 # l'arborescence de la machine de build, dans un binaire qui tourne face à du
 # code arbitraire.
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/wardend ./cmd/wardend
+#
+# VERSION est celle que `GET /version` annonce, et que la CLI compare à la
+# sienne (ADR-0049). La CI la passe ; un build local reste en `dev`, qui ne
+# déclenche aucune mise à jour.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+      -ldflags="-s -w -X github.com/jijins1/warden/internal/version.Version=${VERSION}" \
+      -o /out/wardend ./cmd/wardend
 
 
 FROM alpine:3.22

@@ -447,7 +447,7 @@ func (a *Server) Handler() http.Handler {
 	// droit qu'on croit avoir accordé et qui disparaît.
 	router.HandleFunc("GET /admin/grants", a.HandleListGrants)
 
-	// LA seule surface qu'un appelant anonyme atteint, donc la seule montée
+	// Les SEULES surfaces qu'un appelant anonyme atteint, donc les seules montées
 	// HORS du middleware : on ne peut pas exiger une session pour en ouvrir une.
 	//
 	// Un routeur au-dessus plutôt qu'une exception DANS le middleware. La
@@ -457,6 +457,9 @@ func (a *Server) Handler() http.Handler {
 	// protégé, donc il n'y a aucune comparaison à tromper.
 	racine := http.NewServeMux()
 	racine.HandleFunc("POST /auth/login", a.HandleLogin)
+	// La version, pour la même raison : la CLI la compare à la sienne avant
+	// d'avoir une session (ADR-0049).
+	racine.HandleFunc("GET /version", a.HandleVersion)
 	racine.Handle("/", a.AuthnMiddleware(router))
 
 	// Le CORS enveloppe TOUT, connexion comprise : exiger une session pour
