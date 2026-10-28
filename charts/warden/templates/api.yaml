@@ -73,6 +73,34 @@ spec:
             # la seule qui existe avant qu'un compte existe.
             - name: WARDEN_SESSION_TTL_HOURS
               value: {{ .Values.api.sessionTtlHours | quote }}
+            {{- with .Values.api.ldap }}
+            {{- if .enabled }}
+
+            # Connexion par Active Directory (ADR-0053) : l'AD d'abord, les
+            # comptes locaux ensuite, comme bris de glace.
+            - name: WARDEN_LDAP_URL
+              value: {{ required "api.ldap.url est requise quand api.ldap.enabled" .url | quote }}
+            {{- if .startTLS }}
+            - name: WARDEN_LDAP_STARTTLS
+              value: "1"
+            {{- end }}
+            - name: WARDEN_LDAP_BASE_DN
+              value: {{ required "api.ldap.baseDN est requis" .baseDN | quote }}
+            - name: WARDEN_LDAP_BIND_DN
+              value: {{ required "api.ldap.bindDN est requis" .bindDN | quote }}
+            - name: WARDEN_LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "api.ldap.bindPasswordSecret.name est requis" .bindPasswordSecret.name }}
+                  key: {{ .bindPasswordSecret.key }}
+            {{- if .caConfigMap.name }}
+            - name: WARDEN_LDAP_CA_FILE
+              value: /etc/warden-ldap/{{ .caConfigMap.key }}
+            {{- end }}
+            - name: WARDEN_LDAP_SESSION_TTL_HOURS
+              value: {{ .sessionTtlHours | quote }}
+            {{- end }}
+            {{- end }}
 
             - name: WARDEN_GIT_INTERNAL_URL
               value: http://{{ $fullname }}-git-internal:{{ include "warden.port.gitInternal" . }}
@@ -169,6 +197,16 @@ spec:
           {{- with .Values.api.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if and .Values.api.ldap.enabled .Values.api.ldap.caConfigMap.name }}
+          volumeMounts:
+            - name: ldap-ca
+              mountPath: /etc/warden-ldap
+              readOnly: true
+      volumes:
+        - name: ldap-ca
+          configMap:
+            name: {{ .Values.api.ldap.caConfigMap.name }}
           {{- end }}
 ---
 apiVersion: v1

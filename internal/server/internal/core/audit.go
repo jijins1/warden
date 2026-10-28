@@ -53,6 +53,10 @@ type User struct {
 	// d'autre. Il n'élargit PAS la lecture de l'audit : un administrateur ne voit
 	// pas les runs des autres, parce qu'administrer la politique et lire le code
 	// d'autrui sont deux capacités distinctes qu'il n'y a aucune raison de lier.
+	//
+	// Le magasin rend le DRAPEAU du compte. Pour une identité authentifiée, le
+	// cœur y ajoute l'administration par groupe de l'annuaire (ADR-0053) : c'est
+	// lui, et non le SQL, qui porte cette règle.
 	IsAdmin bool
 }
 

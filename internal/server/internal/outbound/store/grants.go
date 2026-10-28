@@ -16,11 +16,20 @@ import (
 // peut pas oublier d'interpréter `revoked_at`, et il n'a aucune décision à
 // prendre. C'est la requête posée à chaque création de run ET à chaque livraison
 // d'ordre, donc l'index partiel `environment_grant_vivants_idx` la porte.
+//
+// Deux chemins : un droit NOMINATIF, ou un droit d'un GROUPE porté par une
+// session vivante de l'utilisateur (ADR-0053). Le second ne regarde pas la
+// session de la requête mais TOUTES les sessions vivantes du compte : à la
+// livraison d'un ordre, il n'y a pas de requête, et c'est ce qui fait qu'un run
+// dont l'auteur s'est déconnecté ne reçoit plus la clé que son groupe donnait.
 func (s *Store) PeutAtteindre(ctx context.Context, userID int64, environment string) (bool, error) {
 	const q = `
 SELECT EXISTS (
     SELECT 1 FROM environment_grant
      WHERE user_id = $1 AND environment = $2 AND revoked_at IS NULL
+) OR EXISTS (
+    SELECT 1 FROM ` + sessionsVivantesEtGroupes + `
+       AND gg.environment = $2
 )`
 
 	var ok bool
@@ -38,9 +47,11 @@ SELECT EXISTS (
 // déjà deux droits vivants sur le même couple.
 func (s *Store) EnvironnementsAtteignables(ctx context.Context, userID int64) ([]string, error) {
 	const q = `
-SELECT DISTINCT environment FROM environment_grant
+SELECT environment FROM environment_grant
  WHERE user_id = $1 AND revoked_at IS NULL
- ORDER BY environment`
+UNION
+SELECT gg.environment FROM ` + sessionsVivantesEtGroupes + `
+ ORDER BY 1`
 
 	lignes, err := s.pool.Query(ctx, q, userID)
 	if err != nil {
@@ -61,6 +72,18 @@ SELECT DISTINCT environment FROM environment_grant
 	}
 	return out, nil
 }
+
+// sessionsVivantesEtGroupes joint les sessions vivantes de l'utilisateur `$1`
+// aux droits vivants de leurs groupes, sous l'alias `gg`.
+//
+// Une seule écriture de la condition de vie d'une session — non révoquée, non
+// expirée — pour les deux lectures des droits : la dupliquer, c'est risquer
+// qu'un jour l'une oublie l'expiration. Le fragment FINIT par son WHERE :
+// l'appelant le prolonge par `AND`.
+const sessionsVivantesEtGroupes = `session s
+      JOIN session_group sg ON sg.session_id = s.id
+      JOIN group_grant gg ON gg.group_name = sg.group_name AND gg.revoked_at IS NULL
+     WHERE s.user_id = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`
 
 // colonnesGrant projette un droit avec les sujets des deux comptes.
 //
@@ -255,5 +278,100 @@ SELECT u.id, $2, NULLIF($3, 0)::bigint
 		}
 	}
 
+	if err := appliquerLesGroupes(ctx, tx, plan.Groupes); err != nil {
+		return err
+	}
+
 	return tx.Commit(ctx)
+}
+
+// appliquerLesGroupes exécute la moitié du plan qui porte sur les groupes, dans
+// la transaction des droits nominatifs. Révocations d'abord, pour la même
+// raison que plus haut.
+//
+// Aucun « groupe inconnu » ici : un groupe n'est pas provisionné côté warden.
+func appliquerLesGroupes(ctx context.Context, tx pgx.Tx, plan core.GroupPlan) error {
+	for _, c := range plan.Revoquer {
+		const q = `UPDATE group_grant SET revoked_at = now()
+                    WHERE group_name = $1 AND environment = $2 AND revoked_at IS NULL`
+		if _, err := tx.Exec(ctx, q, c.Group, c.Environment); err != nil {
+			return fmt.Errorf("révocation du groupe %s sur %q: %w", c.Group, c.Environment, err)
+		}
+	}
+	for _, g := range plan.RevoquerAdmin {
+		const q = `UPDATE admin_group SET revoked_at = now()
+                    WHERE group_name = $1 AND revoked_at IS NULL`
+		if _, err := tx.Exec(ctx, q, g); err != nil {
+			return fmt.Errorf("révocation de l'administration du groupe %s: %w", g, err)
+		}
+	}
+	for _, c := range plan.Accorder {
+		const q = `INSERT INTO group_grant (group_name, environment) VALUES ($1, $2)`
+		if _, err := tx.Exec(ctx, q, c.Group, c.Environment); err != nil {
+			return fmt.Errorf("droit du groupe %s sur %q: %w", c.Group, c.Environment, err)
+		}
+	}
+	for _, g := range plan.AccorderAdmin {
+		const q = `INSERT INTO admin_group (group_name) VALUES ($1)`
+		if _, err := tx.Exec(ctx, q, g); err != nil {
+			return fmt.Errorf("administration du groupe %s: %w", g, err)
+		}
+	}
+	return nil
+}
+
+// ListGroupGrants rend les droits des groupes, RÉVOQUÉS compris : c'est, comme
+// ListGrants, une vue d'audit.
+func (s *Store) ListGroupGrants(ctx context.Context) ([]core.GroupGrant, error) {
+	const q = `
+SELECT group_name, environment, granted_at, revoked_at
+  FROM group_grant
+ ORDER BY group_name, environment, granted_at DESC`
+
+	lignes, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("liste des droits de groupe: %w", err)
+	}
+	defer lignes.Close()
+
+	var out []core.GroupGrant
+	for lignes.Next() {
+		var g core.GroupGrant
+		var revoque *time.Time
+		if err := lignes.Scan(&g.Group, &g.Environment, &g.GrantedAt, &revoque); err != nil {
+			return nil, fmt.Errorf("lecture d'un droit de groupe: %w", err)
+		}
+		if revoque != nil {
+			g.RevokedAt = *revoque
+		}
+		out = append(out, g)
+	}
+	if err := lignes.Err(); err != nil {
+		return nil, fmt.Errorf("liste des droits de groupe: %w", err)
+	}
+	return out, nil
+}
+
+// GroupesAdmin rend, triés, les groupes qui ouvrent VIVEMENT l'administration.
+func (s *Store) GroupesAdmin(ctx context.Context) ([]string, error) {
+	const q = `SELECT group_name FROM admin_group WHERE revoked_at IS NULL ORDER BY group_name`
+
+	lignes, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("groupes d'administration: %w", err)
+	}
+	defer lignes.Close()
+
+	out := []string{}
+	for lignes.Next() {
+		var g string
+		if err := lignes.Scan(&g); err != nil {
+			return nil, fmt.Errorf("lecture d'un groupe d'administration: %w", err)
+		}
+		out = append(out, g)
+	}
+	if err := lignes.Err(); err != nil {
+		return nil, fmt.Errorf("groupes d'administration: %w", err)
+	}
+	return out, nil
 }

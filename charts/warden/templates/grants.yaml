@@ -1,4 +1,4 @@
-{{- if and .Values.grants.enabled .Values.grants.environments }}
+{{- if and .Values.grants.enabled (or .Values.grants.environments (kindIs "slice" .Values.grants.admins)) }}
 # Les droits par environnement (§10.2, ADR-0033).
 #
 # Le contenu vient de `.Values.grants.environments` — voir `values.yaml` pour ce
@@ -26,10 +26,21 @@ data:
       {{- range $env, $subjects := .Values.grants.environments }}
       {{ $env }}:
         {{- range $subjects }}
-        - {{ . }}
+        - {{ . | quote }}
         {{- end }}
         {{- if not $subjects }}
         # Liste vide : un « personne » EXPLICITE, qui ferme l'environnement.
         {{- end }}
       {{- end }}
+    {{- if kindIs "slice" .Values.grants.admins }}
+    # Groupes de l'annuaire qui ouvrent l'administration (ADR-0053).
+    admins:
+      {{- range .Values.grants.admins }}
+      - {{ . | quote }}
+      {{- end }}
+      {{- if not .Values.grants.admins }}
+      # Liste vide : AUCUN groupe n'administre.
+      []
+      {{- end }}
+    {{- end }}
 {{- end }}

@@ -57,6 +57,29 @@ func (a *Server) HandleListGrants(w http.ResponseWriter, r *http.Request) {
 	for _, g := range droits {
 		out = append(out, versGrantPayload(g))
 	}
+
+	// Les droits des GROUPES (ADR-0053) suivent, sous leur nom `group:…` : c'est
+	// ainsi qu'ils s'écrivent dans `grants.yaml`, et la CLI les affiche sans rien
+	// savoir de plus. Seulement sans filtre de compte — un groupe n'est pas un
+	// compte, et qui en est membre se demande à l'AD.
+	if r.URL.Query().Get("subject") == "" {
+		groupes, err := a.deps.Access.ListGroupGrants(r.Context())
+		if err != nil {
+			slog.Error("liste des droits de groupe en échec", slog.String("error", err.Error()))
+			http.Error(w, "could not read the grants", http.StatusInternalServerError)
+			return
+		}
+		for _, g := range groupes {
+			p := grantPayload{
+				Subject: core.PrefixeGroupe + g.Group, Environment: g.Environment,
+				GrantedAt: g.GrantedAt.UTC().Format(time.RFC3339),
+			}
+			if g.Revoked() {
+				p.RevokedAt = g.RevokedAt.UTC().Format(time.RFC3339)
+			}
+			out = append(out, p)
+		}
+	}
 	ecrireJSON(w, out)
 }
 

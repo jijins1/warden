@@ -70,7 +70,7 @@ func (m *magasin) PoserMotDePasse(_ context.Context, _ int64, e string, _ int64)
 	return nil
 }
 
-func (m *magasin) CreateSession(_ context.Context, userID int64, hash []byte, expire time.Time) (int64, error) {
+func (m *magasin) CreateSession(_ context.Context, userID int64, hash []byte, expire time.Time, _ []string) (int64, error) {
 	m.prochain++
 	m.sessions[string(hash)] = core.Session{ID: m.prochain, UserID: userID, ExpiresAt: expire}
 	return m.prochain, nil

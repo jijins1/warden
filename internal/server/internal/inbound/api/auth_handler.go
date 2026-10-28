@@ -70,7 +70,13 @@ func (a *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Le LOGIN saisi en plus du sujet : pour un compte AD, le sujet est
+	// l'objectGUID, et seul le login relie cette ligne à « connexion refusée ».
+	// Le TYPE dit si c'est l'AD ou un compte local — une connexion par un
+	// compte de bris de glace doit se repérer (ADR-0053).
 	slog.Info("session ouverte",
+		slog.String("login", p.Subject),
+		slog.String("type", string(ouverture.User.Type)),
 		slog.String("sujet", ouverture.User.Subject),
 		slog.Int64("compte", ouverture.User.ID))
 

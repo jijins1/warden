@@ -51,6 +51,12 @@ type Authenticator struct {
 	// verrou ne sait pas faire.
 	places chan struct{}
 
+	// L'annuaire est optionnel (ADR-0053) : nil, seuls les comptes locaux
+	// existent. Branché par BrancherLAnnuaire.
+	annuaire        Annuaire
+	comptesAnnuaire ComptesAnnuaire
+	dureeAnnuaire   time.Duration
+
 	maintenant func() time.Time
 }
 
@@ -118,15 +124,34 @@ func (a *Authenticator) Login(ctx context.Context, subject string, motDePasse []
 		return Ouverture{}, ctx.Err()
 	}
 
+	// LE COMPTE LOCAL D'ABORD, puis l'annuaire (ADR-0053, décision 1). Tous deux
+	// sous la même file et le même plancher : sans eux, cet endpoint deviendrait
+	// un relais pour marteler l'AD, dont le verrouillage de compte se
+	// retournerait contre les utilisateurs nommés (décision 7).
 	user, empreinte, err := a.comptes.EmpreinteDuCompte(ctx, subject)
 	switch {
-	case errors.Is(err, ErrNotFound):
-		// Le compte n'existe pas — et on dérive quand même. Voir l'étape 2.
+	case errors.Is(err, ErrNotFound) || (err == nil && user.Disabled):
+		// Pas de compte local ACTIF : c'est l'annuaire qui répond, et lui seul.
+		// Un compte local désactivé compte comme absent — c'est ainsi qu'une
+		// personne passe à l'AD sans rien supprimer. Une panne de l'AD est
+		// rendue telle quelle, sans retomber sur rien.
+		if a.annuaire != nil {
+			return a.parLAnnuaire(ctx, subject, motDePasse)
+		}
+		// Sans annuaire, on dérive quand même — voir l'étape 2.
 		empreinte = EmpreinteLeurre
 	case err != nil:
 		return Ouverture{}, fmt.Errorf("lecture du compte : %w", err)
 	}
 
+	// Un compte local actif ne retombe JAMAIS sur l'annuaire : un mauvais mot de
+	// passe local est un refus, pas une invitation à essayer l'autre source.
+	return a.parCompteLocal(ctx, subject, user, empreinte, motDePasse)
+}
+
+// parCompteLocal vérifie un mot de passe local, contre une empreinte leurre si
+// le compte n'existe pas (étape 2 de Login).
+func (a *Authenticator) parCompteLocal(ctx context.Context, subject string, user User, empreinte string, motDePasse []byte) (Ouverture, error) {
 	ok, err := VerifierMotDePasse(empreinte, motDePasse)
 	if err != nil {
 		// Empreinte illisible : un défaut de DONNÉES, pas un mauvais mot de
@@ -138,13 +163,19 @@ func (a *Authenticator) Login(ctx context.Context, subject string, motDePasse []
 		return Ouverture{}, ErrIdentifiantsRefuses
 	}
 
+	// Un compte local n'a pas de groupes : ses droits sont nominatifs.
+	return a.ouvrir(ctx, user, a.duree, nil)
+}
+
+// ouvrir tire un jeton et enregistre la session, avec les groupes qu'elle porte.
+func (a *Authenticator) ouvrir(ctx context.Context, user User, duree time.Duration, groupes []string) (Ouverture, error) {
 	token, err := NewSessionToken()
 	if err != nil {
 		return Ouverture{}, err
 	}
-	expire := a.maintenant().Add(a.duree)
+	expire := a.maintenant().Add(duree)
 
-	if _, err := a.sessions.CreateSession(ctx, user.ID, token.Hash(), expire); err != nil {
+	if _, err := a.sessions.CreateSession(ctx, user.ID, token.Hash(), expire, groupes); err != nil {
 		return Ouverture{}, fmt.Errorf("ouverture de session : %w", err)
 	}
 	return Ouverture{Token: token, User: user, ExpiresAt: expire}, nil
@@ -228,6 +259,9 @@ func (a *Authenticator) Authentifier(ctx context.Context, token SessionToken) (U
 		// Une session survivante sur un compte désactivé : la désactivation
 		// révoque les sessions, mais la course existe et le compte prime.
 		return User{}, Session{}, ErrNotFound
+	}
+	if err := a.ajouterLAdministrationParGroupe(ctx, &user, session.Groupes); err != nil {
+		return User{}, Session{}, err
 	}
 
 	// L'échec n'empêche RIEN : `last_seen_at` est du confort d'exploitation, et

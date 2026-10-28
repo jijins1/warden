@@ -30,6 +30,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/gitd"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
 	"github.com/jijins1/warden/internal/server/internal/inbound/ingest"
+	"github.com/jijins1/warden/internal/server/internal/outbound/activedirectory"
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
@@ -414,6 +415,49 @@ func dureeDeSession() time.Duration {
 	return time.Duration(h) * time.Hour
 }
 
+// brancherLAnnuaire fait passer la connexion par Active Directory quand
+// WARDEN_LDAP_URL est posée (ADR-0053).
+//
+// Une configuration INCOMPLÈTE fait échouer le démarrage plutôt que retomber sur
+// les comptes locaux : un déploiement qui croit avoir branché l'AD et ne l'a pas
+// fait laisserait tout le monde dehors sans le dire.
+func brancherLAnnuaire(auth *core.Authenticator, st *store.Store) error {
+	adresse := os.Getenv(EnvLDAPURL)
+	if adresse == "" {
+		return nil
+	}
+	ad, err := activedirectory.New(activedirectory.Config{
+		URL:          adresse,
+		StartTLS:     os.Getenv(EnvLDAPStartTLS) == "1",
+		BaseDN:       os.Getenv(EnvLDAPBaseDN),
+		BindDN:       os.Getenv(EnvLDAPBindDN),
+		BindPassword: os.Getenv(EnvLDAPBindPassword),
+		CAFile:       os.Getenv(EnvLDAPCAFile),
+	})
+	if err != nil {
+		return err
+	}
+	// Même règle que WARDEN_SESSION_TTL_HOURS : une valeur illisible laisse le
+	// défaut du cœur, qui est sûr.
+	var duree time.Duration
+	if brut := os.Getenv(EnvLDAPSessionTTL); brut != "" {
+		if h, err := strconv.Atoi(brut); err == nil && h > 0 {
+			duree = time.Duration(h) * time.Hour
+		} else {
+			slog.Warn("durée de session AD illisible, le défaut s'applique",
+				slog.String("variable", EnvLDAPSessionTTL), slog.String("valeur", brut),
+				slog.Duration("défaut", core.DureeSessionAnnuaire))
+		}
+	}
+	if err := auth.BrancherLAnnuaire(ad, st, duree); err != nil {
+		return err
+	}
+	slog.Info("connexion par l'annuaire",
+		slog.String("url", adresse),
+		slog.String("note", "un compte local actif est vérifié d'abord ; sans lui, l'AD répond seul, sans repli"))
+	return nil
+}
+
 // reconcilierLesDroits applique le document de droits s'il a changé.
 //
 // Adossée au passage du réconciliateur de pods plutôt qu'à sa propre boucle : le
@@ -449,7 +493,21 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 		return
 	}
 
-	plan, err := core.PlanifierLesDroits(doc, actuels)
+	// Les GROUPES de l'annuaire (ADR-0053) : lus AVANT de planifier, pour que le
+	// plan soit complet et s'applique en une transaction.
+	groupes, err := st.ListGroupGrants(ctx)
+	if err != nil {
+		source.Oublier()
+		slog.Error("lecture des droits de groupe en échec", slog.String("error", err.Error()))
+		return
+	}
+	admins, err := st.GroupesAdmin(ctx)
+	if err != nil {
+		source.Oublier()
+		slog.Error("lecture des groupes d'administration en échec", slog.String("error", err.Error()))
+		return
+	}
+	plan, err := core.PlanifierLesDroits(doc, actuels, groupes, admins)
 	if err != nil {
 		// Le document est syntaxiquement lisible mais refusé : document vide,
 		// environnement mal formé, compte vide. C'est une erreur de RÉDACTION, et
@@ -459,6 +517,7 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
 		return
 	}
+
 	if plan.Vide() {
 		slog.Info("droits inchangés", slog.Int("conformes", plan.Inchanges))
 		return
@@ -482,9 +541,25 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 		slog.Warn("droit accordé par le document",
 			slog.String("sujet", c.Subject), slog.String("environnement", c.Environment))
 	}
+	for _, c := range plan.Groupes.Revoquer {
+		slog.Warn("droit de groupe révoqué par le document",
+			slog.String("groupe", c.Group), slog.String("environnement", c.Environment))
+	}
+	for _, c := range plan.Groupes.Accorder {
+		slog.Warn("droit de groupe accordé par le document",
+			slog.String("groupe", c.Group), slog.String("environnement", c.Environment))
+	}
+	for _, g := range plan.Groupes.RevoquerAdmin {
+		slog.Warn("administration retirée à un groupe par le document", slog.String("groupe", g))
+	}
+	for _, g := range plan.Groupes.AccorderAdmin {
+		slog.Warn("administration accordée à un groupe par le document", slog.String("groupe", g))
+	}
 	slog.Info("droits réconciliés",
 		slog.Int("accordés", len(plan.Accorder)), slog.Int("révoqués", len(plan.Revoquer)),
-		slog.Int("inchangés", plan.Inchanges))
+		slog.Int("inchangés", plan.Inchanges),
+		slog.Int("groupes_accordés", len(plan.Groupes.Accorder)+len(plan.Groupes.AccorderAdmin)),
+		slog.Int("groupes_révoqués", len(plan.Groupes.Revoquer)+len(plan.Groupes.RevoquerAdmin)))
 }
 
 // IntervalleDesProteges est le rythme de relecture du fichier des options par
@@ -893,6 +968,9 @@ func runAPI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := brancherLAnnuaire(auth, st); err != nil {
+		return err
+	}
 
 	server, err := api.New(cfg, api.Deps{
 		Runs:          st,
@@ -1040,6 +1118,24 @@ const (
 	// Absente, le défaut du cœur s'applique — trente jours. Voir
 	// `core.DureeSession` pour l'arbitrage qu'il représente.
 	EnvSessionTTL = "WARDEN_SESSION_TTL_HOURS"
+
+	// EnvLDAPURL branche la connexion par Active Directory (ADR-0053) :
+	// `ldaps://dc.exemple.local:636`. Absente, seuls les comptes locaux
+	// existent.
+	EnvLDAPURL = "WARDEN_LDAP_URL"
+	// EnvLDAPStartTLS vaut `1` pour une URL `ldap://` chiffrée par StartTLS.
+	EnvLDAPStartTLS = "WARDEN_LDAP_STARTTLS"
+	// EnvLDAPBaseDN borne la recherche des comptes et des groupes.
+	EnvLDAPBaseDN = "WARDEN_LDAP_BASE_DN"
+	// EnvLDAPBindDN et EnvLDAPBindPassword sont le compte de service, en
+	// lecture seule, qui cherche les comptes et leurs groupes.
+	EnvLDAPBindDN       = "WARDEN_LDAP_BIND_DN"
+	EnvLDAPBindPassword = "WARDEN_LDAP_BIND_PASSWORD"
+	// EnvLDAPCAFile est l'autorité des contrôleurs de domaine, au format PEM.
+	EnvLDAPCAFile = "WARDEN_LDAP_CA_FILE"
+	// EnvLDAPSessionTTL est la validité d'une session AD, en HEURES. Défaut
+	// dix : c'est la borne de prise d'effet d'un retrait de groupe.
+	EnvLDAPSessionTTL = "WARDEN_LDAP_SESSION_TTL_HOURS"
 
 	// EnvReconcileSeconds est le rythme du réconciliateur de PODS, en secondes.
 	// Chaque passage coûte un LIST à l'API Kubernetes ; ce qu'il borne est un

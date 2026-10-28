@@ -373,7 +373,7 @@ func TestReconcilierPuisReplanifierDonneUnPlanVide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGrants: %v", err)
 	}
-	plan, err := core.PlanifierLesDroits(document, actuels)
+	plan, err := core.PlanifierLesDroits(document, actuels, nil, nil)
 	if err != nil {
 		t.Fatalf("PlanifierLesDroits: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestReconcilierPuisReplanifierDonneUnPlanVide(t *testing.T) {
 	}
 
 	actuels, _ = s.ListGrants(ctx, "")
-	second, err := core.PlanifierLesDroits(document, actuels)
+	second, err := core.PlanifierLesDroits(document, actuels, nil, nil)
 	if err != nil {
 		t.Fatalf("seconde planification: %v", err)
 	}

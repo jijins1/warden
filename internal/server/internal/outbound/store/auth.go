@@ -207,13 +207,35 @@ SELECT ` + colonnesUser + `, c.user_id IS NOT NULL, u.last_seen_at
 
 // --- les sessions ---
 
-// CreateSession enregistre une session ouverte.
-func (s *Store) CreateSession(ctx context.Context, userID int64, hash []byte, expire time.Time) (int64, error) {
+// CreateSession enregistre une session ouverte, avec ses groupes.
+//
+// Session et groupes dans la MÊME transaction : une session sans les groupes
+// qu'elle devait porter serait une session qui marche, mais sans les droits
+// attendus, et rien ne dirait pourquoi.
+func (s *Store) CreateSession(ctx context.Context, userID int64, hash []byte, expire time.Time, groupes []string) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("ouverture de session du compte %d: %w", userID, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	const q = `INSERT INTO session (user_id, token_hash, expires_at)
                VALUES ($1, $2, $3) RETURNING id`
 
 	var id int64
-	if err := s.pool.QueryRow(ctx, q, userID, hash, expire).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, q, userID, hash, expire).Scan(&id); err != nil {
+		return 0, fmt.Errorf("ouverture de session du compte %d: %w", userID, err)
+	}
+
+	if len(groupes) > 0 {
+		const qg = `INSERT INTO session_group (session_id, group_name)
+                    SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`
+		if _, err := tx.Exec(ctx, qg, id, groupes); err != nil {
+			return 0, fmt.Errorf("groupes de la session du compte %d: %w", userID, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("ouverture de session du compte %d: %w", userID, err)
 	}
 	return id, nil
@@ -226,9 +248,14 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, hash []byte, ex
 // les filtrer plus haut inviterait un appelant à décider lui-même de ce qui est
 // encore valable, et c'est exactement la décision qu'on ne veut pas voir se
 // dupliquer.
+//
+// La session rendue porte ses groupes (ADR-0053). `is_admin` est le drapeau du
+// compte, et lui seul : l'administration par groupe est une règle du cœur.
 func (s *Store) SessionByToken(ctx context.Context, hash []byte) (core.Session, core.User, error) {
 	const q = `
-SELECT ` + colonnesUser + `, s.id, s.expires_at, s.last_seen_at
+SELECT ` + colonnesUser + `, s.id, s.expires_at, s.last_seen_at,
+       coalesce((SELECT array_agg(sg.group_name ORDER BY sg.group_name)
+                   FROM session_group sg WHERE sg.session_id = s.id), '{}')
   FROM session s
   JOIN users u ON u.id = s.user_id
  WHERE s.token_hash = $1
@@ -238,7 +265,7 @@ SELECT ` + colonnesUser + `, s.id, s.expires_at, s.last_seen_at
 	var u core.User
 	var sess core.Session
 	err := scannerUser(s.pool.QueryRow(ctx, q, hash), &u,
-		&sess.ID, &sess.ExpiresAt, &sess.LastSeenAt)
+		&sess.ID, &sess.ExpiresAt, &sess.LastSeenAt, &sess.Groupes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Le message ne dit PAS laquelle des trois raisons : il finit dans un log
 		// serveur, mais rien ne garantit qu'il ne finira pas aussi ailleurs.

@@ -95,6 +95,42 @@ api:
   # passe coupent toutes les sessions immédiatement.
   sessionTtlHours: 720
 
+  # Connexion par Active Directory (ADR-0053). Désactivée : seuls les comptes
+  # locaux existent.
+  #
+  # Activée, `warden login` vérifie d'abord un compte local ACTIF de ce nom,
+  # et sinon interroge l'AD. Pas de repli : si l'AD est injoignable, la
+  # connexion AD échoue. Les comptes locaux deviennent le bris de glace :
+  # quelques comptes au nom absent de l'AD (`breakglass-…`). Pour faire passer
+  # quelqu'un à l'AD, désactiver son compte local.
+  #
+  # Les droits se donnent à des GROUPES dans `grants` ci-dessous
+  # (`group:GG-Warden-Prod`), et l'administration par `grants.admins`.
+  ldap:
+    enabled: false
+    # `ldaps://` obligatoire, ou `ldap://` avec `startTLS: true`. Une URL en
+    # clair fait échouer le démarrage : le mot de passe de l'utilisateur
+    # traverserait le réseau à chaque connexion.
+    url: ""
+    startTLS: false
+    baseDN: ""
+    # Compte de service en LECTURE SEULE : il cherche le compte et ses groupes,
+    # il ne vérifie aucun mot de passe.
+    bindDN: ""
+    # Secret existant qui porte le mot de passe du compte de service.
+    bindPasswordSecret:
+      name: ""
+      key: password
+    # ConfigMap existant qui porte l'autorité des contrôleurs de domaine (PEM),
+    # souvent une PKI interne. Vide : les autorités du système.
+    caConfigMap:
+      name: ""
+      key: ca.crt
+    # Validité d'une session AD, en HEURES. Les groupes sont figés à la
+    # connexion : cette durée BORNE la prise d'effet d'un retrait de groupe
+    # dans l'AD. Dix heures couvrent une journée sans se reconnecter.
+    sessionTtlHours: 10
+
   # Adresse du rôle `git` ANNONCÉE à la CLI avec son jeton de push (ADR-0034).
   #
   # Elle doit être joignable DEPUIS LE POSTE de l'utilisateur — c'est en général
@@ -198,12 +234,23 @@ controller:
 # pas droit. CE QU'IL N'ACHÈTE PAS : qu'un run légitime de `staging` joigne une
 # machine de `prod`. L'egress du runner est ouvert, et le §10.2 pose que « le
 # périmètre est appliqué par le réseau ou il ne l'est pas ».
+#
+# GROUPES (ADR-0053) : une entrée `group:<sAMAccountName>` donne l'environnement
+# à tout membre du groupe AD, imbriqués compris, tant qu'il a une session
+# ouverte. Les autres entrées restent des comptes LOCAUX.
+#
+# `admins` ne prend que des groupes. ABSENTE (null), elle ne touche à rien ; une
+# liste vide retire l'administration à tous les groupes.
 grants:
   enabled: true
   environments: {}
   # environments:
   #   prod:
-  #     - ruokki
+  #     - group:GG-Warden-Prod
+  #     - breakglass-ops
+  admins: null
+  # admins:
+  #   - group:GG-Warden-Admin
 
 # Les options par environnement (ADR-0044) — NI L'UNE NI L'AUTRE n'est un
 # contrôle d'accès à un credential. Voir `grants` ci-dessus pour ça.

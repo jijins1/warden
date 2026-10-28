@@ -117,6 +117,10 @@ type Session struct {
 	ID     int64
 	UserID int64
 
+	// Groupes sont ceux de l'annuaire, figés à la connexion (ADR-0053) ; vide
+	// pour un compte local.
+	Groupes []string
+
 	ExpiresAt  time.Time
 	LastSeenAt time.Time
 }
@@ -124,9 +128,17 @@ type Session struct {
 // SessionStore range et relit les sessions.
 type SessionStore interface {
 	// CreateSession enregistre une session et rend son identifiant.
-	CreateSession(ctx context.Context, userID int64, hash []byte, expire time.Time) (int64, error)
+	//
+	// `groupes` sont ceux que l'annuaire a rendus à la connexion, normalisés ;
+	// nil pour un compte local. Ils sont figés avec la session et ne changent
+	// plus ensuite : c'est la durée de la session qui borne la prise d'effet
+	// d'un retrait de groupe (ADR-0053, décision 3).
+	CreateSession(ctx context.Context, userID int64, hash []byte, expire time.Time, groupes []string) (int64, error)
 
 	// SessionByToken résout un jeton VIVANT en session et utilisateur.
+	//
+	// La session rendue porte ses groupes. `User.IsAdmin` est le seul drapeau
+	// du compte : l'administration par groupe est calculée par le cœur.
 	//
 	// Une session expirée ou révoquée est ErrNotFound et non une session qu'on
 	// rendrait « invalide » : le seul appelant est le middleware, et un état

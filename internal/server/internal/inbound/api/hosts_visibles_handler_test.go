@@ -45,6 +45,10 @@ func (droitsDeTest) ListGrants(context.Context, string) ([]core.EnvironmentGrant
 	return nil, nil
 }
 
+func (droitsDeTest) ListGroupGrants(context.Context) ([]core.GroupGrant, error) {
+	return nil, nil
+}
+
 func (droitsDeTest) Grant(context.Context, string, string, int64) (core.EnvironmentGrant, error) {
 	return core.EnvironmentGrant{}, nil
 }

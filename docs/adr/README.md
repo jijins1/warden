@@ -63,6 +63,7 @@ d'implémentation prises en cours de route.
 | [0048](0048-connexion-par-mot-de-passe-sans-enrolement.md) | Connexion par mot de passe, sans enrôlement, empreintes vérifiées | Proposed |
 | [0049](0049-mise-a-jour-de-la-cli-alignee-sur-le-serveur.md) | Mise à jour de la CLI alignée sur le serveur, binaires signés par minisign | Proposed |
 | [0052](0052-liste-des-machines-visibles.md) | La liste des machines visibles : bornée par les droits vivants, pas par l'administration | Proposed |
+| [0053](0053-connexion-active-directory-et-droits-par-groupe.md) | Connexion Active Directory et droits par groupe | Proposed |
 
 ## Convention
 

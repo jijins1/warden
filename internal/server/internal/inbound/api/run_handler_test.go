@@ -494,6 +494,10 @@ func (d droitsFactices) ListGrants(context.Context, string) ([]core.EnvironmentG
 	return nil, nil
 }
 
+func (d droitsFactices) ListGroupGrants(context.Context) ([]core.GroupGrant, error) {
+	return nil, nil
+}
+
 func (d droitsFactices) Grant(context.Context, string, string, int64) (core.EnvironmentGrant, error) {
 	return core.EnvironmentGrant{}, nil
 }
