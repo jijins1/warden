@@ -201,9 +201,11 @@ services:
     environment:
       <<: [*db, *docker]
       WARDEN_GRANTS_FILE: /etc/warden/grants.yaml
+      WARDEN_PROTECTED_FILE: /etc/warden/protected.yaml
       WARDEN_RECONCILE_SECONDS: "10"
     volumes:
       - ./grants.yaml:/etc/warden/grants.yaml:ro
+      - ./protected.yaml:/etc/warden/protected.yaml:ro
 
   # Une machine gérée : sshd et Python, rien d'autre. Joignable des seuls
   # runners, sous le nom `cible`.
