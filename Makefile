@@ -74,6 +74,30 @@ test-e2e: images ## Étage 3 — e2e sur le cluster du kubeconfig courant (crée
 	WARDEN_E2E_IMAGE=$(IMAGE_BASE)/wardend:$(IMAGE_TAG) \
 	  go test -tags=e2e -count=1 ./internal/server/internal/outbound/orchestrator/ ./e2e/
 
+# L'interface web, dans un VRAI navigateur, contre la stack `deploy/compose`.
+#
+# Un étage à part, et pas une variante de `test-e2e` : il ne vise aucun cluster,
+# il démarre des conteneurs sur le démon Docker local (projet `warden-e2e`,
+# ports 8080, 8082 et 4280) et les détruit à la fin — `WARDEN_E2E_KEEP=1` les
+# garde pour regarder ce qui a échoué. Ce qu'il établit et que Vitest ne peut
+# pas : le CORS, la CSP, le cookie de session et `config.json` tels que le
+# navigateur les applique, sur l'image de l'UI qui sera livrée.
+#
+# `images` en prérequis pour la même raison que `test-e2e` ; les variables
+# disent à compose d'utiliser CES images, et non les `warden/*:dev` qu'il
+# prendrait par défaut — et qui peuvent dater. WARDEN_E2E_BUILD=0 évite que
+# le setup reconstruise l'UI une seconde fois. `playwright install` n'est pas
+# un no-op au premier lancement : il télécharge Chromium (~120 Mo).
+.PHONY: test-e2e-ui
+test-e2e-ui: images ## Étage 3 bis — e2e de l'UI (Playwright) contre la stack compose locale
+	cd web/ui && npm ci --no-audit --no-fund && npx playwright install chromium
+	cd web/ui && \
+	  WARDEN_IMAGE=$(IMAGE_BASE)/wardend:$(IMAGE_TAG) \
+	  WARDEN_RUNNER_IMAGE=$(IMAGE_BASE)/warden-runner:$(IMAGE_TAG) \
+	  WARDEN_UI_IMAGE=$(IMAGE_BASE)/warden-ui:$(IMAGE_TAG) \
+	  WARDEN_E2E_BUILD=0 \
+	  npm run e2e
+
 # ---------------------------------------------------------------------------
 # Images.
 #

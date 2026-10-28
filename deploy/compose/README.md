@@ -15,6 +15,7 @@ les runners sont lancés par l'API Docker, tous les secrets sont dans Vault.
 | `vault`, `vault-init` | Vault dev ; montages KV v2 `warden` et `warden-transit`, policy sans `list`, AppRole |
 | `docker-proxy` | le seul accès au démon Docker — warden ne voit jamais le socket |
 | `api` | API, canal de dispatch, ingestion ; lance les runners |
+| `ui` | l'interface web, sur `http://localhost:4280` |
 | `git` | dépôts d'audit ; push de la CLI sur `localhost:8082` |
 | `controller` | droits, réconciliation des runs, ramassage et borne de durée des conteneurs |
 | `passerelle` | la seule porte des runners vers warden : trois ports relayés, rien d'autre |
@@ -41,6 +42,31 @@ docker compose -f deploy/compose/compose.yaml up -d --build
 # Le premier compte. `grants.yaml` lui donne `prod`.
 docker compose -f deploy/compose/compose.yaml exec api wardend user add --subject alice --admin
 ```
+
+## L'interface web
+
+`up --build` construit aussi l'image de l'UI (`build/ui.Dockerfile`). Elle est
+servie sur <http://localhost:4280> — `localhost`, pas `127.0.0.1` : l'API
+n'accepte que l'origine déclarée dans `WARDEN_UI_ORIGINS`, et le cookie de
+session (`SameSite=Strict`) ne part que si l'UI et l'API sont du même site.
+
+On s'y connecte avec le sujet et le mot de passe qu'a affichés
+`wardend user add`. Deux fichiers montés font le lien avec l'API :
+
+| Fichier | Rôle |
+|---|---|
+| `ui-config.json` | le `config.json` de l'UI : l'adresse de l'API |
+| `ui-security-headers.conf` | les en-têtes de l'image, avec `connect-src` ouvert à `localhost:8080` (HTTP et WebSocket) |
+
+Côté API, `WARDEN_UI_COOKIE_INSECURE=1` retire `Secure` du cookie, sans quoi
+le navigateur ne le renverrait pas en HTTP. Réglage de développement, comme
+`WARDEN_INSECURE_DEV_AUTH`.
+
+La suite e2e de l'UI (`make test-e2e-ui`, Playwright) démarre cette stack sous
+le projet `warden-e2e`, puis la détruit — `WARDEN_E2E_KEEP=1` la garde pour
+regarder ce qui a échoué ; elle s'arrête alors par
+`docker compose -p warden-e2e -f deploy/compose/compose.yaml down -v`. Les
+ports étant les mêmes, la stack de dev doit être arrêtée pendant la suite.
 
 ## Un premier run
 

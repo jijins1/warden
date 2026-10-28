@@ -17,7 +17,10 @@
 #
 #   docker build -f build/wardend.Dockerfile -t warden/wardend:dev .
 #   docker build -f build/runner.Dockerfile  -t warden/warden-runner:dev .
-#   docker compose -f deploy/compose/compose.yaml up -d
+#   docker compose -f deploy/compose/compose.yaml up -d --build
+#
+# L'interface web est alors sur http://localhost:4280 (et non 127.0.0.1 : voir
+# le service `ui`).
 #
 # Voir deploy/compose/README.md pour la suite (compte, dépôt, machine, run).
 
@@ -126,6 +129,16 @@ services:
       <<: [*db, *docker]
       WARDEN_INSECURE_DEV_AUTH: "1"
       WARDEN_API_ADDR: ":8080"
+      # L'origine EXACTE de l'UI, qui ouvre le CORS et l'anti-CSRF à elle seule.
+      # `localhost` et non `127.0.0.1` : le navigateur compare la chaîne, et le
+      # cookie `SameSite=Strict` ne part que si l'UI et l'API sont du même site
+      # — localhost:4280 et localhost:8080 le sont, le port n'y compte pas.
+      WARDEN_UI_ORIGINS: http://localhost:4280
+      # Le cookie de session sans `Secure` : la stack parle HTTP, et un cookie
+      # `Secure` y serait posé puis jamais renvoyé — la connexion « réussirait »
+      # et la page suivante redemanderait le mot de passe. Même statut que
+      # WARDEN_INSECURE_DEV_AUTH : un réglage de développement, jamais ailleurs.
+      WARDEN_UI_COOKIE_INSECURE: "1"
       WARDEN_GIT_INTERNAL_URL: http://git:8081
       WARDEN_GIT_INTERNAL_TOKEN: secret-interne-de-dev
       WARDEN_GIT_RUNNER_URL: http://passerelle:8083
@@ -147,6 +160,29 @@ services:
         condition: service_completed_successfully
       vault-init:
         condition: service_completed_successfully
+
+  # L'interface web (ADR-0035), sur une origine distincte de l'API comme en
+  # production. L'image est celle qui sera livrée ; seuls changent les deux
+  # fichiers qu'un déploiement fournit toujours : `config.json` (l'adresse de
+  # l'API) et le fragment d'en-têtes, dont `connect-src` doit nommer l'API.
+  ui:
+    image: ${WARDEN_UI_IMAGE:-warden/warden-ui:dev}
+    build:
+      context: ../..
+      dockerfile: build/ui.Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./ui-config.json:/usr/share/nginx/html/config.json:ro
+      - ./ui-security-headers.conf:/etc/nginx/warden-security-headers.conf:ro
+    ports:
+      - "127.0.0.1:4280:8080"
+    # L'image n'en porte pas (la sonde Kubernetes en tient lieu) ; ici c'est
+    # elle que `up --wait` attend. `config.json` plutôt que `/` : c'est le
+    # fichier monté, donc la preuve que le montage a pris.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/config.json"]
+      interval: 2s
+      retries: 30
 
   # La seule porte entre les runners et warden : un réseau Docker ne filtre
   # pas les ports, donc `api` et `git` restent hors de `warden-runners` et
