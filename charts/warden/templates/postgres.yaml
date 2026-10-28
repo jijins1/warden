@@ -64,4 +64,20 @@ spec:
       - name: warden_diff_reader
         ensure: present
         login: false
+
+  {{- with .Values.postgres.backup.objectStoreName }}
+
+  # Archivage continu des WAL et sauvegardes par le plugin barman-cloud.
+  #
+  # Le journal d'audit n'existe qu'ici (ADR-0008) : un disque perdu sans
+  # archive, c'est l'historique de tous les runs perdu. La chart ne déclare
+  # que le branchement ; l'ObjectStore — la destination S3 et ses
+  # identifiants — appartient à l'installation, parce que c'est elle qui sait
+  # où ranger ses sauvegardes, pas le produit.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ . }}
+  {{- end }}
 {{- end }}

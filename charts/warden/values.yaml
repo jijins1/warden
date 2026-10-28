@@ -300,6 +300,11 @@ postgres:
     # Explicite alors que le cluster a une classe par défaut : il en a même DEUX
     # marquées `(default)`, ce qui rend le choix implicite indéterminé.
     storageClass: local-path
+  backup:
+    # Nom d'un ObjectStore `barmancloud.cnpg.io` du namespace. Vide : pas
+    # d'archivage, la base ne survit qu'à son disque. Le plugin barman-cloud
+    # doit être installé dans le cluster.
+    objectStoreName: ""
 
 database:
   # Le Secret qui porte la chaîne de connexion. CNPG le publie sous ce nom.
