@@ -1,0 +1,18 @@
+<section class="w-page">
+  <header class="w-page-head">
+    <div>
+      <h1><ng-content select="w-page-recherche-titre" /></h1>
+      <p><ng-content select="w-page-recherche-perimetre" /></p>
+    </div>
+    <span class="w-spacer"></span>
+    <ng-content select="w-page-recherche-action" />
+  </header>
+
+  <div class="w-toolbar">
+    <ng-content select="w-page-recherche-outils" />
+  </div>
+
+  <ng-content select="w-page-recherche-filtres" />
+  <ng-content select="w-page-recherche-resultats" />
+  <ng-content select="w-page-recherche-pagination" />
+</section>

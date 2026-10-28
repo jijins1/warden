@@ -1,0 +1,30 @@
+@if (run().secrets_unmasked) {
+  <!-- ADR-0017 : la substitution n'a pas pu s'appliquer. Ce n'est pas une
+       note de bas de page — c'est la question « faut-il faire tourner un
+       secret ? ». -->
+  <p class="w-callout w-callout--error" role="alert">
+    <mat-icon>key_off</mat-icon>
+    <span>
+      <strong>Redaction failed for this run.</strong> Injected values may
+      appear in clear text in its diffs. Treat the affected secrets as
+      exposed and rotate them.
+    </span>
+  </p>
+}
+
+@if (run().artifact_pruned) {
+  <!-- ADR-0013 : le run a bien existé, c'est son arbre git qui n'est plus
+       là. Un 404 sur les diffs laisserait croire à une erreur ; le dire
+       franchement est la consigne que porte `core.Run`. -->
+  <p class="w-callout">
+    <mat-icon>inventory_2</mat-icon>
+    <span>
+      The code for this run was pruned
+      @if (run().artifact_pruned_at; as le) {
+        on {{ le | date: 'mediumDate' }}
+      }
+      . The run and its events remain; its git diffs can no longer be
+      computed.
+    </span>
+  </p>
+}

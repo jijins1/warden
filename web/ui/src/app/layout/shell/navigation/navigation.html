@@ -1,0 +1,52 @@
+<w-masthead>
+  <w-masthead-marque>
+    <a class="w-wordmark" routerLink="/">warden</a>
+  </w-masthead-marque>
+
+  <w-masthead-nav>
+    <a routerLink="/runs" routerLinkActive="is-active">Runs</a>
+    <a routerLink="/hosts" routerLinkActive="is-active">Machines</a>
+    <a routerLink="/vault" routerLinkActive="is-active">Vault</a>
+    @if (auth.admin()) {
+      <a routerLink="/repos" routerLinkActive="is-active">Repos</a>
+      <a routerLink="/environments" routerLinkActive="is-active">Environments</a>
+    }
+  </w-masthead-nav>
+
+  <w-masthead-actions>
+    <button
+      type="button"
+      class="w-iconbtn"
+      [matMenuTriggerFor]="menuTheme"
+      matTooltip="Theme"
+      aria-label="Theme">
+      <mat-icon>contrast</mat-icon>
+    </button>
+    <mat-menu #menuTheme="matMenu">
+      <button mat-menu-item (click)="themes.poser('system')">
+        <mat-icon>computer</mat-icon><span>System</span>
+      </button>
+      <button mat-menu-item (click)="themes.poser('light')">
+        <mat-icon>light_mode</mat-icon><span>Light</span>
+      </button>
+      <button mat-menu-item (click)="themes.poser('dark')">
+        <mat-icon>dark_mode</mat-icon><span>Dark</span>
+      </button>
+    </mat-menu>
+
+    @if (auth.utilisateur(); as moi) {
+      <button type="button" class="w-user" [matMenuTriggerFor]="menuCompte">
+        {{ moi.subject }}
+        <mat-icon>expand_more</mat-icon>
+      </button>
+      <mat-menu #menuCompte="matMenu">
+        <a mat-menu-item routerLink="/account">
+          <mat-icon>badge</mat-icon><span>Account</span>
+        </a>
+        <button mat-menu-item (click)="deconnecter()">
+          <mat-icon>logout</mat-icon><span>Sign out</span>
+        </button>
+      </mat-menu>
+    }
+  </w-masthead-actions>
+</w-masthead>

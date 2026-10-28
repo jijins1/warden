@@ -1,0 +1,11 @@
+<span class="w-seg" role="group" [attr.aria-label]="libelle()">
+  @for (option of options(); track option) {
+    <button
+      type="button"
+      [class.is-on]="option === actif()"
+      [attr.aria-pressed]="option === actif()"
+      (click)="choisir(option)">
+      {{ option }}
+    </button>
+  }
+</span>

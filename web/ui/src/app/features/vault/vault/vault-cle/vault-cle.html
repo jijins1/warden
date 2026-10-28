@@ -1,0 +1,20 @@
+<section class="w-card w-form" aria-labelledby="titre-cle">
+  <h2 id="titre-cle">Key</h2>
+
+  @if (!charge()) {
+    <div class="w-progress" role="progressbar" aria-label="Loading the vault key"></div>
+  } @else {
+    <w-descripteur-cle-vault [descripteur]="descripteur()" />
+
+    @if (erreur(); as message) {
+      <p class="w-callout w-callout--error" role="alert">
+        <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+      </p>
+    }
+
+    <w-pose-cle-vault-form
+      [rotation]="existe()"
+      [enCours]="enCours()"
+      (posee)="poser($event)" />
+  }
+</section>

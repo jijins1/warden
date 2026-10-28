@@ -1,0 +1,22 @@
+// Polices AUTO-HÉBERGÉES, jamais un CDN : warden se déploie en réseau
+// restreint, et une interface qui exige un hôte tiers pour s'afficher n'y rend
+// rien. C'est aussi ce qui permet une CSP sans `font-src` tiers.
+//
+// Les fichiers sont ceux du design system (`project/fonts/`), variables : une
+// seule requête par famille couvre toutes les graisses.
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('../fonts/IBMPlexSans-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../fonts/JetBrainsMono-Variable.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}

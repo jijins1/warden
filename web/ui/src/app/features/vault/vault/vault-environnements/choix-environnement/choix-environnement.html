@@ -1,0 +1,20 @@
+@if (aucun()) {
+  <p class="w-empty">
+    You have no access to any environment, so there is no vault key to manage.
+  </p>
+} @else {
+  <div>
+    <span class="w-seg" role="group" aria-label="Environment">
+      @for (env of environnements(); track env) {
+        <button
+          type="button"
+          class="w-mono"
+          [class.is-on]="env === selection()"
+          [attr.aria-pressed]="env === selection()"
+          (click)="choisi.emit(env)">
+          {{ env }}
+        </button>
+      }
+    </span>
+  </div>
+}

@@ -1,0 +1,11 @@
+<section class="w-section">
+  <h2 class="w-section-title">Events</h2>
+  @if (flux(); as f) {
+    <w-event-stream
+      [lignes]="f.lignes()"
+      [etat]="f.etat()"
+      [erreur]="f.erreur()"
+      [fin]="f.fin()"
+      (ouvrir)="ouvrirDiff($event)" />
+  }
+</section>

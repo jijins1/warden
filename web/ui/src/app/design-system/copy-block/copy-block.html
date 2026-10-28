@@ -1,0 +1,11 @@
+<div class="w-copy">
+  <pre>{{ texte() }}</pre>
+  <button
+    type="button"
+    class="w-btn w-btn--outline"
+    [class.is-done]="copie()"
+    [cdkCopyToClipboard]="texte()"
+    (cdkCopyToClipboardCopied)="copier($event)">
+    {{ copie() ? 'Copied' : 'Copy' }}
+  </button>
+</div>

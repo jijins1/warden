@@ -1,0 +1,14 @@
+<span class="w-seg" aria-label="View">
+  <button type="button" [class.is-on]="playbooks()" [attr.aria-pressed]="playbooks()" (click)="vue.set('playbooks')">
+    Playbooks
+  </button>
+  <button type="button" [class.is-on]="runs()" [attr.aria-pressed]="runs()" (click)="vue.set('runs')">
+    Runs
+  </button>
+</span>
+
+@if (playbooks()) {
+  <ng-content select="w-playbooks-machine" />
+} @else {
+  <ng-content select="w-runs-machine" />
+}

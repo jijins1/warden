@@ -1,0 +1,19 @@
+// Mise en page seulement : le style des lignes vient de `w-stream` et consorts.
+// Écart assumé sur `.w-stream` : il devient le repère du bouton « Follow » qui
+// flotte au-dessus de la liste.
+.w-stream {
+  position: relative;
+}
+
+.defilement {
+  display: block;
+  height: 60vh;
+  min-height: 320px;
+}
+
+// Le bouton « Follow » flotte sur la liste, en bas à droite.
+.rattraper {
+  position: absolute;
+  right: var(--w-gap-4);
+  bottom: var(--w-gap-4);
+}

@@ -1,0 +1,47 @@
+@let r = run();
+<div class="w-card">
+  <dl class="w-facts">
+    <div>
+      <dt>Run</dt>
+      <dd class="w-mono">{{ r.run_ref }}</dd>
+    </div>
+    <div>
+      <dt>Launched by</dt>
+      <dd><w-auteur [subject]="r.author.subject" [displayName]="r.author.display_name" /></dd>
+    </div>
+    <div>
+      <dt>Repository</dt>
+      <dd class="w-mono">{{ r.repo }}</dd>
+    </div>
+    @if (r.inventory) {
+      <div>
+        <dt>Inventory</dt>
+        <dd class="w-mono">{{ r.inventory }}</dd>
+      </div>
+    }
+    @if (r.audit_sha) {
+      <div>
+        <dt>Audit commit</dt>
+        <dd class="w-mono" [matTooltip]="r.audit_sha">{{ shaCourt() }}</dd>
+      </div>
+    }
+    @if (r.mainline_ref) {
+      <div>
+        <dt>Branch</dt>
+        <dd class="w-mono">{{ r.mainline_ref }}</dd>
+      </div>
+    }
+    <div>
+      <dt>Changed</dt>
+      <dd><w-changed-count [count]="r.changed_count" /></dd>
+    </div>
+    <div>
+      <dt>Started</dt>
+      <dd class="w-mono">{{ r.started_at | date: 'medium' }}</dd>
+    </div>
+    <div>
+      <dt>Duration</dt>
+      <dd class="w-mono">{{ r.started_at | duree: r.ended_at }}</dd>
+    </div>
+  </dl>
+</div>

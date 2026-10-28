@@ -8,7 +8,7 @@ import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { MatIconRegistry } from '@angular/material/icon';
 import { routes } from './app.routes';
-import { credentialsInterceptor, errorInterceptor } from './core/http/api.interceptor';
+import { credentialsInterceptor, errorInterceptor } from './core/interceptors/api/api.interceptor';
 
 export const appConfig: ApplicationConfig = {
   providers: [

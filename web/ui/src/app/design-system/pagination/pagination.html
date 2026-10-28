@@ -1,0 +1,9 @@
+<div class="w-pager">
+  @if (reste()) {
+    <button type="button" class="w-btn w-btn--outline" [disabled]="chargement()" (click)="suite.emit()">
+      {{ chargement() ? 'Loading…' : 'Load more' }}
+    </button>
+  } @else {
+    <span class="w-end">End of results</span>
+  }
+</div>

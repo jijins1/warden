@@ -1,0 +1,24 @@
+<section class="w-section">
+  <h2 class="w-section-title">Parameters</h2>
+
+  @if (sansDrapeau()) {
+    <p class="w-nothing">Ran without flags or extra vars.</p>
+  }
+
+  @if (aDrapeau()) {
+    <div class="w-params">
+      @for (option of lus().options; track option) {
+        <span class="w-param">{{ option }}</span>
+      }
+      @for (v of lus().extraVars; track v.nom) {
+        <span class="w-param">-e {{ v.nom }}={{ v.valeur }}</span>
+      }
+    </div>
+  }
+
+  <p class="w-hint">
+    Variables forwarded from the caller's shell (<code>forward_env</code> in
+    <code>.ansibleproxy.yml</code>) are never recorded, so they do not appear
+    here.
+  </p>
+</section>

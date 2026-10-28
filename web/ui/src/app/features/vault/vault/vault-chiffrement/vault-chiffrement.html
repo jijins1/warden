@@ -1,0 +1,22 @@
+<section class="w-card w-form" aria-labelledby="titre-chiffrement">
+  <div>
+    <h2 id="titre-chiffrement">Encrypt a value</h2>
+    <p class="w-lede">
+      Produces a <code>!vault |</code> block to paste into a versioned YAML file.
+      The value is sent once, encrypted with this environment's key, and not
+      kept.
+    </p>
+  </div>
+
+  <w-chiffrement-vault-form [enCours]="enCours()" (soumis)="chiffrer($event)" />
+
+  @if (erreur(); as message) {
+    <p class="w-callout w-callout--error" role="alert">
+      <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+    </p>
+  }
+
+  @if (bloc(); as b) {
+    <w-copy-block [texte]="b" />
+  }
+</section>

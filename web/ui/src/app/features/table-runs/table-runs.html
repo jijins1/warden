@@ -1,0 +1,51 @@
+<div class="w-table" role="table">
+  <div class="w-tr w-th" role="row">
+    <span role="columnheader">Run</span>
+    <span role="columnheader">Playbook</span>
+    <span role="columnheader">Environment</span>
+    <span role="columnheader">By</span>
+    <span role="columnheader">State</span>
+    <span role="columnheader" class="w-right">Changed</span>
+    <span role="columnheader" class="w-right">Duration</span>
+    <span role="columnheader" class="w-right">Started</span>
+  </div>
+
+  @for (run of lignes(); track run.RunRef) {
+    <a class="w-tr" role="row" [routerLink]="['/runs', run.RunRef]">
+      <!-- Un run_ref ne se tronque jamais sous 10 caractères ; la valeur
+           complète reste au survol. -->
+      <span role="cell" class="w-ref w-truncate" [title]="run.RunRef">{{ run.refCourte }}</span>
+
+      <span role="cell" class="playbook">
+        <span class="w-truncate">{{ run.Playbook || '—' }}</span>
+        @if (run.SecretsUnmasked) {
+          <!-- La rédaction de l'ADR-0017 a échoué : des valeurs injectées
+               peuvent être en clair dans les diffs de ce run. Ça se dit, ça ne
+               se devine pas. -->
+          <mat-icon
+            class="secrets"
+            aria-label="Redaction failed"
+            matTooltip="Redaction failed: injected values may appear in this run's diffs">
+            key_off
+          </mat-icon>
+        }
+      </span>
+
+      <span role="cell"><w-badge-environnement [env]="run.Environment" /></span>
+
+      <span role="cell" class="w-dim">
+        <w-auteur [subject]="run.Author.Subject" [displayName]="run.Author.DisplayName" />
+      </span>
+
+      <span role="cell">
+        <w-state-chip [state]="run.State" [cause]="run.TerminationCause" />
+      </span>
+
+      <span role="cell" class="w-right"><w-changed-count [count]="run.ChangedCount" /></span>
+
+      <span role="cell" class="w-right w-mono w-dim">{{ run.StartedAt | duree: run.EndedAt }}</span>
+
+      <span role="cell" class="w-right w-mono w-dim">{{ run.StartedAt | date: 'dd/MM HH:mm' }}</span>
+    </a>
+  }
+</div>

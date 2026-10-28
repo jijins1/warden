@@ -1,0 +1,59 @@
+@if (run(); as r) {
+  <w-page-detail>
+    <w-page-detail-retour>
+      <a class="w-back" routerLink="/runs"><mat-icon>arrow_back</mat-icon><span>Runs</span></a>
+      @if (chargement()) {
+        <div class="w-progress" role="progressbar" aria-label="Loading the run"></div>
+      }
+    </w-page-detail-retour>
+
+    <w-page-detail-titre>{{ titre() }}</w-page-detail-titre>
+
+    <w-page-detail-contexte>
+      <span class="w-on">on</span>
+      <w-badge-environnement [env]="r.environment" />
+    </w-page-detail-contexte>
+
+    @if (relance(); as parametres) {
+      <w-page-detail-actions>
+        <a class="w-btn w-btn--outline" routerLink="/runs/new" [queryParams]="parametres">
+          <mat-icon>replay</mat-icon><span>Relaunch</span>
+        </a>
+      </w-page-detail-actions>
+    }
+
+    <w-page-detail-etat>
+      <w-state-chip [state]="r.state" [cause]="r.termination_cause" />
+    </w-page-detail-etat>
+
+    <w-page-detail-corps>
+      @if (erreur(); as message) {
+        <p class="w-callout w-callout--error" role="alert">
+          <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+        </p>
+      }
+      <w-encarts-run [run]="r" />
+      <w-faits-run [run]="r" />
+      <w-run-parametres [flags]="r.flags ?? []" />
+      @if (refFlux(); as ref) {
+        <w-flux-run [runRef]="ref" />
+      }
+      @if (!r.artifact_pruned) {
+        <w-run-diff [runRef]="r.run_ref" />
+      }
+    </w-page-detail-corps>
+  </w-page-detail>
+} @else {
+  <!-- Pas encore de run : l'en-tête n'a rien à dire, l'erreur prend sa place. -->
+  <section class="w-page">
+    <a class="w-back" routerLink="/runs"><mat-icon>arrow_back</mat-icon><span>Runs</span></a>
+    @if (chargement()) {
+      <div class="w-progress" role="progressbar" aria-label="Loading the run"></div>
+    }
+    @if (erreur(); as message) {
+      <p class="w-callout w-callout--error" role="alert">
+        <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+      </p>
+    }
+  </section>
+}

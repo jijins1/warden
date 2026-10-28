@@ -1,0 +1,156 @@
+// Jetons du design system warden.
+//
+// La source est le design system « warden » de Claude Design
+// (https://claude.ai/artifact/L9xRWn35GFBNzijjySJKy9, `project/tokens.json`).
+// Une valeur se change là-bas d'abord, puis ici : deux sources qui divergent
+// laissent les maquettes mentir sur l'écran.
+//
+// Des variables CSS et non Sass : le thème bascule À L'EXÉCUTION, et une
+// variable Sass, résolue à la compilation, imposerait deux feuilles de style.
+//
+// Les couleurs d'ÉTAT ne passent PAS par `mat.theme()`. Le thème Material porte
+// la marque, là où un état est une donnée du domaine : `changed` n'est pas une
+// teinte d'accent, c'est le fait qu'une machine a été modifiée.
+
+// Le sombre est le DÉFAUT du produit — un outil d'exploitation se lit longtemps,
+// souvent la nuit. Le clair le suit, valeur pour valeur.
+$sombre: (
+  bg: #0b0d10,
+  surface: #12151a,
+  surface-2: #181c23,
+  surface-3: #1f242c,
+  border: #262c36,
+  border-strong: #5e6878,
+  scrim: rgba(3, 4, 6, 0.72),
+  text: #e6eaf0,
+  text-dim: #9ba6b4,
+  text-faint: #848f9e,
+  masthead: #151920,
+  on-masthead: #f2f4f7,
+  on-masthead-dim: #9ba6b4,
+  masthead-accent: #3cc4cf,
+  primary: #3cc4cf,
+  primary-dim: #2a9aa4,
+  primary-bg: #0c2a2e,
+  on-primary: #0b0d10,
+  ok: #3fb950,
+  ok-bg: #0e2a15,
+  ok-br: #1c5029,
+  changed: #d9a21b,
+  changed-bg: #2e2408,
+  changed-br: #5e4a22,
+  failed: #f85149,
+  failed-bg: #3a1315,
+  failed-br: #6b2427,
+  unreachable: #db61d9,
+  unreachable-bg: #331033,
+  unreachable-br: #5f2a5e,
+  skipped: #5c93b8,
+  skipped-bg: #0f2029,
+  skipped-br: #26485c,
+  unknown: #868e99,
+  unknown-bg: #1c2027,
+  unknown-br: #39414f,
+  running: #58a6ff,
+  running-bg: #0c2438,
+  running-br: #1b4570,
+  // `interrupted` est ARDOISE et jamais rouge : l'ADR-0031 pose qu'un runner
+  // mourant ne prononce pas de verdict.
+  interrupted: #8b9bb4,
+  interrupted-bg: #1a1f28,
+  interrupted-br: #39414f,
+);
+
+$clair: (
+  bg: #f6f7f9,
+  surface: #ffffff,
+  surface-2: #f1f3f6,
+  surface-3: #e7ebf0,
+  border: #dadfe6,
+  border-strong: #7f8997,
+  scrim: rgba(16, 20, 26, 0.48),
+  text: #10141a,
+  text-dim: #4e5967,
+  text-faint: #5f6975,
+  // La barre reste un bandeau graphite dans les deux thèmes : c'est le cadre de
+  // l'app, pas une surface.
+  masthead: #161a21,
+  on-masthead: #f2f4f7,
+  on-masthead-dim: #a3adba,
+  masthead-accent: #4fd1db,
+  primary: #086f7a,
+  primary-dim: #065a63,
+  primary-bg: #e3f5f6,
+  on-primary: #ffffff,
+  ok: #1a7f37,
+  ok-bg: #e8f5ec,
+  ok-br: #b4dcc1,
+  changed: #8a5d00,
+  changed-bg: #fcf3da,
+  changed-br: #e6cf8f,
+  failed: #cf222e,
+  failed-bg: #fcebec,
+  failed-br: #f0b6ba,
+  unreachable: #a128a0,
+  unreachable-bg: #faebfa,
+  unreachable-br: #e6b3e5,
+  skipped: #386b8a,
+  skipped-bg: #eaf2f7,
+  skipped-br: #b9d2e0,
+  unknown: #5c6570,
+  unknown-bg: #eef1f4,
+  unknown-br: #c8d0d8,
+  running: #0969da,
+  running-bg: #e7f1fd,
+  running-br: #aecbf2,
+  interrupted: #5a6779,
+  interrupted-bg: #eff2f5,
+  interrupted-br: #c3ccd6,
+);
+
+@mixin couleurs($theme) {
+  @each $nom, $valeur in $theme {
+    --w-#{$nom}: #{$valeur};
+  }
+}
+
+:root {
+  @include couleurs($sombre);
+  color-scheme: dark;
+
+  // Familles. Le mono n'est pas décoratif : il porte tout ce qui se copie, se
+  // compare caractère à caractère ou se colle dans un shell.
+  --w-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --w-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  // Cinq pas, trois rayons : les SEULS utilisés.
+  --w-gap-1: 4px;
+  --w-gap-2: 8px;
+  --w-gap-3: 12px;
+  --w-gap-4: 20px;
+  --w-gap-5: 32px;
+  --w-radius-sm: 4px;
+  --w-radius-md: 7px;
+  --w-radius-lg: 10px;
+
+  // La ligne dense sert le flux d'events : le volume par run n'est pas mesuré
+  // et le suiveur lit par lots de 500.
+  --w-row-dense: 28px;
+  --w-row: 40px;
+  // Chaque pixel pris en haut est un event de moins à l'écran.
+  --w-masthead-height: 48px;
+}
+
+// `system` n'écrit aucun attribut et défère à la préférence du poste ; un choix
+// explicite écrit `data-theme`. Les deux chemins mènent aux mêmes valeurs.
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    @include couleurs($clair);
+    color-scheme: light;
+  }
+}
+
+:root[data-theme='light'] {
+  @include couleurs($clair);
+  color-scheme: light;
+}

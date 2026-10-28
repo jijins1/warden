@@ -1,0 +1,22 @@
+<w-page-detail>
+  <w-page-detail-retour>
+    <a class="w-back" routerLink="/hosts"><mat-icon>arrow_back</mat-icon><span>Machines</span></a>
+  </w-page-detail-retour>
+
+  <w-page-detail-titre><span class="w-mono">{{ host() }}</span></w-page-detail-titre>
+
+  <w-page-detail-corps>
+    <p class="w-lede">
+      Restricted to what you can see: your own runs, plus any environment you hold
+      a live grant on. This is <strong>not</strong> necessarily the machine's full
+      history — an environment outside your grants stays out of reach.
+    </p>
+
+    <w-outils-machine [host]="host()" [since]="since()" />
+
+    <w-onglets-machine>
+      <w-playbooks-machine [host]="host()" [since]="since()" [until]="until()" />
+      <w-runs-machine [host]="host()" [since]="since()" [until]="until()" />
+    </w-onglets-machine>
+  </w-page-detail-corps>
+</w-page-detail>

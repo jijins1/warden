@@ -1,0 +1,19 @@
+@if (chargement()) {
+  <div class="w-progress" role="progressbar" aria-label="Loading repositories"></div>
+}
+
+@if (erreur(); as message) {
+  <p class="w-callout w-callout--error" role="alert">
+    <mat-icon>error_outline</mat-icon>
+    <span>{{ message }}</span>
+    <button type="button" class="w-btn w-btn--text" (click)="charger()">Retry</button>
+  </p>
+}
+
+@if (vide()) {
+  <p class="w-empty">No repository is configured yet.</p>
+}
+
+@if (lignes().length > 0) {
+  <w-table-repos [lignes]="lignes()" />
+}

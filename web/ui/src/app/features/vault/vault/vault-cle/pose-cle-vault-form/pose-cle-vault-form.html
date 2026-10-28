@@ -1,0 +1,41 @@
+<form class="w-form" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+  <fieldset class="w-radios">
+    <legend class="w-legend">How to set the key</legend>
+    <label class="w-check">
+      <input type="radio" formControlName="mode" value="generate" />Generate a new password
+    </label>
+    <label class="w-check">
+      <input type="radio" formControlName="mode" value="import" />Import an existing password
+    </label>
+  </fieldset>
+
+  @if (modeImport()) {
+    <div class="w-field">
+      <label for="mot-de-passe-vault">Vault password</label>
+      <input
+        id="mot-de-passe-vault"
+        class="w-input"
+        type="password"
+        formControlName="plaintext"
+        autocomplete="new-password"
+        aria-describedby="mot-de-passe-vault-aide" />
+      <p id="mot-de-passe-vault-aide" class="w-hint">
+        The one your repository's <code>!vault</code> values are already encrypted with.
+      </p>
+    </div>
+  }
+
+  @if (rotation()) {
+    <label class="w-check">
+      <input type="checkbox" formControlName="confirmation" />
+      I understand that values already encrypted with the current key will no
+      longer decrypt until they are re-encrypted with the new one.
+    </label>
+  }
+
+  <div>
+    <button class="w-btn w-btn--primary" type="submit" [disabled]="envoiImpossible()">
+      {{ libelle() }}
+    </button>
+  </div>
+</form>

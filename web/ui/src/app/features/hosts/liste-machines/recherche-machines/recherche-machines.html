@@ -1,0 +1,36 @@
+<w-page-recherche>
+  <w-page-recherche-titre>Machines</w-page-recherche-titre>
+  <w-page-recherche-perimetre>
+    Every enrolled machine on the environments you have access to. Being an administrator does
+    not widen it.
+  </w-page-recherche-perimetre>
+
+  <w-page-recherche-outils>
+    <w-champ-recherche
+      libelle="Search machines"
+      placeholder="Search machine name…"
+      [valeur]="recherche()"
+      (recherche)="appliquer({ q: $event })" />
+    <w-filtre-environnement [actif]="environnementActif()" (choix)="appliquer({ env: $event })" />
+    <span class="w-spacer"></span>
+    <span class="w-shown">{{ nombreAffiches() }} shown</span>
+  </w-page-recherche-outils>
+
+  <w-page-recherche-filtres>
+    <w-filtres-actifs-machines [filtre]="filtre()" (changement)="appliquer($event)" (effacement)="effacer()" />
+  </w-page-recherche-filtres>
+
+  <w-page-recherche-resultats>
+    <w-resultats-machines
+      [etat]="etat()"
+      [filtrePose]="filtrePose()"
+      (nouvelEssai)="recharger()"
+      (effacement)="effacer()" />
+  </w-page-recherche-resultats>
+
+  <w-page-recherche-pagination>
+    @if (avecResultats()) {
+      <w-pagination [reste]="reste()" [chargement]="chargement()" (suite)="suivante()" />
+    }
+  </w-page-recherche-pagination>
+</w-page-recherche>

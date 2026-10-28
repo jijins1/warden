@@ -1,0 +1,12 @@
+<w-page-connexion>
+  <w-page-connexion-introduction>Sign in to read your runs.</w-page-connexion-introduction>
+  <w-page-connexion-contenu>
+    @if (motDePasseChange()) {
+      <p class="w-callout w-callout--ok" role="status">
+        <mat-icon>check_circle</mat-icon>
+        <span>Password changed. Sign in again with the new one.</span>
+      </p>
+    }
+    <w-connexion [retour]="destination()" />
+  </w-page-connexion-contenu>
+</w-page-connexion>

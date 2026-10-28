@@ -1,0 +1,10 @@
+@if (erreur(); as message) {
+  <p class="w-callout w-callout--error" role="alert">
+    <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+  </p>
+} @else if (environnements(); as envs) {
+  <w-choix-environnement
+    [environnements]="envs"
+    [selection]="selection()"
+    (choisi)="choisir($event)" />
+}

@@ -1,0 +1,14 @@
+// Les colonnes, partagées par l'en-tête et les lignes. Le reste du style
+// appartient au design system (`.w-table`, `.w-tr`, `.w-th`).
+.w-tr {
+  grid-template-columns:
+    108px minmax(160px, 1fr) 108px minmax(90px, 140px) minmax(190px, auto)
+    82px 84px 96px;
+}
+
+.playbook {
+  display: flex;
+  align-items: center;
+  gap: var(--w-gap-2);
+  min-width: 0;
+}
