@@ -361,6 +361,10 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
+	// GET /hosts : les machines que l'appelant peut voir (ADR-0052). Pas de
+	// conflit avec `/hosts/{host}/runs` : le motif sans segment ne capture que
+	// `/hosts` lui-même, pas ce qui est dessous.
+	router.HandleFunc("GET /hosts", a.HandleListVisibleHosts)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
 	router.HandleFunc("GET /hosts/{host}/playbooks", a.HandleListPlaybooksByHost)
 	router.HandleFunc("POST /runs", a.HandleCreateRun)
@@ -413,7 +417,8 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("PUT /admin/keys/{environment}", a.HandlePutKey)
 
 	// `/admin/hosts` et non `/hosts` : `GET /hosts/{host}/runs` existe déjà et
-	// sert la vue d'audit par machine du §6.5. Deux surfaces, deux publics.
+	// sert la vue d'audit par machine du §6.5. Deux surfaces, deux publics —
+	// et `GET /hosts` ne rend que la part de l'inventaire que voit l'appelant.
 	router.HandleFunc("GET /admin/hosts", a.HandleListHosts)
 	router.HandleFunc("PUT /admin/hosts", a.HandleDeclareHosts)
 	router.HandleFunc("DELETE /admin/hosts/{environment}/{host}", a.HandleForgetHost)

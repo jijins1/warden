@@ -185,6 +185,12 @@ type HostCatalog interface {
 	// l'environnement est vide. Triées par (environnement, nom).
 	ListHosts(ctx context.Context, environment string) ([]ManagedHost, error)
 
+	// ListeurDeMachines sert la liste PAGINÉE et BORNÉE par une portée
+	// (MachinesVisibles). Distincte de ListHosts, qui rend tout l'inventaire à
+	// l'administration et lit une chaîne vide comme « tout » : la portée, elle,
+	// lit une liste vide comme « rien ».
+	ListeurDeMachines
+
 	// ForgetHost retire une machine de l'inventaire.
 	//
 	// Il ne retire RIEN de la machine elle-même : la clé publique reste dans

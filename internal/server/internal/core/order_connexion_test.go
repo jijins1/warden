@@ -28,6 +28,10 @@ func (m machinesFactices) ListHosts(_ context.Context, env string) ([]core.Manag
 	return out, nil
 }
 
+func (m machinesFactices) ListerMachines(context.Context, core.FiltreDeMachines) (core.PageDeMachines, error) {
+	return core.PageDeMachines{Hosts: []core.ManagedHost{}}, nil
+}
+
 const cleHote = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemple"
 
 func TestLeMotDePasseDeConnexionPartAvecLesEmpreintesDeclarees(t *testing.T) {

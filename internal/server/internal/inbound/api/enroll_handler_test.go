@@ -91,6 +91,9 @@ func (i inventaireFactice) ListHosts(context.Context, string) ([]core.ManagedHos
 	return nil, nil
 }
 func (i inventaireFactice) ForgetHost(context.Context, string, string) error { return nil }
+func (i inventaireFactice) ListerMachines(context.Context, core.FiltreDeMachines) (core.PageDeMachines, error) {
+	return core.PageDeMachines{}, errPortNonUtilise
+}
 
 const refEnrolement = "01JZQ000000000000000000ABC"
 
