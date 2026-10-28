@@ -1,0 +1,60 @@
+<div class="w-table" role="table" aria-label="Environments">
+  @if (outils()) {
+    <div class="w-xtools">
+      <button type="button" class="w-btn w-btn--text" (click)="toutOuvrir()">Expand all</button>
+      <button type="button" class="w-btn w-btn--text" (click)="toutFermer()">Collapse all</button>
+    </div>
+  }
+
+  <div class="w-tr w-th" role="row">
+    <span></span>
+    <span role="columnheader">Environment</span>
+    <span role="columnheader">Fingerprint</span>
+    <span role="columnheader">Origin</span>
+    <span role="columnheader" class="w-right">Created</span>
+    <span role="columnheader" class="w-right">Rotated</span>
+  </div>
+
+  @for (item of vue(); track item.ligne.environnement) {
+    <div class="w-xrow" role="rowgroup" [class.is-open]="item.ouverte">
+      <button
+        type="button"
+        class="w-tr"
+        role="row"
+        [attr.aria-expanded]="item.ouverte"
+        (click)="basculer(item.ligne.environnement)">
+        <svg class="w-chev" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M4.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span role="cell"><w-badge-environnement [env]="item.ligne.environnement" /></span>
+        <span role="cell" class="w-mono w-truncate">{{ item.ligne.empreinte }}</span>
+        <span role="cell" class="w-dim">{{ item.ligne.origine }}</span>
+        <span role="cell" class="w-right w-mono w-dim">{{ item.ligne.creation | date: 'yyyy-MM-dd HH:mm' }}</span>
+        <span role="cell" class="w-right w-mono w-dim">
+          @if (item.ligne.rotation; as rotation) {
+            {{ rotation | date: 'yyyy-MM-dd HH:mm' }}
+          } @else {
+            —
+          }
+        </span>
+      </button>
+
+      @if (item.ouverte) {
+        <div class="w-xpanel">
+          <div class="w-stack">
+            <dl class="w-facts">
+              <div>
+                <dt>Fingerprint</dt>
+                <dd class="w-mono">{{ item.ligne.empreinte }}</dd>
+              </div>
+            </dl>
+            <div class="w-section">
+              <p class="w-section-title">Public key</p>
+              <w-copy-block [texte]="item.ligne.clePublique" />
+            </div>
+          </div>
+        </div>
+      }
+    </div>
+  }
+</div>

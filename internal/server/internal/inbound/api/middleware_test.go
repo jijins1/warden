@@ -21,6 +21,7 @@ import (
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
+	"github.com/jijins1/warden/internal/version"
 )
 
 const motDePasseDeTest = "un mot de passe de test"
@@ -69,7 +70,7 @@ func (m *magasin) PoserMotDePasse(_ context.Context, _ int64, e string, _ int64)
 	return nil
 }
 
-func (m *magasin) CreateSession(_ context.Context, userID int64, hash []byte, expire time.Time) (int64, error) {
+func (m *magasin) CreateSession(_ context.Context, userID int64, hash []byte, expire time.Time, _ []string) (int64, error) {
 	m.prochain++
 	m.sessions[string(hash)] = core.Session{ID: m.prochain, UserID: userID, ExpiresAt: expire}
 	return m.prochain, nil
@@ -308,8 +309,8 @@ func TestSansJetonNiModeDevToutEstRefuse(t *testing.T) {
 	}
 }
 
-// LE test qui protège l'exception de routage : `/auth/login` est monté hors du
-// middleware, et RIEN d'autre ne doit l'être.
+// LE test qui protège l'exception de routage : `/auth/login` et `/version` sont
+// montés hors du middleware, et RIEN d'autre ne doit l'être.
 func TestSeuleLaConnexionEchappeAuMiddleware(t *testing.T) {
 	h, _ := serveur(t, false)
 
@@ -327,6 +328,26 @@ func TestSeuleLaConnexionEchappeAuMiddleware(t *testing.T) {
 				t.Errorf("%s a répondu 200 sans authentification", chemin)
 			}
 		})
+	}
+}
+
+// La version répond sans session : la CLI la compare à la sienne avant d'en
+// avoir une (ADR-0049).
+func TestLaVersionRepondSansSession(t *testing.T) {
+	h, _ := serveur(t, false)
+
+	resp := appel(t, h, http.MethodGet, "/version", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /version = %d, attendu 200", resp.StatusCode)
+	}
+	var out struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(resp.Corps, &out); err != nil {
+		t.Fatalf("réponse illisible : %v", err)
+	}
+	if out.Version != version.Version {
+		t.Errorf("version = %q, attendu %q", out.Version, version.Version)
 	}
 }
 

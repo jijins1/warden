@@ -1,0 +1,35 @@
+<form class="w-form" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+  <div class="w-field">
+    <label for="connexion-subject">Subject</label>
+    <input
+      id="connexion-subject"
+      class="w-input w-mono"
+      formControlName="subject"
+      autocomplete="username" />
+  </div>
+
+  <div class="w-field">
+    <label for="connexion-password">Password</label>
+    <input
+      id="connexion-password"
+      class="w-input"
+      type="password"
+      formControlName="password"
+      autocomplete="current-password" />
+  </div>
+
+  @if (erreur(); as message) {
+    <p class="w-callout w-callout--error" role="alert">
+      <mat-icon>error_outline</mat-icon>
+      <span>{{ message }}</span>
+    </p>
+  }
+
+  <button class="w-btn w-btn--primary w-btn--block" type="submit" [disabled]="envoiImpossible()">
+    {{ libelleBouton() }}
+  </button>
+
+  @if (enCours()) {
+    <div class="w-progress" role="progressbar" aria-label="Signing in"></div>
+  }
+</form>

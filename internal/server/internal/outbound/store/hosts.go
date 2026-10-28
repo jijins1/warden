@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -93,6 +96,129 @@ SELECT name, environment, address, port, login, coalesce(host_key, ''),
 		return nil, fmt.Errorf("liste des machines: %w", err)
 	}
 	return out, nil
+}
+
+// Bornes de la page de ListerMachines, les mêmes que celles de ListRuns.
+const (
+	machinesParPageParDefaut = 50
+	machinesParPageAuPlus    = 500
+)
+
+// ListerMachines rend une page de machines bornée par une portée.
+//
+// Pagination par keyset sur `(environment, name)`, l'ordre de la contrainte
+// `managed_host_unique` : la page suivante part de l'index au lieu de
+// parcourir les lignes déjà servies. Une ligne SONDE en plus dit s'il y a une
+// suite sans un COUNT.
+//
+// Une portée vide rend une page vide SANS interroger la base — mais APRÈS
+// avoir relu le curseur : un curseur illisible reste une faute de l'appelant,
+// quels que soient ses droits.
+func (s *Store) ListerMachines(ctx context.Context, f core.FiltreDeMachines) (core.PageDeMachines, error) {
+	if f.Limit <= 0 {
+		f.Limit = machinesParPageParDefaut
+	}
+	if f.Limit > machinesParPageAuPlus {
+		f.Limit = machinesParPageAuPlus
+	}
+
+	var apres *positionDeMachine
+	if f.Cursor != "" {
+		p, err := decoderCurseurDeMachine(f.Cursor)
+		if err != nil {
+			return core.PageDeMachines{}, fmt.Errorf("%w %q: %w", core.ErrCurseurIllisible, f.Cursor, err)
+		}
+		apres = &p
+	}
+
+	page := core.PageDeMachines{Hosts: []core.ManagedHost{}}
+	if len(f.Environnements) == 0 {
+		return page, nil
+	}
+
+	// Les paramètres optionnels sont neutralisés en SQL (`$n = ''`) plutôt
+	// qu'assemblés en Go : une seule requête, lisible d'un bloc, dont la liste
+	// de colonnes ne peut pas diverger d'une variante à l'autre.
+	const q = `
+SELECT name, environment, address, port, login, coalesce(host_key, ''),
+       enrollment_mode, enrolled_at, coalesce(enrolled_by, 0)
+  FROM managed_host
+ WHERE environment = ANY($1)
+   AND ($2 = '' OR name ILIKE '%' || $2 || '%')
+   AND ($3 = '' OR (environment, name) > ($3, $4))
+ ORDER BY environment, name
+ LIMIT $5`
+
+	var envCurseur, nomCurseur string
+	if apres != nil {
+		envCurseur, nomCurseur = apres.Environment, apres.Name
+	}
+
+	lignes, err := s.pool.Query(ctx, q, f.Environnements, echapperLike(f.Nom),
+		envCurseur, nomCurseur, f.Limit+1)
+	if err != nil {
+		return core.PageDeMachines{}, fmt.Errorf("liste des machines visibles: %w", err)
+	}
+	defer lignes.Close()
+
+	for lignes.Next() {
+		h, err := scanHost(lignes)
+		if err != nil {
+			return core.PageDeMachines{}, fmt.Errorf("liste des machines visibles: %w", err)
+		}
+		page.Hosts = append(page.Hosts, h)
+	}
+	if err := lignes.Err(); err != nil {
+		return core.PageDeMachines{}, fmt.Errorf("liste des machines visibles: %w", err)
+	}
+
+	if len(page.Hosts) > f.Limit {
+		page.Hosts = page.Hosts[:f.Limit]
+		dernier := page.Hosts[f.Limit-1]
+		page.NextCursor = encoderCurseurDeMachine(positionDeMachine{
+			Environment: dernier.Environment, Name: dernier.Name,
+		})
+	}
+	return page, nil
+}
+
+// positionDeMachine est la clé keyset d'une machine.
+//
+// Encodée en JSON puis en base64url plutôt que jointe par un séparateur : le
+// curseur reste opaque et relisible quel que soit le caractère que contient un
+// nom, aujourd'hui borné par une contrainte, demain peut-être pas.
+type positionDeMachine struct {
+	Environment string `json:"e"`
+	Name        string `json:"n"`
+}
+
+func encoderCurseurDeMachine(p positionDeMachine) string {
+	brut, _ := json.Marshal(p) // deux chaînes : l'encodage ne peut pas échouer
+	return base64.RawURLEncoding.EncodeToString(brut)
+}
+
+func decoderCurseurDeMachine(curseur string) (positionDeMachine, error) {
+	brut, err := base64.RawURLEncoding.DecodeString(curseur)
+	if err != nil {
+		return positionDeMachine{}, errors.New("not base64url")
+	}
+	var p positionDeMachine
+	if err := json.Unmarshal(brut, &p); err != nil {
+		return positionDeMachine{}, errors.New("not a host position")
+	}
+	// Un environnement vide neutraliserait la clause keyset et ramènerait à la
+	// première page : la boucle infinie qu'un curseur illisible doit éviter.
+	if p.Environment == "" || p.Name == "" {
+		return positionDeMachine{}, errors.New("incomplete host position")
+	}
+	return p, nil
+}
+
+// echapperLike neutralise les jokers d'un motif ILIKE : `q=db_` cherche
+// « db_ », pas « db suivi de n'importe quel caractère ». La barre oblique
+// inverse est l'échappement par défaut de LIKE, elle s'échappe donc aussi.
+func echapperLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 // ForgetHost retire une machine de l'inventaire.

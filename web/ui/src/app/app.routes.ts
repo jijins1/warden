@@ -1,11 +1,11 @@
 import { Routes } from '@angular/router';
-import { authGuard, adminGuard } from './core/auth/auth.guard';
+import { authGuard, adminGuard } from './core/guards/auth/auth.guard';
 
 export const routes: Routes = [
   {
     path: 'login',
     title: 'Sign in — warden',
-    loadComponent: () => import('./features/auth/login').then((m) => m.Login),
+    loadComponent: () => import('./features/auth/login/login').then((m) => m.Login),
   },
   {
     // La coquille porte la garde, donc TOUT ce qui vit dessous en hérite. Une
@@ -13,12 +13,12 @@ export const routes: Routes = [
     // verrait pas.
     path: '',
     canActivate: [authGuard],
-    loadComponent: () => import('./layout/shell').then((m) => m.Shell),
+    loadComponent: () => import('./layout/shell/shell').then((m) => m.Shell),
     children: [
       {
         path: 'runs',
-        title: 'My runs — warden',
-        loadComponent: () => import('./features/runs/run-list').then((m) => m.RunList),
+        title: 'Runs — warden',
+        loadComponent: () => import('./features/runs/liste-runs/liste-runs').then((m) => m.ListeRuns),
       },
       {
         // AVANT `runs/:runRef` : un segment statique doit être essayé avant le
@@ -31,7 +31,7 @@ export const routes: Routes = [
         // ci-dessous, qui exposent une vue de l'organisation entière.
         path: 'runs/new',
         title: 'Launch a run — warden',
-        loadComponent: () => import('./features/runs/run-launch').then((m) => m.RunLaunch),
+        loadComponent: () => import('./features/runs/lancement-run/lancement-run').then((m) => m.LancementRun),
       },
       {
         // `runRef` est lié par `withComponentInputBinding` : c'est ce qui rend
@@ -39,24 +39,38 @@ export const routes: Routes = [
         // `GET /runs/{run_ref}`.
         path: 'runs/:runRef',
         title: 'Run — warden',
-        loadComponent: () => import('./features/runs/run-detail').then((m) => m.RunDetail),
+        loadComponent: () => import('./features/runs/run-detail/run-detail').then((m) => m.RunDetail),
       },
       {
-        // Deux chemins, un composant : sans machine on saisit un nom, avec on
-        // voit ses runs. Séparer en deux écrans dupliquerait le formulaire.
+        // `authGuard` seul : `GET /hosts` se restreint lui-même aux
+        // environnements où l'appelant a un droit vivant, administrateur ou non.
         path: 'hosts',
-        title: 'Runs by machine — warden',
-        loadComponent: () => import('./features/hosts/host-runs').then((m) => m.HostRuns),
+        title: 'Machines — warden',
+        loadComponent: () =>
+          import('./features/hosts/liste-machines/liste-machines').then((m) => m.ListeMachines),
       },
       {
         path: 'hosts/:host',
-        title: 'Runs by machine — warden',
-        loadComponent: () => import('./features/hosts/host-runs').then((m) => m.HostRuns),
+        title: 'Machine — warden',
+        loadComponent: () => import('./features/hosts/machine/machine').then((m) => m.Machine),
+      },
+      {
+        // `authGuard` seul, comme `runs/new` : la clé de vault d'un
+        // environnement se gère avec le droit d'y lancer un run (ADR-0045),
+        // pas avec l'administration. Deux chemins, un composant.
+        path: 'vault',
+        title: 'Vault keys — warden',
+        loadComponent: () => import('./features/vault/vault/vault').then((m) => m.Vault),
+      },
+      {
+        path: 'vault/:environment',
+        title: 'Vault keys — warden',
+        loadComponent: () => import('./features/vault/vault/vault').then((m) => m.Vault),
       },
       {
         path: 'account',
         title: 'Account — warden',
-        loadComponent: () => import('./features/account/account').then((m) => m.Account),
+        loadComponent: () => import('./features/account/account/account').then((m) => m.Account),
       },
       {
         // `adminGuard` en plus de la garde de la coquille : `GET /admin/repos`
@@ -65,7 +79,7 @@ export const routes: Routes = [
         path: 'repos',
         title: 'Repos — warden',
         canActivate: [adminGuard],
-        loadComponent: () => import('./features/repos/repo-list').then((m) => m.RepoList),
+        loadComponent: () => import('./features/repos/repos/repos').then((m) => m.Repos),
       },
       {
         // Même raisonnement que `repos` : `GET /admin/keys` est réservé aux
@@ -74,7 +88,7 @@ export const routes: Routes = [
         title: 'Environments — warden',
         canActivate: [adminGuard],
         loadComponent: () =>
-          import('./features/environments/environment-list').then((m) => m.EnvironmentList),
+          import('./features/environments/environnements/environnements').then((m) => m.Environnements),
       },
       { path: '', pathMatch: 'full', redirectTo: 'runs' },
     ],

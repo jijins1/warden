@@ -1,0 +1,61 @@
+<div class="w-stream">
+  <w-barre-flux [(filtre)]="filtre" [total]="total()" [etat]="etat()" />
+
+  @if (erreur(); as message) {
+    <p class="w-callout w-callout--error" role="alert">
+      <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+    </p>
+  }
+
+  <!-- Un bloc par TÂCHE, pas une ligne par event : la question posée sur une
+       flotte est « combien ont changé sur cette tâche », pas le détail machine
+       par machine tant que rien n'a échoué. La liste reste À PLAT — dépliée,
+       une tâche insère ses events juste après son en-tête dans la MÊME liste,
+       voir `aplatir` — pour rester compatible avec `cdk-virtual-scroll`, qui a
+       besoin d'un flux d'éléments de hauteur connue plutôt que d'un résumé
+       contenant lui-même son détail. -->
+  <cdk-virtual-scroll-viewport itemSize="28" class="defilement" (scrolledIndexChange)="auDefilement()">
+    <ng-container *cdkVirtualFor="let ligne of groupes(); trackBy: suivi">
+      @switch (ligne.kind) {
+        @case ('resume') {
+          <!-- La reprise dit sa position ET que rien n'a manqué. Le serveur relit
+               la table depuis l'offset : le rattrapage et le direct sont le même
+               chemin, donc l'affirmation est exacte. -->
+          <p class="w-stream-mark">reconnected — resumed from offset {{ ligne.seq }}, nothing lost</p>
+        }
+        @case ('erreur') {
+          <!-- Pourquoi le run n'a rien exécuté. Écrit par warden, pas recopié
+               d'Ansible : c'est ce qui le distingue du bruit de cycle de vie,
+               écarté juste à côté. Aux couleurs d'échec, parce que c'en est un.
+
+               Interpolation, JAMAIS `innerHTML` : le message peut reprendre la
+               sortie d'`ansible-runner`, qui tourne dans le domaine hostile. -->
+          <p class="w-callout w-callout--error" role="alert">
+            <mat-icon>error_outline</mat-icon><span>{{ ligne.message }}</span>
+          </p>
+        }
+        @case ('tache') {
+          <w-ligne-tache
+            [groupe]="ligne.groupe"
+            [deplie]="ligne.deplie"
+            (basculer)="basculerDepli(ligne.groupe.cle)" />
+        }
+        @case ('event') {
+          <w-ligne-event [event]="ligne.event" (ouvrir)="ouvrir.emit(ligne.event)" />
+        }
+      }
+    </ng-container>
+  </cdk-virtual-scroll-viewport>
+
+  @if (!suivre()) {
+    <button type="button" class="w-btn w-btn--outline rattraper" (click)="retourEnBas()">
+      <mat-icon>arrow_downward</mat-icon><span>Follow</span>
+    </button>
+  }
+
+  @if (fin(); as f) {
+    <p class="w-stream-foot">
+      Run <strong>{{ f.status }}</strong>@if (f.reason) {, {{ f.reason }}}.
+    </p>
+  }
+</div>

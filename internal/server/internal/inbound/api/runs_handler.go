@@ -13,7 +13,7 @@ import (
 )
 
 // HandleListRuns lists runs with keyset pagination.
-// GET /runs?env=&inventory=&state=&since=&until=&changed_min=&cursor=&limit=
+// GET /runs?env=&inventory=&state=&since=&until=&changed_min=&mine=&cursor=&limit=
 func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 	user := ContextUser(r.Context())
 	if !a.policy.CanListRuns(r.Context(), user) {
@@ -21,11 +21,14 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := core.RunFilter{
-		Environment: r.URL.Query().Get("env"),
-		Inventory:   r.URL.Query().Get("inventory"),
-		State:       r.URL.Query().Get("state"),
-		Cursor:      r.URL.Query().Get("cursor"),
+	// The owner is never taken from the query string: core.RunsVisibles sets it
+	// from the authenticated caller and their live grants.
+	filter := core.CriteresDeRuns{
+		Environment:       r.URL.Query().Get("env"),
+		Inventory:         r.URL.Query().Get("inventory"),
+		State:             r.URL.Query().Get("state"),
+		Cursor:            r.URL.Query().Get("cursor"),
+		SeulementLesMiens: r.URL.Query().Get("mine") == "1",
 	}
 
 	// Parse optional limit
@@ -33,14 +36,6 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
 			filter.Limit = limit
 		}
-	}
-
-	// The owner is never taken from the query string: it is the authenticated
-	// caller, or the request does not happen.
-	filter, visible := a.policy.VisibleRunFilter(r.Context(), user, filter)
-	if !visible {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return
 	}
 
 	// Parse optional time filters
@@ -62,7 +57,7 @@ func (a *Server) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := a.deps.Runs.ListRuns(r.Context(), filter)
+	result, err := core.RunsVisibles(r.Context(), a.deps.Runs, a.deps.Access, user.ID, filter)
 	if err != nil {
 		// A bad cursor is the caller's mistake, and the message names it.
 		if strings.Contains(err.Error(), "invalid cursor") {

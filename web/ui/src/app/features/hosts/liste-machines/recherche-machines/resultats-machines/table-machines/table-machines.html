@@ -1,0 +1,21 @@
+<div class="w-table" role="table" aria-label="Machines">
+  <div class="w-tr w-th" role="row">
+    <span role="columnheader">Machine</span>
+    <span role="columnheader">Environment</span>
+    <span role="columnheader">Address</span>
+    <span role="columnheader">Login</span>
+    <span role="columnheader">Enrollment</span>
+    <span role="columnheader" class="w-right">Enrolled</span>
+  </div>
+
+  @for (ligne of lignes(); track ligne.cle) {
+    <a class="w-tr" role="row" [routerLink]="['/hosts', ligne.host]">
+      <span role="cell" class="w-mono w-truncate" [title]="ligne.host">{{ ligne.host }}</span>
+      <span role="cell"><w-badge-environnement [env]="ligne.environnement" /></span>
+      <span role="cell" class="w-mono w-dim w-truncate" [title]="ligne.adresse">{{ ligne.adresse }}</span>
+      <span role="cell" class="w-mono w-dim w-truncate">{{ ligne.login }}</span>
+      <span role="cell" class="w-dim">{{ ligne.enrolement }}</span>
+      <span role="cell" class="w-right w-mono w-dim">{{ ligne.enroleeLe | date: 'yyyy-MM-dd' }}</span>
+    </a>
+  }
+</div>

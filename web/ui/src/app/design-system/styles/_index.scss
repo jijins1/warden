@@ -1,0 +1,35 @@
+// Point d'entrée du design system : ce que `styles.scss` charge, et rien de
+// plus. Une feature n'importe jamais ces fichiers : ses styles se limitent à la
+// mise en page de ses propres blocs.
+@use 'polices';
+@use 'jetons';
+@use 'material';
+@use 'composants';
+
+html {
+  height: 100%;
+  @include material.theme;
+}
+
+@include material.surcharges;
+
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--w-bg);
+  color: var(--w-text);
+  font-family: var(--w-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+// Le mouvement s'arrête si le poste le demande. Seul ce qui est en cours bouge
+// (chip `running`, diode du flux, barre de progression).
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}

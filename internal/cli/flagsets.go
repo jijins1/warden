@@ -32,6 +32,31 @@ func neuf(nom string) *flag.FlagSet {
 	return fs
 }
 
+// parserEntremele parse `args` en acceptant les positionnels AU MILIEU des
+// drapeaux, et rend ces positionnels dans l'ordre.
+//
+// `flag` s'arrête au premier argument qui n'est pas un drapeau : `warden run
+// all -m ping` — la forme d'`ansible`, motif en tête — y laisserait `-m ping`
+// non lu. On reprend donc le parse après chaque positionnel. `--` garde son
+// sens : tout ce qui le suit est positionnel.
+func parserEntremele(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionnels []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		reste := fs.Args()
+		if lus := len(args) - len(reste); lus > 0 && args[lus-1] == "--" {
+			return append(positionnels, reste...), nil
+		}
+		if len(reste) == 0 {
+			return positionnels, nil
+		}
+		positionnels = append(positionnels, reste[0])
+		args = reste[1:]
+	}
+}
+
 // verbosite porte les quatre drapeaux `-v`…`-vvvv` d'un FlagSet.
 //
 // QUATRE booléens et non un compteur, parce que `flag` ne sait pas répéter :
@@ -73,6 +98,11 @@ func (v verbosite) niveau() int {
 type drapeauxSubmit struct {
 	repo, playbook, environnement, inventaire, runRef *string
 	become                                            *prompt.Source
+
+	// connexion est la saisie du mot de passe de connexion SSH (`-k`), et
+	// compte le compte distant (`-u`) — ADR-0048.
+	connexion *prompt.Source
+	compte    *string
 
 	// Les trois du §5.5 que l'ADR-0038 ouvre. Ils portent LE MÊME NOM que chez
 	// `ansible-playbook`, et ce n'est pas de la coquetterie : la commande se
@@ -135,6 +165,13 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
 	// `-K` est le nom qu'`ansible-playbook` lui donne. Voir Abreger.
 	f.become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	// `-k` et `-u` sont les noms d'`ansible-playbook` : le mot de passe de
+	// connexion et le compte distant, pour les machines où chacun se connecte
+	// en son nom (annuaire LDAP, ADR-0048).
+	f.connexion = prompt.Declarer(fs, "pass", "le mot de passe de connexion")
+	f.connexion.Abreger(fs, "k", "abréviation d'--ask-pass, comme ansible-playbook")
+	f.compte = fs.String("user", "", "compte distant, pour les machines dont l'inventaire ne le nomme pas")
+	fs.StringVar(f.compte, "u", "", "abréviation de --user, comme ansible-playbook")
 	return fs, f
 }
 
@@ -146,6 +183,9 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 type drapeauxRun struct {
 	repo, environnement, inventaire, runRef *string
 	become                                  *prompt.Source
+
+	connexion *prompt.Source
+	compte    *string
 
 	module, args *string
 
@@ -191,6 +231,13 @@ func fsRun() (*flag.FlagSet, drapeauxRun) {
 	fs.Var(f.extraVars, "extra-vars", "identique à -e")
 	f.become = prompt.Declarer(fs, "become-pass", "le mot de passe d'élévation")
 	f.become.Abreger(fs, "K", "abréviation d'--ask-become-pass, comme ansible-playbook")
+	// `-k` et `-u` sont les noms d'`ansible-playbook` : le mot de passe de
+	// connexion et le compte distant, pour les machines où chacun se connecte
+	// en son nom (annuaire LDAP, ADR-0048).
+	f.connexion = prompt.Declarer(fs, "pass", "le mot de passe de connexion")
+	f.connexion.Abreger(fs, "k", "abréviation d'--ask-pass, comme ansible-playbook")
+	f.compte = fs.String("user", "", "compte distant, pour les machines dont l'inventaire ne le nomme pas")
+	fs.StringVar(f.compte, "u", "", "abréviation de --user, comme ansible-playbook")
 	return fs, f
 }
 

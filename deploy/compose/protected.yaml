@@ -1,0 +1,6 @@
+# Les options par environnement (ADR-0044) : `prod` porte le badge protégé,
+# `staging` non. C'est un avertissement visuel, pas un contrôle d'accès — les
+# droits restent dans grants.yaml.
+environments:
+  prod:
+    protected: true

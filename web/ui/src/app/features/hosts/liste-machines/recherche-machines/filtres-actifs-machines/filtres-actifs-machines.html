@@ -1,0 +1,11 @@
+@if (visible()) {
+  <div class="w-tags">
+    @for (etiquette of etiquettes(); track etiquette.cle) {
+      <span class="w-tag">
+        {{ etiquette.libelle }}
+        <button type="button" aria-label="Remove filter" (click)="retirer(etiquette.cle)">×</button>
+      </span>
+    }
+    <button type="button" class="w-clear" (click)="effacement.emit()">Clear filters</button>
+  </div>
+}

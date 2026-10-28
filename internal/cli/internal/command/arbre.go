@@ -21,7 +21,7 @@ func Arbre() *Commande {
 		Resume: "warden — exécution auditée de playbooks Ansible",
 		Sous: []Commande{
 			login(), logout(), whoami(), passwd(),
-			completion(),
+			completion(), upgrade(),
 			submit(), run(),
 			logs(),
 			repo(), utilisateur(), droit(), cle(), vault(), hote(), enroler(),
@@ -85,11 +85,29 @@ func completion() Commande {
 			"par cœur, donc il ne peut jamais proposer un verbe ou un drapeau que\n" +
 			"cette CLI n'a pas.\n\n" +
 			"Un geste de mise en place, comme `warden login` : à faire une fois, dans\n" +
-			"le fichier de démarrage du shell.",
+			"le fichier de démarrage du shell. C'est la ligne `source` qu'on y pose,\n" +
+			"pas le script : régénéré à chaque shell, il suit toujours le binaire.",
 		Exemples: []Exemple{
-			{Pourquoi: "bash, une fois pour toutes", Ligne: "warden completion bash >> ~/.bashrc"},
+			{Pourquoi: "bash, une fois pour toutes", Ligne: "echo 'source <(warden completion bash)' >> ~/.bashrc"},
 			{Pourquoi: "zsh, une fois pour toutes", Ligne: "echo 'source <(warden completion zsh)' >> ~/.zshrc"},
 		},
+	}
+}
+
+func upgrade() Commande {
+	return Commande{
+		Nom: "upgrade", Rubrique: RubriqueSession,
+		Resume: "met la CLI à la version du serveur",
+		Usage:  []string{"upgrade"},
+		Details: "Télécharge la release de la version qu'annonce le serveur, vérifie sa\n" +
+			"signature minisign par la clé inscrite dans cette CLI, puis remplace le\n" +
+			"binaire. Rien n'est installé qui ne soit signé pour CETTE version.\n\n" +
+			"« warden submit » et « warden run » font la même vérification et\n" +
+			"refusent de soumettre tant que la CLI n'est pas à la version du serveur.\n\n" +
+			"WARDEN_UPDATE_URL remplace l'hôte des releases par un miroir, qui\n" +
+			"reproduit l'arborescence v<version>/… ; la signature y est vérifiée de\n" +
+			"la même façon.",
+		Exemples: []Exemple{{Ligne: "warden upgrade"}},
 	}
 }
 
@@ -101,6 +119,7 @@ func submit() Commande {
 			"submit --playbook <fichier> [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
 			"submit --playbook <fichier> [--check] [--diff] [--limit <motif>] [-v|-vv|-vvv|-vvvv]",
 			"submit --playbook <fichier> [-b] [--become-user <compte>] [-K]",
+			"submit --playbook <fichier> -u <compte> -k   # machines sans enrôlement (annuaire LDAP)",
 			"submit --playbook <fichier> [-e <nom>=<valeur>]...",
 		},
 		Details: "Le dépôt est celui où vous vous trouvez. `--repo` est inutile quand le\n" +
@@ -140,7 +159,8 @@ func submit() Commande {
 		Flags: []string{"repo", "playbook", "env", "inventory", "run-ref",
 			"check", "diff", "limit", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
-			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
+			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin",
+			"k", "ask-pass", "pass-file", "pass-stdin", "u", "user"},
 		Exemples: []Exemple{
 			{Ligne: "warden submit --playbook play.yml --env prod --inventory hosts"},
 			{Pourquoi: "voir ce qui changerait, sans rien changer",
@@ -191,7 +211,8 @@ func run() Commande {
 		Flags: []string{"repo", "module", "m", "args", "a", "env", "inventory", "run-ref",
 			"check", "diff", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
-			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin"},
+			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin",
+			"k", "ask-pass", "pass-file", "pass-stdin", "u", "user"},
 		Exemples: []Exemple{
 			{Ligne: "warden run all -m ping"},
 			{Pourquoi: "un diagnostic simple sur un groupe",
@@ -243,7 +264,8 @@ func repo() Commande {
 					"feature épinglerait le mauvais point de comparaison pour tous les runs.\n\n" +
 					"Le serveur ne sait cloner qu'en http(s) : si votre origin est une URL\n" +
 					"SSH, donnez la forme http du même dépôt avec --remote-url.",
-				Flags: []string{"name", "remote-url", "mainline-ref", "remote", "yes"},
+				Flags:   []string{"name", "remote-url", "mainline-ref", "remote", "yes"},
+				Valeurs: map[string]string{"name": "mon-depot"},
 				Exemples: []Exemple{
 					{Pourquoi: "tout est déduit du dépôt où l'on se trouve", Ligne: "warden repo declare"},
 					{Pourquoi: "origin est en SSH", Ligne: "warden repo declare --remote-url https://forge.example.com/equipe/mon-depot.git"},
@@ -271,6 +293,7 @@ func utilisateur() Commande {
 				Details: "Le mot de passe est TIRÉ par le serveur et affiché une seule fois : il\n" +
 					"n'est stocké nulle part en clair, et personne ne peut le relire.",
 				Flags:    []string{"subject", "name", "admin"},
+				Valeurs:  map[string]string{"name": "Alice"},
 				Exemples: []Exemple{{Ligne: "warden user add --subject alice --name Alice"}},
 			},
 			{Nom: "list", Resume: "affiche les comptes", Usage: []string{"user list"}},

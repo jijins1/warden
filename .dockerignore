@@ -13,3 +13,13 @@
 
 docs
 specs
+
+# Ce que l'hôte a produit dans web/ui : `npm ci` et `ng build` le refont dans
+# l'image. Le laisser passer enverrait des centaines de Mo au démon à chaque
+# build, et `COPY web/ui/ ./` écraserait les modules installés pour l'image par
+# ceux de l'hôte — compilés pour une autre plateforme, peut-être.
+web/ui/node_modules
+web/ui/dist
+web/ui/.angular
+web/ui/e2e/playwright-report
+web/ui/e2e/test-results

@@ -1,0 +1,10 @@
+<w-formulaire-lancement
+  [valeurInitiale]="valeurInitiale()"
+  [enCours]="enCours()"
+  [erreur]="erreur()"
+  (lancement)="lancer($event)"
+  (annulation)="annuler()" />
+
+@if (enCours()) {
+  <div class="w-progress" role="progressbar" aria-label="Launching the run"></div>
+}

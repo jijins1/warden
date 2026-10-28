@@ -361,6 +361,10 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
+	// GET /hosts : les machines que l'appelant peut voir (ADR-0052). Pas de
+	// conflit avec `/hosts/{host}/runs` : le motif sans segment ne capture que
+	// `/hosts` lui-même, pas ce qui est dessous.
+	router.HandleFunc("GET /hosts", a.HandleListVisibleHosts)
 	router.HandleFunc("GET /hosts/{host}/runs", a.HandleListByHost)
 	router.HandleFunc("GET /hosts/{host}/playbooks", a.HandleListPlaybooksByHost)
 	router.HandleFunc("POST /runs", a.HandleCreateRun)
@@ -381,6 +385,12 @@ func (a *Server) Handler() http.Handler {
 	// de run — donc pour tout utilisateur, pas seulement les administrateurs.
 	// Ça ne révèle rien que le nom de l'environnement, déjà visible ailleurs.
 	router.HandleFunc("GET /environments/protected", a.HandleListProtectedEnvironments)
+
+	// Les environnements de l'APPELANT, ceux sur lesquels il a un droit vivant.
+	// Ouverts à tout compte authentifié pour la même raison : ils bornent ce
+	// que l'appelant voit déjà (ses runs, ses clés de vault), et ne révèlent
+	// rien de l'organisation au-delà.
+	router.HandleFunc("GET /environments", a.HandleListMyEnvironments)
 
 	// La clé de vault d'un environnement (ADR-0045). PAS sous `/admin`,
 	// contrairement aux clés SSH : le droit qui gouverne ces trois routes est
@@ -407,7 +417,8 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("PUT /admin/keys/{environment}", a.HandlePutKey)
 
 	// `/admin/hosts` et non `/hosts` : `GET /hosts/{host}/runs` existe déjà et
-	// sert la vue d'audit par machine du §6.5. Deux surfaces, deux publics.
+	// sert la vue d'audit par machine du §6.5. Deux surfaces, deux publics —
+	// et `GET /hosts` ne rend que la part de l'inventaire que voit l'appelant.
 	router.HandleFunc("GET /admin/hosts", a.HandleListHosts)
 	router.HandleFunc("PUT /admin/hosts", a.HandleDeclareHosts)
 	router.HandleFunc("DELETE /admin/hosts/{environment}/{host}", a.HandleForgetHost)
@@ -441,7 +452,7 @@ func (a *Server) Handler() http.Handler {
 	// droit qu'on croit avoir accordé et qui disparaît.
 	router.HandleFunc("GET /admin/grants", a.HandleListGrants)
 
-	// LA seule surface qu'un appelant anonyme atteint, donc la seule montée
+	// Les SEULES surfaces qu'un appelant anonyme atteint, donc les seules montées
 	// HORS du middleware : on ne peut pas exiger une session pour en ouvrir une.
 	//
 	// Un routeur au-dessus plutôt qu'une exception DANS le middleware. La
@@ -451,6 +462,9 @@ func (a *Server) Handler() http.Handler {
 	// protégé, donc il n'y a aucune comparaison à tromper.
 	racine := http.NewServeMux()
 	racine.HandleFunc("POST /auth/login", a.HandleLogin)
+	// La version, pour la même raison : la CLI la compare à la sienne avant
+	// d'avoir une session (ADR-0049).
+	racine.HandleFunc("GET /version", a.HandleVersion)
 	racine.Handle("/", a.AuthnMiddleware(router))
 
 	// Le CORS enveloppe TOUT, connexion comprise : exiger une session pour

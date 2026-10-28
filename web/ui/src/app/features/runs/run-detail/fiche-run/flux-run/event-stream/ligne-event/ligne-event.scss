@@ -1,0 +1,7 @@
+// CINQ colonnes : seq, état, MODULE, machine, heure — le nom de tâche n'est pas
+// répété ici, il est déjà l'en-tête du groupe. Des largeurs fixes, pour que les
+// colonnes s'alignent d'une ligne à l'autre.
+.w-ev {
+  display: grid;
+  grid-template-columns: 52px 116px minmax(120px, 1fr) 140px 62px;
+}

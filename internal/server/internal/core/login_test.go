@@ -80,21 +80,25 @@ type sessionsFactices struct {
 	// vivante est ce que SessionByToken rend, indexé par empreinte.
 	vivante map[string]core.Session
 	user    core.User
+
+	// groupes retient ce que chaque session a reçu, dans l'ordre d'ouverture.
+	groupes [][]string
 }
 
 func nouvellesSessions() *sessionsFactices {
 	return &sessionsFactices{vivante: map[string]core.Session{}}
 }
 
-func (s *sessionsFactices) CreateSession(_ context.Context, userID int64, hash []byte, expire time.Time) (int64, error) {
+func (s *sessionsFactices) CreateSession(_ context.Context, userID int64, hash []byte, expire time.Time, groupes []string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return 0, s.err
 	}
+	s.groupes = append(s.groupes, groupes)
 	s.creees++
 	id := int64(s.creees)
-	s.vivante[string(hash)] = core.Session{ID: id, UserID: userID, ExpiresAt: expire}
+	s.vivante[string(hash)] = core.Session{ID: id, UserID: userID, ExpiresAt: expire, Groupes: groupes}
 	return id, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -25,7 +26,7 @@ func ListerDroits(ctx context.Context, api *client.Client, subject string, sorti
 	}
 
 	w := tabwriter.NewWriter(sortie, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "COMPTE\tENVIRONNEMENT\tÉTAT\tDEPUIS\tACCORDÉ PAR")
+	_, _ = fmt.Fprintln(w, "COMPTE OU GROUPE\tENVIRONNEMENT\tÉTAT\tDEPUIS\tACCORDÉ PAR")
 	for _, d := range droits {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			d.Subject, d.Environment, etatDuDroit(d), jour(d.GrantedAt), accordePar(d))
@@ -43,7 +44,13 @@ func etatDuDroit(d client.Droit) string {
 // accordePar dit qui a décidé. « historique » désigne les droits repris par la
 // migration : personne ne les a accordés, et l'écrire évite de laisser croire
 // qu'une décision a été prise.
+//
+// Un droit de GROUPE vient toujours du document (ADR-0053) : il n'a jamais été
+// accordé à la main, et il n'existait pas avant la migration.
 func accordePar(d client.Droit) string {
+	if strings.HasPrefix(d.Subject, "group:") {
+		return "(document)"
+	}
 	if d.GrantedBy == "" {
 		return "(historique)"
 	}

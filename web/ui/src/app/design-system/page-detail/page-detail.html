@@ -1,0 +1,13 @@
+<section class="w-page">
+  <ng-content select="w-page-detail-retour" />
+
+  <header class="w-detail-head">
+    <h1><ng-content select="w-page-detail-titre" /></h1>
+    <ng-content select="w-page-detail-contexte" />
+    <span class="w-spacer"></span>
+    <ng-content select="w-page-detail-actions" />
+    <ng-content select="w-page-detail-etat" />
+  </header>
+
+  <ng-content select="w-page-detail-corps" />
+</section>

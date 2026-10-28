@@ -53,6 +53,10 @@ type User struct {
 	// d'autre. Il n'élargit PAS la lecture de l'audit : un administrateur ne voit
 	// pas les runs des autres, parce qu'administrer la politique et lire le code
 	// d'autrui sont deux capacités distinctes qu'il n'y a aucune raison de lier.
+	//
+	// Le magasin rend le DRAPEAU du compte. Pour une identité authentifiée, le
+	// cœur y ajoute l'administration par groupe de l'annuaire (ADR-0053) : c'est
+	// lui, et non le SQL, qui porte cette règle.
 	IsAdmin bool
 }
 
@@ -61,6 +65,11 @@ type Run struct {
 	ID     int64
 	RunRef string
 	UserID int64
+
+	// Auteur nomme le compte qui a lancé le run. Lu avec lui, pour qu'un run
+	// d'autrui — visible par le droit sur son environnement — dise de qui il
+	// est sans que l'appelant ait à résoudre UserID.
+	Auteur Auteur
 
 	// RunDay est la clé de partition des events et des diffs du run.
 	RunDay time.Time
@@ -140,6 +149,29 @@ type RunFilter struct {
 	Since       time.Time
 	Until       time.Time
 	ChangedMin  int
+
+	// AussiEnvironnements ÉLARGIT le filtre UserID : un run passe s'il
+	// appartient à UserID OU s'il porte sur l'un de ces environnements. Sans
+	// UserID, il n'a aucun effet — c'est un élargissement, pas un filtre.
+	//
+	// Il n'est posé que par RunsVisibles, depuis les droits vivants de
+	// l'appelant : CriteresDeRuns, ce que l'extérieur fournit, ne le porte pas.
+	AussiEnvironnements []string
+}
+
+// Auteur est le compte qui a lancé un run, tel qu'il s'affiche.
+//
+// Le SUJET est l'identifiant immuable (ADR-0021) et c'est lui qui fait foi en
+// audit ; le nom n'est qu'un libellé, vide quand le fournisseur n'en donne pas.
+//
+// Ses champs sont sans étiquette JSON : chaque contrat le sérialise dans sa
+// propre convention — PascalCase dans `GET /runs`, qui sert RunListItem tel
+// quel, snake_case dans `GET /runs/{run_ref}`. Seul le NOM du champ porte une
+// étiquette, sur RunListItem : ce contrat sert les types de core tels quels, et
+// il l'appelle `Author`.
+type Auteur struct {
+	Subject     string
+	DisplayName string
 }
 
 // RunListItem est un run dans la liste d'audit (sous-ensemble de Run).
@@ -147,6 +179,7 @@ type RunListItem struct {
 	ID          int64
 	RunRef      string
 	UserID      int64
+	Auteur      Auteur `json:"Author"`
 	Repo        string
 	Environment string
 	Inventory   string

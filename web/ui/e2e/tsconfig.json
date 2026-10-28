@@ -1,0 +1,11 @@
+/* La suite e2e tourne sous Node (Playwright), pas dans le navigateur de
+   l'application : un tsconfig à elle, hors des références de ../tsconfig.json,
+   pour que ni `ng build` ni `ng test` ne la compilent. */
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["./**/*.ts"]
+}

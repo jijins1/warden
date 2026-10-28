@@ -1,0 +1,18 @@
+<!-- La ligne est un `button` : elle ouvre le diff, donc elle doit être
+     atteignable au clavier et annoncée comme actionnable. -->
+<button
+  type="button"
+  class="w-ev"
+  [class.is-changed]="change()"
+  [class.is-failed]="enEchec()"
+  (click)="ouvrir.emit()">
+  <span class="w-mono w-faint w-right">{{ event().seq }}</span>
+  <w-state-chip [state]="event().state" />
+  <!-- LE MODULE, parce que le nom de tâche dit l'intention et pas
+       l'action : « configurer le pare-feu » ne distingue pas une
+       lecture d'une écriture. Le préfixe de collection est retiré,
+       il se répète sur chaque ligne. -->
+  <span class="w-mono w-truncate">{{ module() }}</span>
+  <span class="w-host w-truncate">{{ event().host }}</span>
+  <span class="w-mono w-dim w-right">{{ event().occurred_at | date: 'HH:mm:ss' }}</span>
+</button>

@@ -1,0 +1,42 @@
+@let d = detail();
+
+@if (aAction()) {
+  <dl class="w-action">
+    @if (d.module) {
+      <dt>Module</dt>
+      <dd>{{ d.module }}</dd>
+    }
+    @if (d.commande) {
+      <dt>Command</dt>
+      <dd>{{ d.commande }}</dd>
+    }
+    @if (aCode()) {
+      <dt>Exit code</dt>
+      <dd [class.is-failed]="codeEnEchec()">{{ d.code }}</dd>
+    }
+  </dl>
+}
+
+<!-- `no_log` est une décision prise DANS le playbook, par le seul endroit
+     qui sache pourquoi cette tâche est sensible. La contredire ici serait
+     rendre visible ce que son auteur a demandé de taire. -->
+@if (d.censure) {
+  <p class="w-nothing">This task is marked <code>no_log</code>. Its output is withheld.</p>
+}
+
+<!-- Interpolation, jamais `innerHTML` : le contenu vient d'une machine
+     auditée et n'est pas de confiance. -->
+@if (d.message) {
+  <h3 class="w-section-title">Message</h3>
+  <pre class="w-payload">{{ d.message }}</pre>
+}
+
+@if (d.sortie) {
+  <h3 class="w-section-title">Output</h3>
+  <pre class="w-payload">{{ d.sortie }}</pre>
+}
+
+@if (d.erreur) {
+  <h3 class="w-section-title">Stderr</h3>
+  <pre class="w-payload is-stderr">{{ d.erreur }}</pre>
+}

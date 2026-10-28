@@ -1,0 +1,31 @@
+<form class="w-form" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+  <div class="w-field" [class.is-invalid]="nomInvalide()">
+    <label for="nom-variable-vault">Variable name</label>
+    <input
+      id="nom-variable-vault"
+      class="w-input w-mono"
+      formControlName="var_name"
+      autocomplete="off"
+      spellcheck="false" />
+    @if (nomInvalide()) {
+      <p class="w-error">Letters, digits and underscores, not starting with a digit.</p>
+    }
+  </div>
+
+  <div class="w-field">
+    <label for="valeur-vault">Value</label>
+    <textarea
+      id="valeur-vault"
+      class="w-textarea w-mono"
+      formControlName="plaintext"
+      rows="3"
+      autocomplete="off"
+      spellcheck="false"></textarea>
+  </div>
+
+  <div>
+    <button class="w-btn w-btn--outline" type="submit" [disabled]="envoiImpossible()">
+      {{ libelle() }}
+    </button>
+  </div>
+</form>

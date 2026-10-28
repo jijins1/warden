@@ -1,0 +1,25 @@
+@if (chargement()) {
+  <div class="w-progress" role="progressbar" aria-label="Loading playbooks"></div>
+}
+
+@if (erreur(); as message) {
+  <p class="w-callout w-callout--error" role="alert">
+    <mat-icon>error_outline</mat-icon>
+    <span>{{ message }}</span>
+    <button type="button" class="w-btn w-btn--text" (click)="charger()">Retry</button>
+  </p>
+}
+
+@if (vide()) {
+  <p class="w-empty">
+    No playbook visible to you has run on <span class="w-mono">{{ host() }}</span> in this window.
+  </p>
+}
+
+@if (lignes().length > 0) {
+  <w-table-playbooks [lignes]="lignes()">
+    <ng-template wPanneauPlaybook let-ligne>
+      <w-run-diff [runRef]="ligne.runRef" />
+    </ng-template>
+  </w-table-playbooks>
+}

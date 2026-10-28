@@ -1,0 +1,54 @@
+@use '@angular/material' as mat;
+
+// Angular Material ne fournit plus les surfaces : ses `--mat-sys-*` pointent
+// vers les jetons warden. Sans ça, la palette de Material repeint les fonds
+// (menus, tooltips, dialogues) d'une teinte qui n'existe nulle part ailleurs.
+//
+// Les couleurs d'état ne passent JAMAIS par Material.
+@mixin theme {
+  @include mat.theme(
+    (
+      // La sarcelle, pour que les rares composants Material restants (menu,
+      // tooltip) restent dans la marque.
+      color: (
+        primary: mat.$cyan-palette,
+      ),
+      typography: (
+        plain-family: 'IBM Plex Sans',
+        brand-family: 'IBM Plex Sans',
+      ),
+      // Le compact est le cas nominal, pas une option : un vrai run se lit en
+      // milliers de lignes.
+      density: -2,
+    )
+  );
+
+  --mat-sys-surface: var(--w-bg);
+  --mat-sys-surface-container-lowest: var(--w-surface);
+  --mat-sys-surface-container-low: var(--w-surface);
+  --mat-sys-surface-container: var(--w-surface);
+  --mat-sys-surface-container-high: var(--w-surface-2);
+  --mat-sys-surface-container-highest: var(--w-surface-3);
+  --mat-sys-on-surface: var(--w-text);
+  --mat-sys-on-surface-variant: var(--w-text-dim);
+  --mat-sys-outline: var(--w-border-strong);
+  --mat-sys-outline-variant: var(--w-border);
+  --mat-sys-primary: var(--w-primary);
+  --mat-sys-on-primary: var(--w-on-primary);
+  // Des filets, jamais d'ombres : la profondeur vient de l'écart des surfaces.
+  --mat-menu-container-elevation-shadow: none;
+  --mat-menu-container-shape: var(--w-radius-md);
+}
+
+// Le menu Material, réduit à ce que dit le design system : une surface à
+// filet, sans ombre.
+@mixin surcharges {
+  .mat-mdc-menu-panel {
+    border: 1px solid var(--w-border-strong);
+  }
+
+  .mat-mdc-menu-item {
+    min-height: 32px;
+    font-size: 13px;
+  }
+}

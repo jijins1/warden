@@ -1,0 +1,239 @@
+# warden en mode Docker + Vault (ADR-0047) — DÉVELOPPEMENT ET DÉMONSTRATION.
+#
+# Ce fichier n'est PAS un déploiement de production, et il le dit à trois
+# endroits qui le rendent inutilisable comme tel :
+#
+#   - Vault tourne en mode `-dev` : en mémoire, descellé, jeton racine connu.
+#     Un redémarrage perd les clés ;
+#   - l'API accepte WARDEN_INSECURE_DEV_AUTH : l'en-tête X-User-Subject vaut
+#     identité ;
+#   - le proxy du socket autorise POST sur `containers` et `images` sans
+#     filtrer plus finement.
+#
+# Ce qu'il montre en revanche tel qu'en production : les runners sont lancés
+# par l'API Docker à travers un proxy (jamais le socket), durcis, sur un
+# réseau dédié ; leur jeton passe par stdin ; tous les secrets — clés d'accès,
+# clés de vault, consigne — sont dans Vault, lus par AppRole.
+#
+#   docker build -f build/wardend.Dockerfile -t warden/wardend:dev .
+#   docker build -f build/runner.Dockerfile  -t warden/warden-runner:dev .
+#   docker compose -f deploy/compose/compose.yaml up -d --build
+#
+# L'interface web est alors sur http://localhost:4280 (et non 127.0.0.1 : voir
+# le service `ui`).
+#
+# Voir deploy/compose/README.md pour la suite (compte, dépôt, machine, run).
+
+name: warden
+
+x-wardend: &wardend
+  image: ${WARDEN_IMAGE:-warden/wardend:dev}
+  restart: unless-stopped
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+x-base-de-donnees: &db
+  WARDEN_DATABASE_URL: postgres://postgres:warden@postgres:5432/warden?sslmode=disable
+
+x-docker: &docker
+  WARDEN_ORCHESTRATOR: docker
+  WARDEN_SECRETS: vault
+  # Le proxy, jamais le socket : l'accès au socket vaut root sur l'hôte.
+  DOCKER_HOST: tcp://docker-proxy:2375
+  WARDEN_DOCKER_NETWORK: warden-runners
+  WARDEN_DOCKER_INSTANCE: warden-compose
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: warden
+      POSTGRES_DB: warden
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "warden"]
+      interval: 2s
+      retries: 30
+
+  migrate:
+    image: ${WARDEN_IMAGE:-warden/wardend:dev}
+    command: ["migrate"]
+    environment: *db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  vault:
+    image: hashicorp/vault:1.18.3
+    restart: unless-stopped
+    command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: racine-de-dev
+    cap_add: [IPC_LOCK]
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 2s
+      retries: 30
+
+  # Configure Vault comme un exploitant le ferait : montages KV v2, policy
+  # sans `list`, rôle AppRole. Dépose le secret_id dans un volume partagé.
+  vault-init:
+    image: hashicorp/vault:1.18.3
+    entrypoint: ["sh", "/vault-init.sh"]
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: racine-de-dev
+    volumes:
+      - ./vault-init.sh:/vault-init.sh:ro
+      - vault-auth:/vault-auth
+    depends_on:
+      vault:
+        condition: service_healthy
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  git:
+    <<: *wardend
+    command: ["git"]
+    environment:
+      WARDEN_GIT_ROOT: /var/lib/warden
+      WARDEN_GIT_INTERNAL_ADDR: ":8081"
+      WARDEN_GIT_PUSH_ADDR: ":8082"
+      WARDEN_GIT_ADDR: ":8083"
+      WARDEN_GIT_INTERNAL_TOKEN: secret-interne-de-dev
+      <<: *db
+    volumes:
+      # Monté sur le répertoire personnel de l'image : il appartient déjà à
+      # l'utilisateur 65532, et le volume hérite de ce propriétaire.
+      - depots:/var/lib/warden
+    ports:
+      - "127.0.0.1:8082:8082" # push depuis la CLI
+
+  api:
+    <<: *wardend
+    command: ["api"]
+    environment:
+      <<: [*db, *docker]
+      WARDEN_INSECURE_DEV_AUTH: "1"
+      WARDEN_API_ADDR: ":8080"
+      # L'origine EXACTE de l'UI, qui ouvre le CORS et l'anti-CSRF à elle seule.
+      # `localhost` et non `127.0.0.1` : le navigateur compare la chaîne, et le
+      # cookie `SameSite=Strict` ne part que si l'UI et l'API sont du même site
+      # — localhost:4280 et localhost:8080 le sont, le port n'y compte pas.
+      WARDEN_UI_ORIGINS: http://localhost:4280
+      # Le cookie de session sans `Secure` : la stack parle HTTP, et un cookie
+      # `Secure` y serait posé puis jamais renvoyé — la connexion « réussirait »
+      # et la page suivante redemanderait le mot de passe. Même statut que
+      # WARDEN_INSECURE_DEV_AUTH : un réglage de développement, jamais ailleurs.
+      WARDEN_UI_COOKIE_INSECURE: "1"
+      WARDEN_GIT_INTERNAL_URL: http://git:8081
+      WARDEN_GIT_INTERNAL_TOKEN: secret-interne-de-dev
+      WARDEN_GIT_RUNNER_URL: http://passerelle:8083
+      WARDEN_GIT_CLIENT_URL: http://localhost:8082
+      WARDEN_DISPATCH_ADDR: ":8084"
+      WARDEN_DISPATCH_RUNNER_URL: http://passerelle:8084
+      WARDEN_INGEST_ADDR: ":8085"
+      WARDEN_INGEST_RUNNER_URL: http://passerelle:8085
+      WARDEN_RUNNER_IMAGE: ${WARDEN_RUNNER_IMAGE:-warden/warden-runner:dev}
+      WARDEN_VAULT_ADDR: http://vault:8200
+      WARDEN_VAULT_ROLE_ID: warden
+      WARDEN_VAULT_SECRET_ID_FILE: /vault-auth/secret_id
+    volumes:
+      - vault-auth:/vault-auth:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      vault-init:
+        condition: service_completed_successfully
+
+  # L'interface web (ADR-0035), sur une origine distincte de l'API comme en
+  # production. L'image est celle qui sera livrée ; seuls changent les deux
+  # fichiers qu'un déploiement fournit toujours : `config.json` (l'adresse de
+  # l'API) et le fragment d'en-têtes, dont `connect-src` doit nommer l'API.
+  ui:
+    image: ${WARDEN_UI_IMAGE:-warden/warden-ui:dev}
+    build:
+      context: ../..
+      dockerfile: build/ui.Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./ui-config.json:/usr/share/nginx/html/config.json:ro
+      - ./ui-security-headers.conf:/etc/nginx/warden-security-headers.conf:ro
+    ports:
+      - "127.0.0.1:4280:8080"
+    # L'image n'en porte pas (la sonde Kubernetes en tient lieu) ; ici c'est
+    # elle que `up --wait` attend. `config.json` plutôt que `/` : c'est le
+    # fichier monté, donc la preuve que le montage a pris.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/config.json"]
+      interval: 2s
+      retries: 30
+
+  # La seule porte entre les runners et warden : un réseau Docker ne filtre
+  # pas les ports, donc `api` et `git` restent hors de `warden-runners` et
+  # celle-ci n'en relaie que trois (voir passerelle.conf).
+  passerelle:
+    image: nginx:1.27.3-alpine
+    restart: unless-stopped
+    volumes:
+      - ./passerelle.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [api, git]
+    networks: [default, warden-runners]
+
+  controller:
+    <<: *wardend
+    command: ["controller"]
+    environment:
+      <<: [*db, *docker]
+      WARDEN_GRANTS_FILE: /etc/warden/grants.yaml
+      WARDEN_PROTECTED_FILE: /etc/warden/protected.yaml
+      WARDEN_RECONCILE_SECONDS: "10"
+    volumes:
+      - ./grants.yaml:/etc/warden/grants.yaml:ro
+      - ./protected.yaml:/etc/warden/protected.yaml:ro
+
+  # Une machine gérée : sshd et Python, rien d'autre. Joignable des seuls
+  # runners, sous le nom `cible`.
+  cible:
+    build:
+      context: .
+      dockerfile: cible.Dockerfile
+    restart: unless-stopped
+    environment:
+      CIBLE_PASSWORD: ${CIBLE_PASSWORD:-hunter2}
+    networks: [warden-runners]
+
+  # Une forge git en HTTP « bête » : le rôle git ne sait cloner qu'en
+  # http(s). Elle sert le répertoire WARDEN_FORGE_DIR, où l'on pousse le dépôt
+  # de playbooks (voir le README).
+  forge:
+    image: python:3.13-alpine
+    restart: unless-stopped
+    command: ["python", "-m", "http.server", "8000", "--directory", "/srv"]
+    volumes:
+      - ${WARDEN_FORGE_DIR:-./forge}:/srv:ro
+
+networks:
+  # Le réseau des runners, nommé pour que WARDEN_DOCKER_NETWORK le désigne.
+  warden-runners:
+    name: warden-runners
+
+volumes:
+  postgres:
+  depots:
+  vault-auth:

@@ -55,6 +55,11 @@ type Options struct {
 	// l'environnement, et le serveur ne le persiste pas.
 	BecomePassword prompt.Secret
 
+	// ConnectionPassword est le mot de passe de connexion SSH (ADR-0048),
+	// vide quand l'utilisateur ne l'a pas demandé. Même trajet que
+	// BecomePassword.
+	ConnectionPassword prompt.Secret
+
 	// GitURL est l'adresse du rôle `git`, distincte de celle de l'API : deux
 	// ports, deux surfaces, deux politiques réseau (ADR-0027).
 	GitURL string
@@ -247,8 +252,9 @@ func Run(ctx context.Context, api API, opts Options) (*Result, error) {
 		HostPattern: opts.HostPattern,
 		// `Reveal` : le seul endroit où le mot de passe d'élévation sort de son
 		// enveloppe masquée, et il doit se voir en revue.
-		BecomePassword: string(opts.BecomePassword.Reveal()),
-		ForwardEnv:     opts.ForwardEnv,
+		BecomePassword:     string(opts.BecomePassword.Reveal()),
+		ConnectionPassword: string(opts.ConnectionPassword.Reveal()),
+		ForwardEnv:         opts.ForwardEnv,
 	})
 	if err != nil {
 		// La ref est poussée mais le run n'est pas déclaré. Le dire précisément

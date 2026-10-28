@@ -1,0 +1,56 @@
+<div class="w-table" role="table" aria-label="Repositories">
+  @if (outils()) {
+    <div class="w-xtools">
+      <button type="button" class="w-btn w-btn--text" (click)="toutOuvrir()">Expand all</button>
+      <button type="button" class="w-btn w-btn--text" (click)="toutFermer()">Collapse all</button>
+    </div>
+  }
+
+  <div class="w-tr w-th" role="row">
+    <span></span>
+    <span role="columnheader">Name</span>
+    <span role="columnheader">Remote URL</span>
+    <span role="columnheader">Mainline</span>
+  </div>
+
+  @for (item of vue(); track item.ligne.nom) {
+    <div class="w-xrow" role="rowgroup" [class.is-open]="item.ouverte">
+      <button
+        type="button"
+        class="w-tr"
+        role="row"
+        [attr.aria-expanded]="item.ouverte"
+        (click)="basculer(item.ligne.nom)">
+        <svg class="w-chev" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M4.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span role="cell" class="w-mono w-truncate">{{ item.ligne.nom }}</span>
+        <span role="cell" class="w-mono w-dim w-truncate">{{ item.ligne.url }}</span>
+        <span role="cell" class="w-mono w-truncate">{{ item.ligne.mainline }}</span>
+      </button>
+
+      @if (item.ouverte) {
+        <div class="w-xpanel">
+          <dl class="w-facts">
+            <div>
+              <dt>Remote URL</dt>
+              <dd class="w-mono">{{ item.ligne.url }}</dd>
+            </div>
+            <div>
+              <dt>Mainline</dt>
+              <dd class="w-mono">{{ item.ligne.mainline }}</dd>
+            </div>
+            <div>
+              <dt>&nbsp;</dt>
+              <dd>
+                <a class="w-btn w-btn--text" [routerLink]="['/runs/new']" [queryParams]="{ repo: item.ligne.nom }">
+                  Launch a run →
+                </a>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      }
+    </div>
+  }
+</div>

@@ -1,0 +1,11 @@
+<section class="w-page">
+  <ng-content select="w-page-formulaire-retour" />
+
+  <div class="w-card w-form w-form-page">
+    <header>
+      <h1><ng-content select="w-page-formulaire-titre" /></h1>
+      <p class="w-lede"><ng-content select="w-page-formulaire-introduction" /></p>
+    </header>
+    <ng-content select="w-page-formulaire-contenu" />
+  </div>
+</section>

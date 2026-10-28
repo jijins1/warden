@@ -34,7 +34,7 @@ func doc(envs map[string][]string) core.GrantDocument {
 
 func planifier(t *testing.T, d core.GrantDocument, actuels ...core.EnvironmentGrant) core.GrantPlan {
 	t.Helper()
-	p, err := core.PlanifierLesDroits(d, actuels)
+	p, err := core.PlanifierLesDroits(d, actuels, nil, nil)
 	if err != nil {
 		t.Fatalf("PlanifierLesDroits: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestUnDocumentVideEstRefuse(t *testing.T) {
 	} {
 		t.Run(nom, func(t *testing.T) {
 			t.Parallel()
-			_, err := core.PlanifierLesDroits(d, []core.EnvironmentGrant{vivant("alice", "prod")})
+			_, err := core.PlanifierLesDroits(d, []core.EnvironmentGrant{vivant("alice", "prod")}, nil, nil)
 			if !errors.Is(err, core.ErrDocumentVide) {
 				t.Errorf("err = %v, attendu ErrDocumentVide", err)
 			}
@@ -171,7 +171,7 @@ func TestUnEnvironnementMalFormeFaitEchouerLePlan(t *testing.T) {
 	t.Parallel()
 
 	for _, env := range []string{"PROD", "prod.eu", "-prod"} {
-		if _, err := core.PlanifierLesDroits(doc(map[string][]string{env: {"alice"}}), nil); err == nil {
+		if _, err := core.PlanifierLesDroits(doc(map[string][]string{env: {"alice"}}), nil, nil, nil); err == nil {
 			t.Errorf("l'environnement %q a été accepté", env)
 		}
 	}
@@ -182,7 +182,7 @@ func TestUnEnvironnementMalFormeFaitEchouerLePlan(t *testing.T) {
 func TestUnCompteVideFaitEchouerLePlan(t *testing.T) {
 	t.Parallel()
 
-	if _, err := core.PlanifierLesDroits(doc(map[string][]string{"prod": {"alice", ""}}), nil); err == nil {
+	if _, err := core.PlanifierLesDroits(doc(map[string][]string{"prod": {"alice", ""}}), nil, nil, nil); err == nil {
 		t.Error("un compte vide a été accepté")
 	}
 }

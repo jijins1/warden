@@ -1,0 +1,129 @@
+<form class="w-form" [formGroup]="formulaire" (ngSubmit)="soumettre()">
+  <div class="w-grid-2">
+    <div class="w-field">
+      <label for="lancement-repo">Repository</label>
+      <input id="lancement-repo" class="w-input w-mono" formControlName="repo" />
+    </div>
+    <div class="w-field">
+      <label for="lancement-environment">Environment</label>
+      <input id="lancement-environment" class="w-input w-mono" formControlName="environment" />
+    </div>
+  </div>
+
+  <div class="w-field">
+    <label for="lancement-playbook">Playbook</label>
+    <input id="lancement-playbook" class="w-input w-mono" formControlName="playbook" />
+  </div>
+
+  <div class="w-field">
+    <label for="lancement-inventory">Inventory <span class="w-opt">(optional)</span></label>
+    <input id="lancement-inventory" class="w-input w-mono" formControlName="inventory" />
+    <p class="w-hint">Left empty, the project's configured inventory is used.</p>
+  </div>
+
+  <div class="w-field">
+    <label for="lancement-limit">Limit <span class="w-opt">(optional)</span></label>
+    <input id="lancement-limit" class="w-input w-mono" formControlName="limit" />
+    <p class="w-hint">Same pattern syntax as <code>--limit</code> on the command line.</p>
+  </div>
+
+  <!-- Le <select> natif est le seul contrôle de choix du produit. [ngValue] et
+       non [value] pour que la valeur reste un NOMBRE — `composerFlags` compte
+       des `v`, il ne concatène pas une chaîne. -->
+  <div class="w-field">
+    <label for="lancement-verbosity">Verbosity</label>
+    <span class="w-select">
+      <select id="lancement-verbosity" formControlName="verbosity">
+        <option [ngValue]="0">Default</option>
+        <option [ngValue]="1">-v — more detail on what Ansible did</option>
+        <option [ngValue]="2">-vv — full result of every task</option>
+        <option [ngValue]="3">-vvv — task arguments and connection command</option>
+        <option [ngValue]="4">-vvvv — connection debug; very large</option>
+      </select>
+      <mat-icon aria-hidden="true">expand_more</mat-icon>
+    </span>
+    <p class="w-hint">
+      Recorded in the run's event stream, so it lands in the audit. From -vvv on, whatever a
+      playbook puts in plain text in its tasks becomes readable there.
+    </p>
+  </div>
+
+  <fieldset class="w-field">
+    <legend class="w-legend">Flags</legend>
+    <div class="w-checks">
+      <label class="w-check">
+        <input type="checkbox" formControlName="check" />
+        <span class="w-mono">--check</span>&nbsp;<span class="w-opt">(dry run)</span>
+      </label>
+      <label class="w-check">
+        <input type="checkbox" formControlName="diff" />
+        <span class="w-mono">--diff</span>
+      </label>
+      <label class="w-check">
+        <input type="checkbox" formControlName="become" />
+        <span class="w-mono">--become</span>
+      </label>
+    </div>
+  </fieldset>
+
+  @if (become()) {
+    <div class="w-grid-2">
+      <div class="w-field">
+        <label for="lancement-become-user">Become user</label>
+        <input id="lancement-become-user" class="w-input w-mono" formControlName="becomeUser" />
+      </div>
+      <div class="w-field">
+        <label for="lancement-become-password">Become password</label>
+        <input
+          id="lancement-become-password"
+          class="w-input"
+          type="password"
+          formControlName="becomePassword"
+          autocomplete="new-password" />
+      </div>
+    </div>
+  }
+
+  <div class="w-field">
+    <span class="w-legend">Extra vars</span>
+    @if (avecVariables()) {
+      <div class="w-kv" formArrayName="extraVars">
+        <span class="w-kv-head">Name</span>
+        <span class="w-kv-head">Value</span>
+        <span></span>
+        @for (ligne of variables.controls; track ligne; let i = $index) {
+          <ng-container [formGroupName]="i">
+            <input class="w-input w-mono" formControlName="cle" aria-label="Name" />
+            <input class="w-input w-mono" formControlName="valeur" aria-label="Value" />
+            <button
+              type="button"
+              class="w-icon-btn"
+              aria-label="Remove variable"
+              (click)="retirerVariable(i)">
+              <mat-icon>close</mat-icon>
+            </button>
+          </ng-container>
+        }
+      </div>
+    }
+    <div>
+      <button type="button" class="w-btn w-btn--text" (click)="ajouterVariable()">
+        <mat-icon>add</mat-icon><span>Add variable</span>
+      </button>
+    </div>
+  </div>
+
+  @if (erreur(); as message) {
+    <p class="w-callout w-callout--error" role="alert">
+      <mat-icon>error_outline</mat-icon>
+      <span>{{ message }}</span>
+    </p>
+  }
+
+  <div class="w-form-actions">
+    <button type="submit" class="w-btn w-btn--primary" [disabled]="envoiImpossible()">
+      {{ enCours() ? 'Launching…' : 'Launch' }}
+    </button>
+    <button type="button" class="w-btn w-btn--text" (click)="annulation.emit()">Cancel</button>
+  </div>
+</form>

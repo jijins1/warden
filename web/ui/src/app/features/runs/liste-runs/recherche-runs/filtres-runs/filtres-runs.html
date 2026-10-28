@@ -1,0 +1,23 @@
+<button
+  type="button"
+  class="w-btn w-btn--toggle"
+  [class.is-on]="changesSeuls()"
+  [attr.aria-pressed]="changesSeuls()"
+  (click)="basculerChanges()">
+  Changed only
+</button>
+
+<button
+  type="button"
+  class="w-btn w-btn--toggle"
+  [class.is-on]="miensSeuls()"
+  [attr.aria-pressed]="miensSeuls()"
+  (click)="basculerMiens()">
+  Mine only
+</button>
+
+<w-segments
+  libelle="State"
+  [options]="etats"
+  [actif]="etat()"
+  (choix)="changement.emit({ state: $event })" />

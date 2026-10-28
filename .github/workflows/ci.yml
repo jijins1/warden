@@ -312,8 +312,13 @@ jobs:
     # Sur `main` SEULEMENT, et après TOUT le reste. Une image publiée est tirée
     # par le déploiement dès qu'elle existe : la publier avant les vérifications
     # ferait de `:dev` un artefact dont personne n'a rien dit.
+    #
+    # APRÈS `release-cli`, aussi : le serveur 0.0.N annonce sa version, et toute
+    # CLI refuse de soumettre tant qu'elle n'est pas en 0.0.N (ADR-0049). Une
+    # image publiée sans sa release signée bloquerait donc tous les postes, sans
+    # rien à télécharger pour en sortir.
     if: github.ref == 'refs/heads/main'
-    needs: [build, lint, test, integration, web, web-image, chart]
+    needs: [build, lint, test, integration, web, web-image, chart, release-cli]
 
     # `packages: write` uniquement ici. Le workflow est en `contents: read`, et
     # ce job est le seul qui publie quoi que ce soit.
@@ -400,6 +405,13 @@ jobs:
     permissions:
       contents: write
 
+    # La clé de signature est un secret de l'environnement `release`, et non du
+    # dépôt (ADR-0049) : un secret de dépôt est lisible par tout workflow de
+    # toute branche, donc par un `ci.yml` modifié sur une branche poussée.
+    # L'environnement, lui, n'est ouvert qu'à `main` — réglage côté GitHub,
+    # Settings → Environments → release → Deployment branches.
+    environment: release
+
     steps:
       - uses: actions/checkout@v4
 
@@ -423,8 +435,37 @@ jobs:
             out="dist/warden_${os}_${arch}"
             [ "$os" = "windows" ] && out="${out}.exe"
             echo "→ $target"
-            GOOS="$os" GOARCH="$arch" go build -trimpath -o "$out" ./cmd/warden
+            # La version inscrite est celle que la CLI compare à celle du
+            # serveur (ADR-0049) : sans elle, la release resterait en `dev`.
+            GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-X github.com/jijins1/warden/internal/version.Version=$VERSION" \
+              -o "$out" ./cmd/warden
           done
+
+      # UNE signature pour les cinq binaires : celle de leurs sommes (ADR-0049).
+      #
+      # Le commentaire de confiance `warden v<version>` est couvert par la
+      # signature, et la CLI exige qu'il nomme la version demandée : c'est ce
+      # qui empêche de servir les sommes signées d'une AUTRE release.
+      #
+      # La clé est écrite dans le répertoire temporaire du runner, jamais dans
+      # `dist/` : `gh release create dist/warden_*` ne la ramasserait pas, mais
+      # un glob élargi un jour le ferait.
+      - name: Sommes et signature
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::secret MINISIGN_SECRET_KEY absent : une release non signée ne serait installée par aucune CLI"
+            exit 1
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+          cle="$RUNNER_TEMP/minisign.key"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$cle"
+          chmod 600 "$cle"
+          (cd dist && sha256sum warden_* > SHA256SUMS)
+          minisign -S -s "$cle" -m dist/SHA256SUMS -t "warden v$VERSION"
+          rm -f "$cle"
 
       # Un tag PAR build, immuable comme la version des images : `v0.0.N` ne se
       # republie jamais, et une release GitHub exige un tag pour exister.
@@ -432,6 +473,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION" dist/warden_* \
+          gh release create "v$VERSION" dist/warden_* dist/SHA256SUMS dist/SHA256SUMS.minisig \
             --title "v$VERSION" \
             --notes "Build continu depuis main, commit ${{ github.sha }}."

@@ -1,0 +1,101 @@
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { MatIconModule } from '@angular/material/icon';
+import { Comparaison, DiffsService } from '../../core/services/diffs/diffs.service';
+import { ApiError } from '../../core/models/api-error';
+import { BarreDiff } from './barre-diff/barre-diff';
+import { InviteDiff } from './invite-diff/invite-diff';
+import { ResultatDiff } from './resultat-diff/resultat-diff';
+
+/**
+ * Le diff d'audit d'un run, contre l'une des trois références.
+ *
+ * Un container partagé : le détail d'un run et la vue machine s'en servent, d'où
+ * sa place à la racine de `features/`. Il demande le diff au rôle `git` et
+ * traduit son refus en phrase ; l'affichage est laissé à ses enfants.
+ */
+@Component({
+  selector: 'w-run-diff',
+  imports: [MatIconModule, BarreDiff, InviteDiff, ResultatDiff],
+  templateUrl: './run-diff.html',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class RunDiff {
+  readonly runRef = input.required<string>();
+
+  readonly #diffs = inject(DiffsService);
+
+  protected readonly vs = signal<Comparaison>('mainline');
+  readonly #brut = signal<string | null>(null);
+  protected readonly chargement = signal(false);
+  protected readonly indisponible = signal<string | null>(null);
+  /** Faux tant qu'aucune comparaison n'a été demandée : le calcul coûte un aller au rôle `git`. */
+  protected readonly demande = signal(false);
+
+  /**
+   * Le diff reçu, enveloppé : une chaîne VIDE est une réponse (les deux arbres
+   * coïncident), et elle ne doit pas se perdre dans un test de vérité.
+   */
+  protected readonly resultat = computed(() => {
+    const texte = this.#brut();
+    return texte === null ? null : { texte };
+  });
+
+  protected choisir(vs: Comparaison): void {
+    this.vs.set(vs);
+    void this.charger();
+  }
+
+  protected async charger(): Promise<void> {
+    this.demande.set(true);
+    this.chargement.set(true);
+    this.indisponible.set(null);
+    this.#brut.set(null);
+    try {
+      this.#brut.set(await this.#diffs.diffDuRun(this.runRef(), this.vs()));
+    } catch (e: unknown) {
+      this.indisponible.set(expliquer(e as Partial<ApiError>));
+    } finally {
+      this.chargement.set(false);
+    }
+  }
+}
+
+/**
+ * Ce qu'on dit quand le diff n'est pas calculable.
+ *
+ * Le motif vient de l'en-tête `X-Warden-Reason`, jamais d'une analyse du corps :
+ * le serveur le pose exactement pour ça, et lire la phrase casserait à la
+ * première reformulation.
+ */
+function expliquer(err: Partial<ApiError>): string {
+  switch (err.reason) {
+    case 'artifact_pruned':
+      // ADR-0013 : le run a existé, c'est son arbre qui n'est plus là.
+      return 'The code for this run was pruned. The run and its events remain; its diffs can no longer be computed.';
+    case 'repo_unknown':
+      return 'This run predates repository tracking, so there is nothing to diff it against.';
+    case 'object_missing':
+      return 'The code for this run is no longer in the repository.';
+    case 'no_previous_run':
+      // Le serveur CONFOND délibérément « aucun run antérieur » et « il
+      // appartient à quelqu'un d'autre » : les distinguer ferait de l'endpoint
+      // un oracle. Le message les confond donc aussi.
+      return 'No earlier run you can read on this repository, environment and inventory.';
+    default:
+      break;
+  }
+  if (err.status === 501) {
+    // Un déploiement d'audit sans accès au rôle `git`, ou sans la politique de
+    // dépôt et le résolveur de refs que vs=current demande en plus, reste
+    // valide : ce n'est pas une panne, et le dire comme telle enverrait
+    // chercher un incident.
+    return 'Git diffs are not available in this deployment.';
+  }
+  if (err.status === 504) {
+    return 'The git role did not answer in time. Try again.';
+  }
+  if (err.status === 502) {
+    return 'The git role could not compute this diff.';
+  }
+  return err.message ?? 'the diff could not be computed';
+}

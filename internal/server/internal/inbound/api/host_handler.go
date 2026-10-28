@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
 )
@@ -113,6 +114,66 @@ func (a *Server) HandleListHosts(w http.ResponseWriter, r *http.Request) {
 	out := make([]hostPayload, 0, len(hotes))
 	for _, h := range hotes {
 		out = append(out, versHostPayload(h))
+	}
+	ecrireJSON(w, out)
+}
+
+// pageDeMachinesPayload est la réponse de GET /hosts.
+//
+// Les machines gardent le formalisme de `GET /admin/hosts` : une machine est la
+// même ligne quel que soit l'écran qui la montre.
+type pageDeMachinesPayload struct {
+	Hosts      []hostPayload `json:"hosts"`
+	NextCursor string        `json:"next_cursor"`
+}
+
+// HandleListVisibleHosts rend les machines que l'appelant peut voir, paginées.
+//
+// GET /hosts?env=&q=&cursor=&limit=
+//
+// PAS derrière `adminOuRien`, contrairement à `GET /admin/hosts` : ce n'est
+// pas l'inventaire de l'organisation mais la part qu'en voit l'appelant —
+// les machines des environnements où il a un droit vivant (ADR-0052). Un
+// administrateur sans droit n'y voit rien de plus, comme sous
+// `GET /environments`.
+func (a *Server) HandleListVisibleHosts(w http.ResponseWriter, r *http.Request) {
+	user := ContextUser(r.Context())
+	if user == nil {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	if a.deps.Hosts == nil {
+		http.Error(w, "host inventory is not available", http.StatusNotImplemented)
+		return
+	}
+
+	// La portée n'est jamais lue de la requête : core.MachinesVisibles la pose
+	// depuis l'appelant authentifié et ses droits vivants.
+	criteres := core.CriteresDeMachines{
+		Environment: r.URL.Query().Get("env"),
+		Nom:         r.URL.Query().Get("q"),
+		Cursor:      r.URL.Query().Get("cursor"),
+	}
+	// Une limite illisible prend le défaut, comme sous GET /runs : la borne
+	// haute est tenue par le magasin.
+	if limite, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && limite > 0 {
+		criteres.Limit = limite
+	}
+
+	page, err := core.MachinesVisibles(r.Context(), a.deps.Hosts, a.deps.Access, user.ID, criteres)
+	if errors.Is(err, core.ErrCurseurIllisible) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "liste des machines visibles en échec", slog.String("error", err.Error()))
+		http.Error(w, "could not read the host inventory", http.StatusInternalServerError)
+		return
+	}
+
+	out := pageDeMachinesPayload{Hosts: make([]hostPayload, 0, len(page.Hosts)), NextCursor: page.NextCursor}
+	for _, h := range page.Hosts {
+		out.Hosts = append(out.Hosts, versHostPayload(h))
 	}
 	ecrireJSON(w, out)
 }

@@ -1,0 +1,15 @@
+<div class="w-toolbar">
+  <span class="w-seg" role="group" aria-label="Compare against">
+    @for (c of comparaisons; track c.vs) {
+      <button type="button" [class.is-on]="c.vs === vs()" (click)="choisir.emit(c.vs)">
+        {{ c.libelle }}
+      </button>
+    }
+  </span>
+  <span class="w-spacer"></span>
+  @if (demande()) {
+    <button type="button" class="w-btn w-btn--outline" [disabled]="chargement()" (click)="recharger.emit()">
+      <mat-icon>refresh</mat-icon><span>Reload</span>
+    </button>
+  }
+</div>

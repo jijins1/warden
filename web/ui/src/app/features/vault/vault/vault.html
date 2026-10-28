@@ -1,0 +1,20 @@
+<section class="w-page">
+  <header class="w-page-head">
+    <div>
+      <h1>Vault keys</h1>
+      <p>
+        The Ansible Vault password of each environment you have access to. It is
+        handed to the runner at run time and never shown back, here or anywhere.
+      </p>
+    </div>
+  </header>
+
+  <w-vault-environnements [selection]="environment()" />
+
+  @if (environment(); as env) {
+    <div class="w-cards">
+      <w-vault-cle [environnement]="env" />
+      <w-vault-chiffrement [environnement]="env" />
+    </div>
+  }
+</section>

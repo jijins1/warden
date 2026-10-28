@@ -242,7 +242,7 @@ func (p *Policy) CanViewRun(ctx context.Context, user *core.User, run *core.Run)
 // environment (§10.2).
 //
 // Separated from CanViewRun so a caller walking many rows that share an
-// environment — HandleListByHost, VisibleRunFilter — can memoize the result
+// environment — HandleListByHost, HandleListPlaybooksByHost — can memoize the result
 // instead of asking the grants store once per row.
 func (p *Policy) CanViewEnvironment(ctx context.Context, user *core.User, environment string) bool {
 	if user == nil || p.droits == nil || environment == "" {
@@ -257,33 +257,9 @@ func (p *Policy) CanViewEnvironment(ctx context.Context, user *core.User, enviro
 }
 
 // CanListRuns reports whether the user may list runs. The listing itself is
-// always narrowed to the caller — see VisibleRunFilter.
+// always narrowed to the caller — see core.RunsVisibles.
 func (p *Policy) CanListRuns(ctx context.Context, user *core.User) bool {
 	return user != nil
-}
-
-// VisibleRunFilter narrows a caller-supplied filter to what the user may see.
-// It overwrites UserID rather than validating it, so a caller cannot widen its
-// own scope by passing someone else's id. ok is false when nothing is visible;
-// callers must not fall back to the unfiltered filter, since ListRuns treats a
-// non-positive UserID as "no filter at all".
-//
-// A filter naming an environment the caller holds a grant on is let through
-// WITHOUT forcing UserID: that grant is exactly CanViewRun's second branch, and
-// a listing that filtered to the caller's own runs anyway would contradict the
-// detail view reachable from it. Without an environment named, there is no
-// single grant to check against, so the filter falls back to the caller's own
-// runs — showing everything across every environment the caller can reach
-// would need iterating their whole grant set, a different and bigger query.
-func (p *Policy) VisibleRunFilter(ctx context.Context, user *core.User, filter core.RunFilter) (core.RunFilter, bool) {
-	if user == nil {
-		return core.RunFilter{}, false
-	}
-	if filter.Environment != "" && p.CanViewEnvironment(ctx, user, filter.Environment) {
-		return filter, true
-	}
-	filter.UserID = user.ID
-	return filter, true
 }
 
 // CanViewHost reports whether the user may query runs by host.

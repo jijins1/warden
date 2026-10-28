@@ -9,6 +9,7 @@ package core_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,7 +49,26 @@ func cle(userID int64, env string) string {
 	return strconv.FormatInt(userID, 10) + "/" + env
 }
 
+func (d *droitsFactices) EnvironnementsAtteignables(_ context.Context, userID int64) ([]string, error) {
+	d.demandes++
+	if d.err != nil {
+		return nil, d.err
+	}
+	var envs []string
+	for k := range d.accordes {
+		if env, ok := strings.CutPrefix(k, strconv.FormatInt(userID, 10)+"/"); ok {
+			envs = append(envs, env)
+		}
+	}
+	slices.Sort(envs)
+	return envs, nil
+}
+
 func (d *droitsFactices) ListGrants(context.Context, string) ([]core.EnvironmentGrant, error) {
+	return nil, nil
+}
+
+func (d *droitsFactices) ListGroupGrants(context.Context) ([]core.GroupGrant, error) {
 	return nil, nil
 }
 

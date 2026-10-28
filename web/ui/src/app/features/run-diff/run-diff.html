@@ -1,0 +1,28 @@
+<section class="w-section" aria-labelledby="titre-diff">
+  <h2 class="w-section-title" id="titre-diff">Audit diff</h2>
+
+  <w-barre-diff
+    [vs]="vs()"
+    [demande]="demande()"
+    [chargement]="chargement()"
+    (choisir)="choisir($event)"
+    (recharger)="charger()" />
+
+  @if (!demande()) {
+    <!-- Rien n'est calculé d'office : chaque diff coûte un aller au rôle `git`,
+         et la plupart des consultations d'un run n'en demandent aucun. -->
+    <w-invite-diff (calculer)="charger()" />
+  }
+
+  @if (chargement()) {
+    <div class="w-progress" role="progressbar" aria-label="Computing the diff"></div>
+  }
+
+  @if (indisponible(); as message) {
+    <p class="w-callout"><mat-icon>inventory_2</mat-icon><span>{{ message }}</span></p>
+  }
+
+  @if (resultat(); as r) {
+    <w-resultat-diff [texte]="r.texte" />
+  }
+</section>

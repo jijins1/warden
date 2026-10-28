@@ -5,8 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/jijins1/warden/internal/cli/internal/command"
 )
 
 func TestCommandeCompletionEcritLeScriptDuShellDemande(t *testing.T) {
@@ -39,14 +45,19 @@ func TestCommandeCompletionSansArgumentEstUneErreur(t *testing.T) {
 	}
 }
 
-// lignes découpe la sortie de `__complete`, un candidat par ligne.
+// lignes découpe la sortie de `__complete`, un candidat par ligne, et n'en
+// garde que le mot — la description qui suit la tabulation est testée à part.
 func lignes(t *testing.T, out *bytes.Buffer) []string {
 	t.Helper()
 	s := strings.TrimRight(out.String(), "\n")
 	if s == "" {
 		return nil
 	}
-	return strings.Split(s, "\n")
+	l := strings.Split(s, "\n")
+	for i := range l {
+		l[i], _, _ = strings.Cut(l[i], "\t")
+	}
+	return l
 }
 
 func contient(lignes []string, mot string) bool {
@@ -210,5 +221,149 @@ func TestInterneCompleteFlagInconnuNAPasDeSourceEtNeCraquePas(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("candidats inattendus pour --playbook : %q", out.String())
+	}
+}
+
+// Une ligne par verbe : « verbe<TAB>résumé ».
+func TestInterneCompleteDecritLesVerbes(t *testing.T) {
+	var out bytes.Buffer
+	if err := commandeInterneComplete(t.Context(), []string{"host", "li"}, &out); err != nil {
+		t.Fatalf("commandeInterneComplete: %v", err)
+	}
+	if got := out.String(); got != "list\taffiche les machines enrôlées\n" {
+		t.Errorf("sortie = %q", got)
+	}
+}
+
+// Une ligne par drapeau : « --drapeau<TAB>exemple de valeur ».
+func TestInterneCompleteDecritLesDrapeauxParUnExemple(t *testing.T) {
+	var out bytes.Buffer
+	if err := commandeInterneComplete(t.Context(), []string{"run", "all", "--modu"}, &out); err != nil {
+		t.Fatalf("commandeInterneComplete: %v", err)
+	}
+	if got := out.String(); got != "--module\tshell\n" {
+		t.Errorf("sortie = %q", got)
+	}
+}
+
+// Tout drapeau à valeur proposé par la complétion a un exemple : sans lui, la
+// ligne retomberait sur le texte d'aide, et l'utilisateur ne saurait pas
+// quelle forme de valeur taper.
+func TestChaqueDrapeauAValeurAUnExemple(t *testing.T) {
+	racine := command.Arbre()
+	for _, chemin := range chemins(t) {
+		noeud, _ := racine.Trouver(chemin)
+		fs := flagsPour(chemin)
+		if fs == nil {
+			continue
+		}
+		for _, nom := range noeud.Flags {
+			f := fs.Lookup(nom)
+			if f == nil || booleen(f) {
+				continue
+			}
+			if noeud.ExempleDeValeur(nom) == "" {
+				t.Errorf("warden %s --%s n'a pas d'exemple de valeur",
+					strings.Join(chemin, " "), nom)
+			}
+		}
+	}
+}
+
+// lancerScript source un script de complétion dans `shell`, avec un faux
+// `warden` qui rend `sortie` à `__complete`, puis exécute `appel`. Le script
+// est testé contre une sortie fixée, sans le binaire : c'est le format
+// « mot<TAB>description » qui est le contrat, pas l'arbre du moment.
+func lancerScript(t *testing.T, shell string, script []byte, sortie, appel string) []string {
+	t.Helper()
+	if _, err := exec.LookPath(shell); err != nil {
+		t.Skipf("%s absent : le script %s n'est pas testé sur cette machine", shell, shell)
+	}
+	dir := t.TempDir()
+	ecrire := func(nom, contenu string, mode os.FileMode) string {
+		chemin := filepath.Join(dir, nom)
+		if err := os.WriteFile(chemin, []byte(contenu), mode); err != nil {
+			t.Fatal(err)
+		}
+		return chemin
+	}
+	ecrire("sortie", sortie, 0o600)
+	ecrire("warden", "#!/bin/sh\ncat \""+filepath.Join(dir, "sortie")+"\"\n", 0o700)
+	chemin := ecrire("script", string(script), 0o600)
+
+	cmd := exec.CommandContext(t.Context(), shell, "-c", "source "+chemin+"\n"+appel) // #nosec G204 -- shell fixé par le test
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "LC_ALL=C.UTF-8")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s : %v\n%s", shell, err, out)
+	}
+	return strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+}
+
+const appelBash = `COMP_WORDS=(warden host ""); COMP_CWORD=2; COLUMNS=24
+_warden_complete; printf '%s\n' "${COMPREPLY[@]}"`
+
+// Un seul candidat : bash l'insère tel quel, donc sans sa description.
+func TestScriptBashCandidatUniqueSansDescription(t *testing.T) {
+	l := lancerScript(t, "bash", scriptBash, "list\taffiche les machines\n", appelBash)
+	if len(l) != 1 || l[0] != "list" {
+		t.Errorf("COMPREPLY = %q, attendu [list]", l)
+	}
+}
+
+// Plusieurs candidats : « mot  -- description », mots alignés, une ligne par
+// candidat — chacune remplie jusqu'à la largeur du terminal, et coupée sans
+// trancher un accent.
+func TestScriptBashUneLigneParCandidat(t *testing.T) {
+	// Le « é » tombe sur la 23e colonne : une coupe en octets le trancherait.
+	sortie := "declare\tmachines déjà posées\n" +
+		"list\taffiche\n" +
+		"prod\n"
+	l := lancerScript(t, "bash", scriptBash, sortie, appelBash)
+	if len(l) != 3 {
+		t.Fatalf("COMPREPLY = %q, attendu 3 candidats", l)
+	}
+	prefixes := []string{"declare  -- machines d", "list     -- affiche", "prod"}
+	for i, ligne := range l {
+		if !strings.HasPrefix(ligne, prefixes[i]) {
+			t.Errorf("candidat %d = %q, attendu le préfixe %q", i, ligne, prefixes[i])
+		}
+		if !utf8.ValidString(ligne) {
+			t.Errorf("candidat %d coupé dans un caractère : %q", i, ligne)
+		}
+		if n := utf8.RuneCountInString(ligne); n > 23 {
+			t.Errorf("candidat %d dépasse la largeur : %d caractères", i, n)
+		}
+	}
+	if utf8.RuneCountInString(l[1]) != 23 {
+		t.Errorf("candidat %q non rempli jusqu'à la largeur du terminal", l[1])
+	}
+}
+
+// zsh n'est pas forcément installé : sans lui, le test est sauté, et le dit.
+// `compdef`, `_describe` et `_files` viennent de compinit, qu'un shell non
+// interactif n'a pas : ils sont remplacés par des doublures qui impriment ce
+// qu'on leur passe.
+const appelZsh = `_describe() { print -rl -- "${(@P)${@[-1]}}" }
+_files() { print -r -- _files }
+words=(warden host ""); CURRENT=3
+__warden_complete`
+
+func lancerScriptZsh(t *testing.T, sortie string) []string {
+	t.Helper()
+	return lancerScript(t, "zsh", append([]byte("compdef() { : }\n"), scriptZsh...), sortie, appelZsh)
+}
+
+func TestScriptZshPasseMotEtDescriptionADescribe(t *testing.T) {
+	l := lancerScriptZsh(t, "list\taffiche\nweb:8080\tun port\nprod\n")
+	attendus := []string{"list:affiche", `web\:8080:un port`, "prod"}
+	if strings.Join(l, "\n") != strings.Join(attendus, "\n") {
+		t.Errorf("candidats = %q, attendu %q", l, attendus)
+	}
+}
+
+func TestScriptZshSansCandidatProposeLesFichiers(t *testing.T) {
+	if l := lancerScriptZsh(t, ""); len(l) != 1 || l[0] != "_files" {
+		t.Errorf("sortie = %q, attendu [_files]", l)
 	}
 }

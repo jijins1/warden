@@ -1,0 +1,52 @@
+<div class="w-table" role="table" aria-label="Playbooks">
+  <div class="w-tr w-th" role="row">
+    <span></span>
+    <span role="columnheader">Playbook</span>
+    <span role="columnheader">Repo</span>
+    <span role="columnheader">Environment</span>
+    <span role="columnheader">Last state</span>
+    <span role="columnheader" class="w-right">Last run</span>
+  </div>
+
+  @for (item of vue(); track item.ligne.cle) {
+    <div class="w-xrow" role="rowgroup" [class.is-open]="item.ouverte">
+      <button
+        type="button"
+        class="w-tr"
+        role="row"
+        [attr.aria-expanded]="item.ouverte"
+        (click)="basculer(item.ligne.cle)">
+        <svg class="w-chev" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M4.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span role="cell" class="w-truncate">{{ item.ligne.playbook }}</span>
+        <span role="cell" class="w-mono w-dim w-truncate">{{ item.ligne.repo }}</span>
+        <span role="cell"><w-badge-environnement [env]="item.ligne.environnement" /></span>
+        <span role="cell"><w-state-chip [state]="item.ligne.etat" /></span>
+        <span role="cell" class="w-right w-mono w-dim">{{ item.ligne.debut | date: 'dd/MM HH:mm' }}</span>
+      </button>
+
+      @if (item.ouverte) {
+        <div class="w-xpanel">
+          <div class="w-stack">
+            <dl class="w-facts">
+              <div>
+                <dt>Inventory</dt>
+                <dd class="w-mono">{{ item.ligne.inventaire }}</dd>
+              </div>
+              <div>
+                <dt>Last run</dt>
+                <dd class="w-ref" [title]="item.ligne.runRef">{{ item.ligne.runRefCourt }}</dd>
+              </div>
+              <div>
+                <dt>&nbsp;</dt>
+                <dd><a class="w-btn w-btn--text" [routerLink]="['/runs', item.ligne.runRef]">Open run →</a></dd>
+              </div>
+            </dl>
+            <ng-container [ngTemplateOutlet]="panneau().template" [ngTemplateOutletContext]="item.contexte" />
+          </div>
+        </div>
+      }
+    </div>
+  }
+</div>

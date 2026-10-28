@@ -56,6 +56,10 @@ type createRunPayload struct {
 	// que le mot de passe d'un enrôlement.
 	BecomePassword string `json:"become_password,omitempty"`
 
+	// ConnectionPassword suit exactement le même chemin (ADR-0048) : consigné,
+	// consommé à la livraison, jamais journalisé ni écrit en base.
+	ConnectionPassword string `json:"connection_password,omitempty"`
+
 	// ForwardEnv porte les VALEURS des variables du shell de l'appelant, et
 	// elles seules (ADR-0009). Les NOMS ne sont pas lus ici : ils viennent du
 	// commit, et une valeur envoyée pour un nom que le commit ne déclare pas est
@@ -281,6 +285,7 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		AuditSHA: auditSHA, BaseSHA: payload.BaseSHA,
 		MainlineRef: repo.MainlineRef, MainlineSHA: mainlineSHA,
 		Effectif: effectif, BecomePassword: payload.BecomePassword,
+		ConnectionPassword: payload.ConnectionPassword,
 	})
 }
 

@@ -1,0 +1,33 @@
+@if (chargement()) {
+  <div class="w-progress" role="progressbar" aria-label="Loading runs"></div>
+}
+
+@if (erreur(); as message) {
+  <p class="w-callout w-callout--error" role="alert">
+    <mat-icon>error_outline</mat-icon>
+    <span>{{ message }}</span>
+    <button type="button" class="w-btn w-btn--text" (click)="charger()">Retry</button>
+  </p>
+}
+
+@if (plafondAtteint()) {
+  <!-- Le serveur plafonne et ne dit PAS qu'il a tronqué. Le taire ici
+       laisserait conclure « il n'y a rien d'autre » d'une réponse pleine. -->
+  <p class="w-callout w-callout--cap" role="status">
+    <mat-icon>filter_alt</mat-icon>
+    <span>
+      Showing the server's maximum of {{ PLAFOND }} runs. There may be more —
+      narrow the window to be sure you are seeing everything.
+    </span>
+  </p>
+}
+
+@if (vide()) {
+  <p class="w-empty">
+    No run visible to you touched <span class="w-mono">{{ host() }}</span> in this window.
+  </p>
+}
+
+@if (runs().length > 0) {
+  <w-table-runs [runs]="runs()" />
+}

@@ -1,6 +1,6 @@
 import { bootstrapApplication } from '@angular/platform-browser';
 import { appConfig } from './app/app.config';
-import { APP_CONFIG, chargerConfig } from './app/core/config/app-config';
+import { APP_CONFIG, chargerConfig } from './app/core/app-config/app-config';
 import { App } from './app/app';
 
 // La configuration est chargée AVANT le bootstrap, et non par un initialiseur.

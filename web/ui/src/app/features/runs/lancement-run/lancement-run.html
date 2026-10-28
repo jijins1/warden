@@ -1,0 +1,18 @@
+<w-page-formulaire>
+  <w-page-formulaire-retour>
+    <a class="w-back" routerLink="/runs">
+      <mat-icon>arrow_back</mat-icon><span>Runs</span>
+    </a>
+  </w-page-formulaire-retour>
+
+  <w-page-formulaire-titre>Launch a run</w-page-formulaire-titre>
+
+  <w-page-formulaire-introduction>
+    Runs the protected branch as it stands — no local changes, nothing to capture. Requires
+    access to the named environment.
+  </w-page-formulaire-introduction>
+
+  <w-page-formulaire-contenu>
+    <w-envoi-lancement [valeurInitiale]="valeurInitiale()" />
+  </w-page-formulaire-contenu>
+</w-page-formulaire>

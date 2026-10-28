@@ -128,6 +128,21 @@ type Order struct {
 	// ÉMET, et celui-ci ne fait que transiter.
 	BecomePassword Secret `json:"become_password,omitempty"`
 
+	// ConnectionPassword est le mot de passe de connexion SSH de l'utilisateur
+	// (ADR-0048), vide quand il ne l'a pas fourni. Il vient d'un humain, comme
+	// BecomePassword, et ne fait que transiter.
+	ConnectionPassword Secret `json:"connection_password,omitempty"`
+
+	// HostKeyChecking demande au runner de vérifier STRICTEMENT les
+	// empreintes contre KnownHosts, et contre rien d'autre (ADR-0048). Un
+	// booléen explicite plutôt qu'une liste non vide : une liste vide est une
+	// vérification valide — elle refuse toutes les machines.
+	HostKeyChecking bool `json:"host_key_checking,omitempty"`
+
+	// KnownHosts porte les clés d'hôte des machines DÉCLARÉES de
+	// l'environnement, une ligne `known_hosts` par entrée.
+	KnownHosts []string `json:"known_hosts,omitempty"`
+
 	// VaultPassword est la clé Ansible Vault de l'environnement, émise par
 	// `vault-inventory` au moment du claim (ADR-0045), vide quand
 	// l'environnement n'en a pas.
@@ -349,6 +364,12 @@ const (
 	// secret dans le champ le plus consulté du système est un secret qui finira
 	// dans un log (ADR-0023).
 	EnvTokenFile = "WARDEN_TOKEN_FILE"
+
+	// TokenFileStdin, posé dans EnvTokenFile, dit au runner de lire son jeton
+	// sur stdin jusqu'à EOF (ADR-0047). C'est le mode Docker : il n'y a pas de
+	// Secret à monter, et une variable d'environnement ressortirait dans
+	// `docker inspect` pour la même raison que dans le `Pod`.
+	TokenFileStdin = "-"
 
 	// EnvDispatchURL est l'adresse du canal, telle qu'un POD la joint. Elle
 	// diffère de l'adresse d'écoute du service : le pod n'est pas dans le même

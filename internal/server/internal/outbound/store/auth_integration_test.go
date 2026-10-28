@@ -57,7 +57,7 @@ func ouvrirSession(t *testing.T, s *store.Store, userID int64, expire time.Time)
 	if err != nil {
 		t.Fatalf("NewSessionToken: %v", err)
 	}
-	if _, err := s.CreateSession(context.Background(), userID, tok.Hash(), expire); err != nil {
+	if _, err := s.CreateSession(context.Background(), userID, tok.Hash(), expire, nil); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	return tok

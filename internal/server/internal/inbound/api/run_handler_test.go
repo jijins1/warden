@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -477,7 +478,23 @@ func (d droitsFactices) PeutAtteindre(_ context.Context, userID int64, env strin
 	return ok, nil
 }
 
+func (d droitsFactices) EnvironnementsAtteignables(_ context.Context, userID int64) ([]string, error) {
+	prefixe := fmt.Sprintf("%d/", userID)
+	envs := []string{}
+	for k := range d {
+		if env, ok := strings.CutPrefix(k, prefixe); ok {
+			envs = append(envs, env)
+		}
+	}
+	sort.Strings(envs)
+	return envs, nil
+}
+
 func (d droitsFactices) ListGrants(context.Context, string) ([]core.EnvironmentGrant, error) {
+	return nil, nil
+}
+
+func (d droitsFactices) ListGroupGrants(context.Context) ([]core.GroupGrant, error) {
 	return nil, nil
 }
 

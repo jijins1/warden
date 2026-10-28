@@ -166,6 +166,9 @@ type NewRun struct {
 	// consigne éphémère, et la livraison de l'ordre au pod le consomme.
 	BecomePassword string `json:"become_password,omitempty"`
 
+	// ConnectionPassword suit le même chemin (ADR-0048).
+	ConnectionPassword string `json:"connection_password,omitempty"`
+
 	// ForwardEnv porte les VALEURS lues dans le shell de l'appelant, et elles
 	// seules (§5.4).
 	//
@@ -570,6 +573,22 @@ func (c *Client) Whoami(ctx context.Context) (Identite, error) {
 	var out Identite
 	err := c.appeler(ctx, http.MethodGet, "/auth/whoami", nil, &out)
 	return out, err
+}
+
+// VersionServeur demande sa version au serveur (ADR-0049).
+//
+// Anonyme côté serveur : elle répond avant toute session. Un serveur antérieur
+// à l'ADR-0049 répond 404, rendu ici comme une version VIDE et non comme une
+// erreur — il n'annonce rien, et ne rien annoncer ne bloque rien.
+func (c *Client) VersionServeur(ctx context.Context) (string, error) {
+	var out struct {
+		Version string `json:"version"`
+	}
+	err := c.appeler(ctx, http.MethodGet, "/version", nil, &out)
+	if errors.Is(err, ErrRepoNonConfigure) {
+		return "", nil
+	}
+	return out.Version, err
 }
 
 // ChangerMotDePasse remplace le mot de passe de l'appelant.

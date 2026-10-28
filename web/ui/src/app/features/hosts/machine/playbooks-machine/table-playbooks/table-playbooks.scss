@@ -1,0 +1,4 @@
+// Les colonnes, partagées par l'en-tête et les lignes ; la première porte le chevron.
+.w-tr {
+  grid-template-columns: 16px minmax(160px, 1fr) minmax(100px, auto) 108px 140px 110px;
+}

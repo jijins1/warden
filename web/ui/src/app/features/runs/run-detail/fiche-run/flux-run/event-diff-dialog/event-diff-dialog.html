@@ -1,0 +1,59 @@
+<div class="w-dialog">
+  <header class="w-dialog-head">
+    <h2 id="titre-event-diff">Event <span class="w-mono">{{ donnees.seq }}</span></h2>
+    <w-state-chip [state]="donnees.etat" />
+    <span class="w-spacer"></span>
+    <button type="button" class="w-icon-btn" aria-label="Close" mat-dialog-close>
+      <mat-icon>close</mat-icon>
+    </button>
+  </header>
+
+  <div class="w-dialog-body">
+    <p class="w-context">
+      @if (donnees.tache) { <strong>{{ donnees.tache }}</strong> }
+      @if (donnees.hote) { on <span class="w-mono">{{ donnees.hote }}</span> }
+    </p>
+
+    <!-- ADR-0017 : la substitution masque les valeurs injectées, et le run signale
+         quand elle a échoué. Le rappel est ici parce que c'est le seul écran du
+         produit qui affiche du contenu de machine. -->
+    <p class="w-callout">
+      <mat-icon>visibility_off</mat-icon>
+      <span>Module output. Redacted server-side, but treat it as sensitive.</span>
+    </p>
+
+    <!-- CE QUE LA TÂCHE A FAIT, et sans attendre : tout arrive avec l'event par
+         le flux, là où le diff demande un aller au serveur. C'est aussi ce qu'on
+         vient lire quand une tâche a échoué — le diff dit ce qui a changé, ceci
+         dit ce qui a été lancé et ce que la machine a répondu. -->
+    @if (donnees.detail; as d) {
+      <w-sortie-tache [detail]="d" />
+    }
+
+    <h3 class="w-section-title">Diff</h3>
+
+    @if (chargement()) {
+      <div class="w-progress" role="progressbar" aria-label="Loading the diff"></div>
+    }
+
+    @if (erreur(); as message) {
+      <p class="w-callout w-callout--error" role="alert">
+        <mat-icon>error_outline</mat-icon><span>{{ message }}</span>
+      </p>
+    }
+
+    @if (vide()) {
+      <p class="w-nothing">This task produced no diff.</p>
+    }
+
+    @if (texte(); as t) {
+      <!-- Interpolation, jamais `innerHTML` : le contenu vient d'une machine
+           auditée et n'est pas de confiance. -->
+      <w-unified-diff [texte]="t" />
+    }
+  </div>
+
+  <footer class="w-dialog-foot">
+    <button type="button" class="w-btn w-btn--outline" mat-dialog-close>Close</button>
+  </footer>
+</div>

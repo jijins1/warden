@@ -1,0 +1,26 @@
+@if (premierChargement()) {
+  <div class="w-progress" role="progressbar" aria-label="Loading machines"></div>
+}
+
+@if (erreur(); as message) {
+  <p class="w-callout w-callout--error" role="alert">
+    <mat-icon>error_outline</mat-icon>
+    <span>{{ message }}</span>
+    <button type="button" class="w-btn w-btn--text" (click)="nouvelEssai.emit()">Retry</button>
+  </p>
+}
+
+@if (vide()) {
+  <p class="w-empty">
+    No machine matches.
+    @if (filtrePose()) {
+      <button type="button" class="w-clear" (click)="effacement.emit()">Clear filters</button>
+    } @else {
+      <code>warden enroll</code> adds one.
+    }
+  </p>
+}
+
+@if (avecLignes()) {
+  <w-table-machines [lignes]="lignes()" />
+}

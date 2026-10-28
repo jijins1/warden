@@ -30,6 +30,7 @@ import (
 	"github.com/jijins1/warden/internal/server/internal/gitd"
 	"github.com/jijins1/warden/internal/server/internal/inbound/api"
 	"github.com/jijins1/warden/internal/server/internal/inbound/ingest"
+	"github.com/jijins1/warden/internal/server/internal/outbound/activedirectory"
 	"github.com/jijins1/warden/internal/server/internal/outbound/dispatch"
 	"github.com/jijins1/warden/internal/server/internal/outbound/flux"
 	"github.com/jijins1/warden/internal/server/internal/outbound/gitclient"
@@ -156,8 +157,12 @@ func runController(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	m, err := lireModes()
+	if err != nil {
+		return err
+	}
 	ns := os.Getenv(EnvPodNamespace)
-	if ns == "" {
+	if m.orchestrateur == modeKubernetes && ns == "" {
 		// Sans namespace, il n'y a rien à observer. Démarrer quand même donnerait
 		// un contrôleur qui tourne, ne réconcilie rien et paraît sain — la pire
 		// des trois issues.
@@ -170,26 +175,46 @@ func runController(ctx context.Context) error {
 	}
 	defer st.Close()
 
-	k8s, err := clientKubernetes()
-	if err != nil {
-		return err
-	}
 	// Les adresses de dispatch et d'ingestion sont exigées par le constructeur de
 	// l'orchestrateur parce qu'un pod LANCÉ sans elles ne saurait qui appeler. Le
 	// contrôleur n'en lance aucun ; les valeurs posées ici ne partent nulle part,
 	// et les inventer serait plus honnête que d'affaiblir un contrôle qui protège
 	// le chemin de lancement.
-	orch, err := orchestrator.New(k8s, orchestrator.Config{
-		Namespace:   ns,
-		DispatchURL: valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid"),
-		IngestURL:   valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid"),
-		PullSecrets: secretsDeTirage(),
-	})
-	if err != nil {
-		return err
+	dispatchURL := valeurOuDefaut(EnvDispatchRunnerURL, "http://unused.controller.invalid")
+	ingestURL := valeurOuDefaut(EnvIngestRunnerURL, "http://unused.controller.invalid")
+
+	var pods core.PodsObserves
+	switch m.orchestrateur {
+	case modeDocker:
+		// En mode Docker, c'est le contrôleur qui porte la borne de durée
+		// (ADR-0047) : il lui faut donc le même plafond que le lanceur.
+		deadline, err := secondesDeDeadline()
+		if err != nil {
+			return err
+		}
+		d, err := lanceurDocker(dispatchURL, ingestURL, deadline)
+		if err != nil {
+			return err
+		}
+		pods = d
+	default:
+		k8s, err := clientKubernetes()
+		if err != nil {
+			return err
+		}
+		orch, err := orchestrator.New(k8s, orchestrator.Config{
+			Namespace:   ns,
+			DispatchURL: dispatchURL,
+			IngestURL:   ingestURL,
+			PullSecrets: secretsDeTirage(),
+		})
+		if err != nil {
+			return err
+		}
+		pods = orch
 	}
 
-	rec, err := core.NewReconciler(st, orch)
+	rec, err := core.NewReconciler(st, pods)
 	if err != nil {
 		return err
 	}
@@ -226,8 +251,13 @@ func runController(ctx context.Context) error {
 	intervalleDroits := secondesOuDefaut(EnvGrantsSeconds, IntervalleDesDroits)
 	intervalleProteges := secondesOuDefaut(EnvProtectedSeconds, IntervalleDesProteges)
 
+	perimetre := slog.String("namespace", ns)
+	if m.orchestrateur == modeDocker {
+		perimetre = slog.String("instance", valeurOuDefaut(EnvDockerInstance, "warden"))
+	}
 	slog.Info("contrôleur démarré",
-		slog.String("namespace", ns),
+		slog.String("orchestrateur", m.orchestrateur),
+		perimetre,
 		slog.Duration("intervalle_pods", intervallePods))
 	if droits != nil {
 		slog.Info("droits lus depuis un fichier",
@@ -385,6 +415,49 @@ func dureeDeSession() time.Duration {
 	return time.Duration(h) * time.Hour
 }
 
+// brancherLAnnuaire fait passer la connexion par Active Directory quand
+// WARDEN_LDAP_URL est posée (ADR-0053).
+//
+// Une configuration INCOMPLÈTE fait échouer le démarrage plutôt que retomber sur
+// les comptes locaux : un déploiement qui croit avoir branché l'AD et ne l'a pas
+// fait laisserait tout le monde dehors sans le dire.
+func brancherLAnnuaire(auth *core.Authenticator, st *store.Store) error {
+	adresse := os.Getenv(EnvLDAPURL)
+	if adresse == "" {
+		return nil
+	}
+	ad, err := activedirectory.New(activedirectory.Config{
+		URL:          adresse,
+		StartTLS:     os.Getenv(EnvLDAPStartTLS) == "1",
+		BaseDN:       os.Getenv(EnvLDAPBaseDN),
+		BindDN:       os.Getenv(EnvLDAPBindDN),
+		BindPassword: os.Getenv(EnvLDAPBindPassword),
+		CAFile:       os.Getenv(EnvLDAPCAFile),
+	})
+	if err != nil {
+		return err
+	}
+	// Même règle que WARDEN_SESSION_TTL_HOURS : une valeur illisible laisse le
+	// défaut du cœur, qui est sûr.
+	var duree time.Duration
+	if brut := os.Getenv(EnvLDAPSessionTTL); brut != "" {
+		if h, err := strconv.Atoi(brut); err == nil && h > 0 {
+			duree = time.Duration(h) * time.Hour
+		} else {
+			slog.Warn("durée de session AD illisible, le défaut s'applique",
+				slog.String("variable", EnvLDAPSessionTTL), slog.String("valeur", brut),
+				slog.Duration("défaut", core.DureeSessionAnnuaire))
+		}
+	}
+	if err := auth.BrancherLAnnuaire(ad, st, duree); err != nil {
+		return err
+	}
+	slog.Info("connexion par l'annuaire",
+		slog.String("url", adresse),
+		slog.String("note", "un compte local actif est vérifié d'abord ; sans lui, l'AD répond seul, sans repli"))
+	return nil
+}
+
 // reconcilierLesDroits applique le document de droits s'il a changé.
 //
 // Adossée au passage du réconciliateur de pods plutôt qu'à sa propre boucle : le
@@ -420,7 +493,21 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 		return
 	}
 
-	plan, err := core.PlanifierLesDroits(doc, actuels)
+	// Les GROUPES de l'annuaire (ADR-0053) : lus AVANT de planifier, pour que le
+	// plan soit complet et s'applique en une transaction.
+	groupes, err := st.ListGroupGrants(ctx)
+	if err != nil {
+		source.Oublier()
+		slog.Error("lecture des droits de groupe en échec", slog.String("error", err.Error()))
+		return
+	}
+	admins, err := st.GroupesAdmin(ctx)
+	if err != nil {
+		source.Oublier()
+		slog.Error("lecture des groupes d'administration en échec", slog.String("error", err.Error()))
+		return
+	}
+	plan, err := core.PlanifierLesDroits(doc, actuels, groupes, admins)
 	if err != nil {
 		// Le document est syntaxiquement lisible mais refusé : document vide,
 		// environnement mal formé, compte vide. C'est une erreur de RÉDACTION, et
@@ -430,6 +517,7 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 			slog.String("chemin", source.Chemin()), slog.String("error", err.Error()))
 		return
 	}
+
 	if plan.Vide() {
 		slog.Info("droits inchangés", slog.Int("conformes", plan.Inchanges))
 		return
@@ -453,9 +541,25 @@ func reconcilierLesDroits(ctx context.Context, source *grantfile.Source, st *sto
 		slog.Warn("droit accordé par le document",
 			slog.String("sujet", c.Subject), slog.String("environnement", c.Environment))
 	}
+	for _, c := range plan.Groupes.Revoquer {
+		slog.Warn("droit de groupe révoqué par le document",
+			slog.String("groupe", c.Group), slog.String("environnement", c.Environment))
+	}
+	for _, c := range plan.Groupes.Accorder {
+		slog.Warn("droit de groupe accordé par le document",
+			slog.String("groupe", c.Group), slog.String("environnement", c.Environment))
+	}
+	for _, g := range plan.Groupes.RevoquerAdmin {
+		slog.Warn("administration retirée à un groupe par le document", slog.String("groupe", g))
+	}
+	for _, g := range plan.Groupes.AccorderAdmin {
+		slog.Warn("administration accordée à un groupe par le document", slog.String("groupe", g))
+	}
 	slog.Info("droits réconciliés",
 		slog.Int("accordés", len(plan.Accorder)), slog.Int("révoqués", len(plan.Revoquer)),
-		slog.Int("inchangés", plan.Inchanges))
+		slog.Int("inchangés", plan.Inchanges),
+		slog.Int("groupes_accordés", len(plan.Groupes.Accorder)+len(plan.Groupes.AccorderAdmin)),
+		slog.Int("groupes_révoqués", len(plan.Groupes.Revoquer)+len(plan.Groupes.RevoquerAdmin)))
 }
 
 // IntervalleDesProteges est le rythme de relecture du fichier des options par
@@ -579,6 +683,10 @@ func runAPI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	m, err := lireModes()
+	if err != nil {
+		return err
+	}
 
 	// api.FromEnv et non une construction à la main : elle lit
 	// WARDEN_INSECURE_DEV_AUTH, sans quoi l'API assemblée refuse TOUTE requête —
@@ -683,86 +791,123 @@ func runAPI(ctx context.Context) error {
 		// empêcher.
 		creator = st
 
-		// Le démarrage des runs n'est branché que si le produit a accès au
-		// cluster. Sans lui, `POST /runs` ENREGISTRE le run sans le démarrer et le
-		// dit : un déploiement sans droits Kubernetes reste utilisable pour tout
-		// le reste, ce qui est le mode de développement.
-		if ns := os.Getenv(EnvPodNamespace); ns != "" {
+		// Le démarrage des runs n'est branché que si le produit a de quoi lancer
+		// un runner : le cluster, ou Docker quand il est choisi explicitement
+		// (ADR-0047). Sans lui, `POST /runs` ENREGISTRE le run sans le démarrer
+		// et le dit : un déploiement sans droits Kubernetes reste utilisable pour
+		// tout le reste, ce qui est le mode de développement.
+		ns := os.Getenv(EnvPodNamespace)
+		declencheur := EnvPodNamespace
+		if m.orchestrateur == modeDocker {
+			declencheur = EnvOrchestrator + "=" + modeDocker
+		}
+		if m.orchestrateur == modeDocker || ns != "" {
 			image := os.Getenv(EnvRunnerImage)
 			if image == "" {
 				// L'ADR-0014 fait déclarer l'image par le projet ; cette
 				// configuration n'existe pas encore, donc elle vient du
-				// déploiement. Son absence produirait des pods qui échouent au
-				// démarrage avec une erreur de Kubernetes, loin de la cause.
-				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvRunnerImage)
+				// déploiement. Son absence produirait des runners qui échouent
+				// au démarrage, loin de la cause.
+				return fmt.Errorf("%s est définie sans %s", declencheur, EnvRunnerImage)
 			}
-
-			k8s, err := clientKubernetes()
-			if err != nil {
-				return err
-			}
-			// L'adresse que le POD joindra, distincte de celle sur laquelle le
-			// service écoute : un pod n'est pas dans le même espace réseau que le
-			// processus qui sert. Sans elle, les pods démarrent et s'arrêtent
-			// faute de savoir qui appeler.
+			// L'adresse que le RUNNER joindra, distincte de celle sur laquelle le
+			// service écoute : un runner n'est pas dans le même espace réseau que
+			// le processus qui sert. Sans elle, les runners démarrent et
+			// s'arrêtent faute de savoir qui appeler.
 			dispatchURL := os.Getenv(EnvDispatchRunnerURL)
 			if dispatchURL == "" {
-				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvDispatchRunnerURL)
+				return fmt.Errorf("%s est définie sans %s", declencheur, EnvDispatchRunnerURL)
 			}
 			// Même raisonnement que pour le dispatch, avec une conséquence plus
-			// dure : un pod sans adresse d'ingestion exécuterait son playbook
+			// dure : un runner sans adresse d'ingestion exécuterait son playbook
 			// sans pouvoir rien rapporter, et l'audit ne dirait rien de ce qui
 			// a été modifié — l'inverse exact du produit (§6.3).
 			ingestURL := os.Getenv(EnvIngestRunnerURL)
 			if ingestURL == "" {
-				return fmt.Errorf("%s est définie sans %s", EnvPodNamespace, EnvIngestRunnerURL)
+				return fmt.Errorf("%s est définie sans %s", declencheur, EnvIngestRunnerURL)
 			}
 			// Le plafond de durée d'un run vient du DÉPLOIEMENT, faute d'une
 			// configuration projet (ADR-0014). C'est la décision actée n°13 : ce
 			// qui borne un run qui pend même contrôleur mort, donc la seule
-			// protection qui ne dépend d'aucun de nos processus. Absente, la
-			// valeur par défaut de l'orchestrateur s'applique.
+			// protection qui ne dépend d'aucun de nos processus — en mode
+			// Kubernetes du moins ; en mode Docker, c'est le contrôleur qui la
+			// porte (ADR-0047). Absente, la valeur par défaut de l'adaptateur
+			// s'applique.
 			deadline, err := secondesDeDeadline()
 			if err != nil {
 				return err
 			}
-			orch, err := orchestrator.New(k8s, orchestrator.Config{
-				Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
-				DeadlineSeconds: deadline,
-				PullSecrets:     secretsDeTirage(),
-			})
-			if err != nil {
-				return err
+
+			var (
+				launcher core.PodLauncher
+				orch     *orchestrator.Kubernetes
+				k8s      *kubernetes.Clientset
+			)
+			switch m.orchestrateur {
+			case modeDocker:
+				d, err := lanceurDocker(dispatchURL, ingestURL, deadline)
+				if err != nil {
+					return err
+				}
+				launcher = d
+			default:
+				k8s, err = clientKubernetes()
+				if err != nil {
+					return err
+				}
+				orch, err = orchestrator.New(k8s, orchestrator.Config{
+					Namespace: ns, DispatchURL: dispatchURL, IngestURL: ingestURL,
+					DeadlineSeconds: deadline,
+					PullSecrets:     secretsDeTirage(),
+				})
+				if err != nil {
+					return err
+				}
+				launcher = orch
 			}
-			rs, err := core.NewRunStarter(st, orch, gc, image)
+			rs, err := core.NewRunStarter(st, launcher, gc, image)
 			if err != nil {
 				return err
 			}
 			starter = rs
 
-			// Le magasin de clés partage la condition du cluster, et pas par
-			// commodité : la partie privée vit dans un Secret du namespace des
-			// pods (ADR-0020). Sans accès à Kubernetes il n'y a pas de magasin,
-			// donc pas de clé — et les ordres partent sans, ce que le composeur
-			// traite comme un état légitime.
-			ki, err := keyinventory.New(k8s, ns, st)
-			if err != nil {
-				return err
-			}
-			keys, keyStore = ki, ki
+			switch m.secrets {
+			case modeVault:
+				// Les trois magasins dans Vault (ADR-0047) : clés d'accès, clé
+				// de vault, et consigne des valeurs de passage.
+				mv, err := ouvrirVault(st)
+				if err != nil {
+					return err
+				}
+				keys, keyStore = mv.cles, mv.cles
+				vault, vaultStore = mv.vault, mv.vault
+				consigne = mv.consigne
+			default:
+				// Le magasin de clés partage la condition du cluster, et pas par
+				// commodité : la partie privée vit dans un Secret du namespace
+				// des pods (ADR-0020). Sans accès à Kubernetes il n'y a pas de
+				// magasin, donc pas de clé — et les ordres partent sans, ce que
+				// le composeur traite comme un état légitime.
+				ki, err := keyinventory.New(k8s, ns, st)
+				if err != nil {
+					return err
+				}
+				keys, keyStore = ki, ki
 
-			// La clé de vault (ADR-0045) partage la même condition que la clé
-			// SSH : sa valeur en clair vit dans un Secret du namespace des
-			// pods.
-			vi, err := vaultinventory.New(k8s, ns, st)
-			if err != nil {
-				return err
-			}
-			vault, vaultStore = vi, vi
+				// La clé de vault (ADR-0045) partage la même condition que la
+				// clé SSH : sa valeur en clair vit dans un Secret du namespace
+				// des pods.
+				vi, err := vaultinventory.New(k8s, ns, st)
+				if err != nil {
+					return err
+				}
+				vault, vaultStore = vi, vi
 
-			// L'orchestrateur tient déjà le cycle de vie des Secrets d'un pod ;
-			// la consigne des valeurs de passage y vit pour la même raison.
-			consigne = orch
+				// L'orchestrateur tient déjà le cycle de vie des Secrets d'un
+				// pod ; la consigne des valeurs de passage y vit pour la même
+				// raison.
+				consigne = orch
+			}
 		}
 
 		// Le canal de dispatch (ADR-0018) n'est monté que si une adresse lui est
@@ -786,6 +931,20 @@ func runAPI(ctx context.Context) error {
 			// qui donne un sens à la révocation (§10.3). Sans ce branchement, le
 			// composeur refuserait toute clé — c'est le défaut voulu.
 			ob = ob.AvecDroits(st)
+			// Les empreintes des machines déclarées, vérifiées par chaque run
+			// (ADR-0048). Sans elles, la vérification resterait stricte sur une
+			// liste vide et aucune machine ne serait joignable.
+			ob = ob.AvecMachines(st)
+			switch v := os.Getenv(EnvHostKeyChecking); v {
+			case "", "strict":
+			case "off":
+				slog.Warn("empreintes non vérifiées pour les runs à clé",
+					slog.String("variable", EnvHostKeyChecking),
+					slog.String("effet", "un nœud usurpé reçoit la connexion ; les runs à mot de passe restent vérifiés"))
+				ob = ob.SansVerifierLesEmpreintes()
+			default:
+				return fmt.Errorf("%s=%q : `strict` ou `off` attendu", EnvHostKeyChecking, v)
+			}
 			// Facultatif comme `keys` : sans magasin de vault, l'ordre part
 			// sans clé et le run tourne — il échouera au premier `!vault |`
 			// qu'il ne peut pas déchiffrer, ce qui est un diagnostic honnête.
@@ -807,6 +966,9 @@ func runAPI(ctx context.Context) error {
 	// s'authentifie, sans quoi la dégradation ouvrirait la porte.
 	auth, err := core.NewAuthenticator(st, st, dureeDeSession())
 	if err != nil {
+		return err
+	}
+	if err := brancherLAnnuaire(auth, st); err != nil {
 		return err
 	}
 
@@ -919,6 +1081,11 @@ const (
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
 	EnvGitClientURL     = "WARDEN_GIT_CLIENT_URL"     // adresse ANNONCÉE à la CLI avec son jeton de push : le port d'ÉCRITURE
 	EnvExigerConfig     = "WARDEN_EXIGER_CONFIG"      // "1" refuse les commits sans .ansibleproxy.yml (ADR-0009)
+	// EnvHostKeyChecking : `strict` (défaut) ou `off`. Interrupteur de
+	// TRANSITION, le temps de déclarer les clés d'hôte d'une flotte : `off`
+	// coupe la vérification des empreintes des runs à clé, jamais celle d'un
+	// run à mot de passe (ADR-0048).
+	EnvHostKeyChecking = "WARDEN_HOST_KEY_CHECKING"
 	// EnvDispatchRunnerURL est l'adresse du canal telle qu'un POD la joint. Comme
 	// pour git, elle diffère de l'adresse d'écoute : le service écoute dans le
 	// control plane, le pod appelle depuis le cluster.
@@ -951,6 +1118,24 @@ const (
 	// Absente, le défaut du cœur s'applique — trente jours. Voir
 	// `core.DureeSession` pour l'arbitrage qu'il représente.
 	EnvSessionTTL = "WARDEN_SESSION_TTL_HOURS"
+
+	// EnvLDAPURL branche la connexion par Active Directory (ADR-0053) :
+	// `ldaps://dc.exemple.local:636`. Absente, seuls les comptes locaux
+	// existent.
+	EnvLDAPURL = "WARDEN_LDAP_URL"
+	// EnvLDAPStartTLS vaut `1` pour une URL `ldap://` chiffrée par StartTLS.
+	EnvLDAPStartTLS = "WARDEN_LDAP_STARTTLS"
+	// EnvLDAPBaseDN borne la recherche des comptes et des groupes.
+	EnvLDAPBaseDN = "WARDEN_LDAP_BASE_DN"
+	// EnvLDAPBindDN et EnvLDAPBindPassword sont le compte de service, en
+	// lecture seule, qui cherche les comptes et leurs groupes.
+	EnvLDAPBindDN       = "WARDEN_LDAP_BIND_DN"
+	EnvLDAPBindPassword = "WARDEN_LDAP_BIND_PASSWORD" // #nosec G101 -- le NOM de la variable, pas le secret
+	// EnvLDAPCAFile est l'autorité des contrôleurs de domaine, au format PEM.
+	EnvLDAPCAFile = "WARDEN_LDAP_CA_FILE"
+	// EnvLDAPSessionTTL est la validité d'une session AD, en HEURES. Défaut
+	// dix : c'est la borne de prise d'effet d'un retrait de groupe.
+	EnvLDAPSessionTTL = "WARDEN_LDAP_SESSION_TTL_HOURS"
 
 	// EnvReconcileSeconds est le rythme du réconciliateur de PODS, en secondes.
 	// Chaque passage coûte un LIST à l'API Kubernetes ; ce qu'il borne est un

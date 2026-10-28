@@ -1,0 +1,14 @@
+# Les droits par environnement (ADR-0033), réconciliés par le contrôleur.
+# Les comptes doivent exister :
+#   wardend user add --subject alice --admin
+#   wardend user add --subject bob
+#
+# Deux environnements pour que la démo montre la PORTÉE : alice voit les runs
+# de prod et de staging, bob ceux de staging seulement — et ni l'un ni l'autre
+# ne voit plus en étant administrateur.
+environments:
+  prod:
+    - alice
+  staging:
+    - alice
+    - bob

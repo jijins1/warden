@@ -210,3 +210,32 @@ func TestListReposLitLaListe(t *testing.T) {
 		t.Fatalf("dépôts = %+v", depots)
 	}
 }
+
+// Un serveur antérieur à l'ADR-0049 n'a pas `/version` : il n'annonce rien, et
+// ce silence ne doit pas devenir une erreur qui bloquerait toute soumission.
+func TestUnServeurSansVersionNAnnonceRien(t *testing.T) {
+	c := monter(t, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+
+	v, err := c.VersionServeur(t.Context())
+	if err != nil {
+		t.Fatalf("VersionServeur : %v", err)
+	}
+	if v != "" {
+		t.Errorf("version = %q, attendue vide", v)
+	}
+}
+
+func TestLaVersionDuServeurEstLue(t *testing.T) {
+	c := monter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"version":"0.0.42"}`))
+	})
+
+	v, err := c.VersionServeur(t.Context())
+	if err != nil || v != "0.0.42" {
+		t.Errorf("VersionServeur = %q, %v", v, err)
+	}
+}

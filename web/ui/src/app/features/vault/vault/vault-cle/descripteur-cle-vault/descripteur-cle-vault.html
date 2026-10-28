@@ -1,0 +1,27 @@
+@if (descripteur(); as d) {
+  <dl class="w-facts">
+    <div>
+      <dt>Fingerprint</dt>
+      <dd class="w-mono">{{ d.fingerprint }}</dd>
+    </div>
+    <div>
+      <dt>Origin</dt>
+      <dd>{{ origine() }}</dd>
+    </div>
+    <div>
+      <dt>Created</dt>
+      <dd class="w-mono">{{ d.created_at | date: 'medium' }}</dd>
+    </div>
+    @if (d.rotated_at) {
+      <div>
+        <dt>Rotated</dt>
+        <dd class="w-mono">{{ d.rotated_at | date: 'medium' }}</dd>
+      </div>
+    }
+  </dl>
+} @else {
+  <p class="w-lede">
+    This environment has no vault key yet. Runs on it cannot decrypt
+    <code>!vault</code> values until one is set.
+  </p>
+}

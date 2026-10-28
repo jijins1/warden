@@ -1,0 +1,16 @@
+<button
+  type="button"
+  class="w-task"
+  [class.is-failed]="enEchec()"
+  [class.is-open]="deplie()"
+  [attr.aria-expanded]="deplie()"
+  (click)="basculer.emit()">
+  <svg class="w-chev" viewBox="0 0 12 12" aria-hidden="true">
+    <path d="M4.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+  <span class="w-name" [matTooltip]="titre()">{{ titre() }}</span>
+  <span class="w-mono w-faint">{{ comptes() }}</span>
+  @if (etat(); as e) {
+    <w-state-chip [state]="e" />
+  }
+</button>

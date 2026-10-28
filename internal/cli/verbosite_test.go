@@ -45,3 +45,40 @@ func TestVerbositeEstAussiSurRun(t *testing.T) {
 		t.Errorf("niveau = %d, veut 2", got)
 	}
 }
+
+// Le motif se donne EN TÊTE, comme chez `ansible` : les drapeaux qui le
+// suivent doivent être lus, et non pris pour d'autres positionnels.
+func TestRunAccepteLeMotifAvantLesDrapeaux(t *testing.T) {
+	cas := map[string][]string{
+		"motif en tête":   {"all", "-m", "ping", "-vv"},
+		"motif au milieu": {"-m", "ping", "all", "-vv"},
+		"motif en queue":  {"-m", "ping", "-vv", "all"},
+	}
+	for nom, args := range cas {
+		t.Run(nom, func(t *testing.T) {
+			fs, f := fsRun()
+			positionnels, err := parserEntremele(fs, args)
+			if err != nil {
+				t.Fatalf("parse : %v", err)
+			}
+			if len(positionnels) != 1 || positionnels[0] != "all" {
+				t.Errorf("positionnels = %v, veut [all]", positionnels)
+			}
+			if *f.module != "ping" || f.verbeux.niveau() != 2 {
+				t.Errorf("module = %q, niveau = %d", *f.module, f.verbeux.niveau())
+			}
+		})
+	}
+}
+
+// Après `--`, plus rien n'est un drapeau.
+func TestParserEntremeleRespecteLeSeparateur(t *testing.T) {
+	fs, f := fsRun()
+	positionnels, err := parserEntremele(fs, []string{"-m", "ping", "--", "all", "-vv"})
+	if err != nil {
+		t.Fatalf("parse : %v", err)
+	}
+	if len(positionnels) != 2 || positionnels[1] != "-vv" || f.verbeux.niveau() != 0 {
+		t.Errorf("positionnels = %v, niveau = %d", positionnels, f.verbeux.niveau())
+	}
+}

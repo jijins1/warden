@@ -11,6 +11,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/jijins1/warden/internal/server/internal/core"
@@ -53,6 +54,47 @@ func TestUnDroitNOuvrePasLesAutresEnvironnements(t *testing.T) {
 
 	if ok, _ := s.PeutAtteindre(ctx, u.ID, "staging"); ok {
 		t.Error("un droit sur prod a ouvert staging")
+	}
+}
+
+// Les environnements atteignables sont ceux du compte, vivants, triés — et
+// une liste vide, pas nil, pour un compte sans droit : c'est elle qui borne
+// ce qu'un utilisateur voit des runs d'autrui.
+func TestLesEnvironnementsAtteignablesSontCeuxDuCompte(t *testing.T) {
+	s := ouvrirStore(t)
+	ctx := context.Background()
+
+	alice := compte(t, s, "alice", false)
+	bob := compte(t, s, "bob", false)
+	for _, env := range []string{"staging", "prod", "recette"} {
+		if _, err := s.Grant(ctx, "alice", env, 0); err != nil {
+			t.Fatalf("Grant %s: %v", env, err)
+		}
+	}
+	if err := s.Revoke(ctx, "alice", "recette"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if _, err := s.Grant(ctx, "bob", "ailleurs", 0); err != nil {
+		t.Fatalf("Grant bob: %v", err)
+	}
+	sansDroit := compte(t, s, "carol", false)
+
+	envs, err := s.EnvironnementsAtteignables(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(envs, []string{"prod", "staging"}) {
+		t.Errorf("alice : %q, attendu [prod staging]", envs)
+	}
+
+	envs, err = s.EnvironnementsAtteignables(ctx, bob.ID)
+	if err != nil || !slices.Equal(envs, []string{"ailleurs"}) {
+		t.Errorf("bob : %q (err=%v)", envs, err)
+	}
+
+	envs, err = s.EnvironnementsAtteignables(ctx, sansDroit.ID)
+	if err != nil || envs == nil || len(envs) != 0 {
+		t.Errorf("carol : %#v (err=%v), attendu une liste vide non nil", envs, err)
 	}
 }
 
@@ -331,7 +373,7 @@ func TestReconcilierPuisReplanifierDonneUnPlanVide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGrants: %v", err)
 	}
-	plan, err := core.PlanifierLesDroits(document, actuels)
+	plan, err := core.PlanifierLesDroits(document, actuels, nil, nil)
 	if err != nil {
 		t.Fatalf("PlanifierLesDroits: %v", err)
 	}
@@ -340,7 +382,7 @@ func TestReconcilierPuisReplanifierDonneUnPlanVide(t *testing.T) {
 	}
 
 	actuels, _ = s.ListGrants(ctx, "")
-	second, err := core.PlanifierLesDroits(document, actuels)
+	second, err := core.PlanifierLesDroits(document, actuels, nil, nil)
 	if err != nil {
 		t.Fatalf("seconde planification: %v", err)
 	}

@@ -106,7 +106,7 @@ func TestCandidatsDrapeauxNeMontreQueLesSiensPropres(t *testing.T) {
 
 	fs := flagsDeTest([]string{"host"})
 
-	candidats := forget.CandidatsDrapeaux(fs)
+	candidats := mots(forget.CandidatsDrapeaux(fs))
 	attendus := map[string]bool{"--env": true, "--host": true}
 	if len(candidats) != len(attendus) {
 		t.Fatalf("candidats = %v, attendu %v", candidats, attendus)
@@ -137,8 +137,55 @@ func TestCandidatsDrapeauxIgnoreUnDrapeauNonDeclareDansLeFlagSet(t *testing.T) {
 	fs.String("env", "", "")
 
 	c := Commande{Nom: "x", Flags: []string{"env", "fantome"}}
-	candidats := c.CandidatsDrapeaux(fs)
+	candidats := mots(c.CandidatsDrapeaux(fs))
 	if len(candidats) != 1 || candidats[0] != "--env" {
 		t.Errorf("candidats = %v, attendu [--env]", candidats)
+	}
+}
+
+func mots(candidats []Candidat) []string {
+	out := make([]string, len(candidats))
+	for i, c := range candidats {
+		out[i] = c.Mot
+	}
+	return out
+}
+
+func TestCandidatsVerbesPortentLeurResume(t *testing.T) {
+	groupe := Commande{Nom: "host", Sous: []Commande{
+		{Nom: "list", Resume: "affiche les machines"},
+	}}
+	got := groupe.CandidatsVerbes()
+	if len(got) != 1 || got[0] != (Candidat{Mot: "list", Description: "affiche les machines"}) {
+		t.Errorf("candidats = %v", got)
+	}
+}
+
+// Un drapeau à valeur montre un exemple de valeur ; un booléen, son aide.
+func TestCandidatsDrapeauxDecrivent(t *testing.T) {
+	fs := flag.NewFlagSet("x", flag.ContinueOnError)
+	fs.String("env", "", "environnement cible")
+	fs.Bool("check", false, "simuler")
+
+	c := Commande{Nom: "x", Flags: []string{"env", "check"}}
+	got := c.CandidatsDrapeaux(fs)
+	attendus := []Candidat{
+		{Mot: "--env", Description: "prod"},
+		{Mot: "--check", Description: "simuler"},
+	}
+	if len(got) != len(attendus) {
+		t.Fatalf("candidats = %v, attendu %v", got, attendus)
+	}
+	for i := range attendus {
+		if got[i] != attendus[i] {
+			t.Errorf("candidat %d = %v, attendu %v", i, got[i], attendus[i])
+		}
+	}
+}
+
+func TestValeursDuNoeudPrimentSurLaTableCommune(t *testing.T) {
+	c := Commande{Nom: "add", Valeurs: map[string]string{"env": "staging"}}
+	if got := c.ExempleDeValeur("env"); got != "staging" {
+		t.Errorf("exemple = %q, attendu staging", got)
 	}
 }

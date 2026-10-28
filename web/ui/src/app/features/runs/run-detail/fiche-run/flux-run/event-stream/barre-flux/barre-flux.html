@@ -1,0 +1,15 @@
+<div class="w-stream-bar">
+  <span class="w-seg" role="group" aria-label="Show">
+    @for (f of filtres; track f) {
+      <button type="button" [class.is-on]="f === filtre()" (click)="filtre.set(f)">{{ f }}</button>
+    }
+  </span>
+  <span class="w-spacer"></span>
+  <span class="w-mono w-faint">{{ total() }} events</span>
+  <span class="w-link" [class]="lien().classe">
+    @if (lien().diode) {
+      <span class="w-led"></span>
+    }
+    {{ lien().libelle }}
+  </span>
+</div>
