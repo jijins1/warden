@@ -36,8 +36,11 @@ doctor: ## Vérifie que l'environnement de développement est complet
 	exit $$fail
 
 .PHONY: lint
+# La toolchain est celle de go.mod, comme en CI : golangci-lint v2.12.2 ne lit
+# pas le code d'un Go plus récent, et un `go` local en avance le ferait échouer
+# sur la bibliothèque standard plutôt que sur notre code.
 lint: ## Lance golangci-lint (arêtes entre rôles serveur, ADR-0006)
-	golangci-lint run ./...
+	GOTOOLCHAIN=go$(shell sed -n 's/^go //p' go.mod) golangci-lint run ./...
 
 # Les trois étages de l'ADR-0010. `test` ne réclame ni Docker ni cluster :
 # c'est la propriété qui le garde rapide, et un test qui se met à en avoir
