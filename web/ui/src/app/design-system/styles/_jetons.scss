@@ -59,6 +59,14 @@ $sombre: (
   interrupted: #8b9bb4,
   interrupted-bg: #1a1f28,
   interrupted-br: #39414f,
+  // La coloration syntaxique des diffs. Aucune ne reprend le vert ni le rouge
+  // des ajouts et retraits : le fond de la ligne porte déjà ce sens.
+  syn-cle: #6cd0d8,
+  syn-chaine: #a5c8ff,
+  syn-valeur: #e3b65c,
+  syn-commentaire: #7d8796,
+  syn-gabarit: #d58ee0,
+  syn-mot: #f0a07c,
 );
 
 $clair: (
@@ -106,6 +114,12 @@ $clair: (
   interrupted: #5a6779,
   interrupted-bg: #eff2f5,
   interrupted-br: #c3ccd6,
+  syn-cle: #08707b,
+  syn-chaine: #0a4fa8,
+  syn-valeur: #855a00,
+  syn-commentaire: #5f6975,
+  syn-gabarit: #8a2d97,
+  syn-mot: #a8431a,
 );
 
 @mixin couleurs($theme) {

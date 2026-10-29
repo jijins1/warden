@@ -1,0 +1,28 @@
+@let c = contenu();
+<article class="w-fichier-diff">
+  <header class="w-fichier-diff-tete">
+    <span class="w-arbre-statut" data-statut="unchanged">unchanged</span>
+    <span class="w-mono w-truncate">{{ c.chemin }}</span>
+  </header>
+
+  @if (c.erreur; as message) {
+    <p class="w-callout w-callout--error" role="alert"><mat-icon>error_outline</mat-icon><span>{{ message }}</span></p>
+  } @else if (c.texte === null) {
+    <div class="w-progress" role="progressbar" aria-label="Loading the file"></div>
+  } @else if (binaire()) {
+    <p class="w-nothing">Binary file — content not shown.</p>
+  } @else if (!lignes().length) {
+    <p class="w-nothing">Empty file.</p>
+  } @else {
+    <table class="w-diff-table">
+      <tbody>
+        @for (fragments of lignes(); track $index) {
+          <tr>
+            <td class="w-diff-num">{{ $index + 1 }}</td>
+            <td class="w-diff-code">@for (fr of fragments; track $index) {<span [class]="fr.genre">{{ fr.texte }}</span>}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</article>

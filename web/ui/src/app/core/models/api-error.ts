@@ -10,7 +10,9 @@ export interface ApiError {
    * Le serveur le pose EXPRESSÉMENT pour l'interface d'audit : le corps reste du
    * texte, et distinguer une purge d'un objet manquant en analysant une phrase
    * casserait à la première reformulation. Les valeurs connues sont
-   * `artifact_pruned`, `repo_unknown`, `object_missing` et `no_previous_run`.
+   * `artifact_pruned`, `repo_unknown`, `object_missing` et `no_previous_run`,
+   * plus `path_missing` et `file_too_large` pour la lecture d'un fichier
+   * (ADR-0055).
    */
   readonly reason?: MotifIndisponible;
 }
@@ -19,7 +21,9 @@ export type MotifIndisponible =
   | 'artifact_pruned'
   | 'repo_unknown'
   | 'object_missing'
-  | 'no_previous_run';
+  | 'no_previous_run'
+  | 'path_missing'
+  | 'file_too_large';
 
 export type CauseErreur =
   | 'network'

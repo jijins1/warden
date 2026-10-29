@@ -247,6 +247,50 @@ a.w-tr:hover { background: var(--w-surface-3); }
 .w-nothing { margin: 0; font-size: 13px; color: var(--w-text-dim); font-style: italic; }
 .w-diff .hunk { display: block; color: var(--w-skipped); }
 
+/* Diff explorable : arborescence des fichiers, fichier choisi à côté. */
+.w-explorateur-diff { display: grid; grid-template-columns: minmax(180px, 280px) minmax(0, 1fr); gap: var(--w-gap-3); align-items: start; }
+@media (max-width: 760px) { .w-explorateur-diff { grid-template-columns: minmax(0, 1fr); } }
+.w-arbre { margin: 0; padding: 4px 0; list-style: none; border: 1px solid var(--w-border); border-radius: var(--w-radius-lg); background: var(--w-surface); max-height: 70vh; overflow-y: auto; position: sticky; top: var(--w-gap-3); }
+.w-arbre-ligne { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 26px; padding-right: 8px; border: 0; background: none; font: inherit; font-size: 12.5px; color: var(--w-text); text-align: left; cursor: pointer; }
+.w-arbre-ligne:hover { background: var(--w-surface-3); }
+.w-arbre-ligne:focus-visible { outline: 2px solid var(--w-primary); outline-offset: -2px; }
+.w-arbre-ligne.is-on { background: var(--w-primary-bg); box-shadow: inset 2px 0 0 var(--w-primary); }
+.w-arbre-ligne.is-dossier, .w-arbre-ligne.is-intact { color: var(--w-text-dim); }
+.w-arbre-ligne.is-intact.is-on { color: var(--w-text); }
+.w-arbre-ligne .mat-icon { width: 16px; height: 16px; font-size: 16px; flex: none; }
+.w-arbre-statut { --fg: var(--w-changed); flex: none; width: 1ch; text-align: center; font-family: var(--w-mono); font-size: 11px; font-weight: 700; color: var(--fg); }
+.w-arbre-statut[data-statut="added"] { --fg: var(--w-ok); }
+.w-arbre-statut[data-statut="deleted"] { --fg: var(--w-failed); }
+.w-arbre-statut[data-statut="renamed"] { --fg: var(--w-skipped); }
+.w-diff-plus, .w-diff-moins { flex: none; font-family: var(--w-mono); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.w-diff-plus { color: var(--w-ok); }
+.w-diff-moins { color: var(--w-failed); }
+.w-fichier-diff { min-width: 0; border: 1px solid var(--w-border); border-radius: var(--w-radius-lg); background: var(--w-surface); overflow: hidden; }
+.w-fichier-diff-tete { display: flex; align-items: center; gap: var(--w-gap-2); padding: 8px var(--w-gap-3); border-bottom: 1px solid var(--w-border); background: var(--w-surface-2); font-size: 12.5px; }
+.w-fichier-diff > .w-nothing, .w-fichier-diff > .w-callout { margin: var(--w-gap-3); }
+.w-explorateur-diff > .w-nothing { padding: var(--w-gap-3); }
+.w-fichier-diff-tete .w-arbre-statut { width: auto; }
+.w-arbre-statut[data-statut="unchanged"] { --fg: var(--w-text-faint); }
+.w-diff-ancien { color: var(--w-text-dim); }
+.w-diff-table { display: block; overflow-x: auto; border-collapse: collapse; font-family: var(--w-mono); font-size: 12px; line-height: 20px; }
+.w-diff-table td { padding: 0 8px; white-space: pre; vertical-align: top; }
+.w-diff-table .w-diff-num { width: 1%; min-width: 32px; text-align: right; color: var(--w-text-faint); user-select: none; font-variant-numeric: tabular-nums; }
+.w-diff-table .w-diff-code { width: 100%; color: var(--w-text); }
+.w-diff-table tr.add { background: var(--w-ok-bg); }
+.w-diff-table tr.del { background: var(--w-failed-bg); }
+/* Le texte garde sa coloration syntaxique : c'est la gouttière qui dit ajout ou retrait. */
+.w-diff-table tr.add .w-diff-num { color: var(--w-ok); background: var(--w-ok-br); }
+.w-diff-table tr.del .w-diff-num { color: var(--w-failed); background: var(--w-failed-br); }
+.w-diff-table tr.note .w-diff-code { color: var(--w-text-faint); font-style: italic; }
+.w-diff-code .cle { color: var(--w-syn-cle); }
+.w-diff-code .chaine { color: var(--w-syn-chaine); }
+.w-diff-code .valeur { color: var(--w-syn-valeur); }
+.w-diff-code .commentaire { color: var(--w-syn-commentaire); font-style: italic; }
+.w-diff-code .gabarit { color: var(--w-syn-gabarit); }
+.w-diff-code .mot { color: var(--w-syn-mot); }
+.w-diff-code .ponct { color: var(--w-text-dim); }
+.w-diff-section td { padding: 2px 8px; background: var(--w-skipped-bg); color: var(--w-skipped); }
+
 /* ---- Compléments propres à l'implémentation Angular ---- */
 
 /* Les icônes Material Outlined remplacent les SVG des maquettes : même taille. */

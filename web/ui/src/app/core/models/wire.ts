@@ -31,6 +31,15 @@ export type RunKind = 'playbook' | 'enrollment';
  *
  * Ni `id` ni `user_id` : l'ADR-0021 a retiré l'énumération en exposant des ULID.
  */
+/**
+ * Les fichiers de l'arbre du commit audité d'un run (`GET /runs/{run_ref}/tree`,
+ * ADR-0055). `truncated` dit que la liste a été coupée à la borne du serveur.
+ */
+export interface ArbreDuRun {
+  files: { path: string; size: number }[];
+  truncated: boolean;
+}
+
 export interface RunDetail {
   run_ref: string;
   repo: string;

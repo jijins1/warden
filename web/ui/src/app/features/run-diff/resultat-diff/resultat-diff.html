@@ -1,9 +1,0 @@
-@if (identiques()) {
-  <!-- Une réponse vide DIT quelque chose : les deux états coïncident. Ce
-       n'est pas une donnée manquante. -->
-  <p class="w-callout w-callout--ok">
-    <mat-icon>check</mat-icon><span>Identical — nothing differs between the two trees.</span>
-  </p>
-} @else {
-  <w-unified-diff [texte]="texte()" />
-}

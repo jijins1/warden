@@ -1,0 +1,51 @@
+@if (brut()) {
+  <w-unified-diff [texte]="texte()" />
+} @else {
+  <div class="w-toolbar">
+    @if (parcourable()) {
+      <span class="w-seg" role="group" aria-label="Files shown">
+        <button type="button" [class.is-on]="!toutVoir()" [attr.aria-pressed]="!toutVoir()" (click)="basculer(false)">
+          Changed files
+        </button>
+        <button type="button" [class.is-on]="toutVoir()" [attr.aria-pressed]="toutVoir()" (click)="basculer(true)">
+          All files
+        </button>
+      </span>
+    }
+    @if (!identiques()) {
+      <span class="w-hint">
+        {{ fichiers().length }} {{ fichiers().length > 1 ? 'files' : 'file' }} changed,
+        <span class="w-diff-plus">+{{ totaux().ajouts }}</span>
+        <span class="w-diff-moins">−{{ totaux().retraits }}</span>
+      </span>
+    }
+  </div>
+
+  @if (toutVoir() && arbre()?.erreur; as message) {
+    <p class="w-callout w-callout--error" role="alert"><mat-icon>error_outline</mat-icon><span>{{ message }}</span></p>
+  } @else if (toutVoir() && !arbre()?.chemins) {
+    <div class="w-progress" role="progressbar" aria-label="Loading the repository files"></div>
+  } @else if (identiques() && !toutVoir()) {
+    <!-- Une réponse vide DIT quelque chose : les deux états coïncident. -->
+    <p class="w-callout w-callout--ok">
+      <mat-icon>check</mat-icon><span>Identical — nothing differs between the two trees.</span>
+    </p>
+  } @else {
+    @if (toutVoir() && arbre()?.tronque) {
+      <p class="w-callout">
+        <mat-icon>info</mat-icon><span>This repository has too many files: only the first ones are listed.</span>
+      </p>
+    }
+    <div class="w-explorateur-diff">
+      <w-arbre-fichiers [fichiers]="entrees()" [selection]="selection()" [repliParDefaut]="toutVoir()"
+                        (choisir)="choisir($event)" />
+      @if (modifie(); as f) {
+        <w-detail-fichier [fichier]="f" />
+      } @else if (intact(); as c) {
+        <w-contenu-fichier [contenu]="c" />
+      } @else {
+        <p class="w-nothing">Select a file to read it.</p>
+      }
+    </div>
+  }
+}

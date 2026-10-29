@@ -1,0 +1,28 @@
+<ul class="w-arbre" role="tree" aria-label="Files">
+  @for (r of rangees(); track r.chemin + (r.fichier ? ':f' : ':d')) {
+    @if (r.fichier; as f) {
+      <li role="treeitem" [attr.aria-selected]="f.chemin === selection()">
+        <button type="button" class="w-arbre-ligne" [class.is-on]="f.chemin === selection()" [class.is-intact]="!f.statut"
+                [style.padding-left.px]="8 + r.profondeur * 14" [title]="f.chemin" (click)="choisir.emit(f.chemin)">
+          @if (f.statut; as statut) {
+            <span class="w-arbre-statut" [attr.data-statut]="statut">{{ lettres[statut] }}</span>
+          } @else {
+            <span class="w-arbre-statut" aria-hidden="true"></span>
+          }
+          <span class="w-truncate">{{ r.nom }}</span>
+          <span class="w-spacer"></span>
+          @if (f.ajouts) { <span class="w-diff-plus">+{{ f.ajouts }}</span> }
+          @if (f.retraits) { <span class="w-diff-moins">−{{ f.retraits }}</span> }
+        </button>
+      </li>
+    } @else {
+      <li role="treeitem" aria-selected="false" [attr.aria-expanded]="!r.replie">
+        <button type="button" class="w-arbre-ligne is-dossier"
+                [style.padding-left.px]="8 + r.profondeur * 14" [title]="r.chemin" (click)="basculer(r.chemin)">
+          <mat-icon>{{ r.replie ? 'chevron_right' : 'expand_more' }}</mat-icon>
+          <span class="w-truncate">{{ r.nom }}</span>
+        </button>
+      </li>
+    }
+  }
+</ul>

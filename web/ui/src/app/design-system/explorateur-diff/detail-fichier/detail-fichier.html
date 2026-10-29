@@ -1,0 +1,36 @@
+@let f = fichier();
+<article class="w-fichier-diff">
+  <header class="w-fichier-diff-tete">
+    <span class="w-arbre-statut" [attr.data-statut]="f.statut">{{ f.statut }}</span>
+    <span class="w-mono w-truncate">
+      @if (f.ancienChemin) { <span class="w-diff-ancien">{{ f.ancienChemin }} → </span> }
+      {{ f.chemin }}
+    </span>
+    <span class="w-spacer"></span>
+    <span class="w-diff-plus">+{{ f.ajouts }}</span>
+    <span class="w-diff-moins">−{{ f.retraits }}</span>
+  </header>
+
+  @if (f.binaire) {
+    <p class="w-nothing">Binary file — content not shown.</p>
+  } @else if (!f.blocs.length) {
+    <p class="w-nothing">No content change.</p>
+  } @else {
+    <table class="w-diff-table">
+      @for (bloc of blocs(); track $index) {
+        <tbody>
+          @if (!$first || bloc.section) {
+            <tr class="w-diff-section"><td colspan="3">⋯ {{ bloc.section }}</td></tr>
+          }
+          @for (l of bloc.lignes; track $index) {
+            <tr [class]="l.genre">
+              <td class="w-diff-num">{{ l.ancien }}</td>
+              <td class="w-diff-num">{{ l.nouveau }}</td>
+              <td class="w-diff-code">@for (fr of l.fragments; track $index) {<span [class]="fr.genre">{{ fr.texte }}</span>}</td>
+            </tr>
+          }
+        </tbody>
+      }
+    </table>
+  }
+</article>

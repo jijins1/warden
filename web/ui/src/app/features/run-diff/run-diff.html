@@ -23,6 +23,6 @@
   }
 
   @if (resultat(); as r) {
-    <w-resultat-diff [texte]="r.texte" />
+    <w-explorateur-run [runRef]="runRef()" [diff]="r.texte" />
   }
 </section>

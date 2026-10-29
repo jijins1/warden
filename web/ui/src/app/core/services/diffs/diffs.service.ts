@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG } from '../../app-config/app-config';
+import { ArbreDuRun } from '../../models/wire';
 
 /**
  * Les trois questions du §6.5, et elles ne sont pas interchangeables.
@@ -57,6 +58,33 @@ export class DiffsService {
       this.#http.get<unknown>(
         `${this.#base}/runs/${encodeURIComponent(runRef)}/events/${seq}/diff`,
       ),
+    );
+  }
+
+  /**
+   * Les fichiers de l'arbre du commit AUDITÉ du run — le code qui a tourné,
+   * quelle que soit la comparaison affichée (ADR-0055).
+   */
+  async arbreDuRun(runRef: string): Promise<ArbreDuRun> {
+    return firstValueFrom(
+      this.#http.get<ArbreDuRun>(`${this.#base}/runs/${encodeURIComponent(runRef)}/tree`),
+    );
+  }
+
+  /**
+   * Un fichier de cet arbre, en texte.
+   *
+   * Le serveur le sert en `application/octet-stream` : un binaire arrive donc
+   * décodé en bruit, et c'est à l'affichage de le reconnaître. Comme le diff,
+   * le contenu vient du dépôt audité et ne doit jamais être interprété comme du
+   * balisage.
+   */
+  async fichierDuRun(runRef: string, chemin: string): Promise<string> {
+    return firstValueFrom(
+      this.#http.get(`${this.#base}/runs/${encodeURIComponent(runRef)}/file`, {
+        params: new HttpParams().set('path', chemin),
+        responseType: 'text',
+      }),
     );
   }
 }

@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { ApplicationRef, Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { RunDiff } from './run-diff';
@@ -44,20 +44,34 @@ describe('RunDiff', () => {
     expect(el.textContent).toContain('Identical');
   });
 
-  it('classe ajouts, retraits, sections et en-têtes', async () => {
+  it('range les fichiers en arbre et n’affiche pas la plomberie git', async () => {
     const el = await monter(() =>
       Promise.resolve(
-        ['diff --git a/site.yml b/site.yml', '--- a/site.yml', '+++ b/site.yml',
-         '@@ -1,3 +1,4 @@', ' inchangé', '+ajouté', '-retiré'].join('\n'),
+        ['diff --git a/roles/web/tasks/main.yml b/roles/web/tasks/main.yml',
+         'index 1111111..2222222 100644',
+         '--- a/roles/web/tasks/main.yml', '+++ b/roles/web/tasks/main.yml',
+         '@@ -1,3 +1,3 @@', ' inchangé', '+ajouté', '-retiré', ' inchangé',
+         'diff --git a/site.yml b/site.yml', 'new file mode 100644',
+         '--- /dev/null', '+++ b/site.yml', '@@ -0,0 +1 @@', '+neuf'].join('\n'),
       ),
     );
 
-    expect(el.querySelectorAll('.w-diff .add')).toHaveLength(1);
-    expect(el.querySelectorAll('.w-diff .del')).toHaveLength(1);
-    expect(el.querySelectorAll('.w-diff .hunk')).toHaveLength(1);
-    // `+++` et `---` sont des en-têtes de fichier : les colorer en vert et rouge
-    // ferait lire quatre modifications là où il y en a deux.
-    expect(el.querySelectorAll('.w-diff .file')).toHaveLength(3);
+    // Le dossier à enfant unique tient sur une rangée.
+    const rangees = Array.from(el.querySelectorAll('.w-arbre-ligne')).map((b) =>
+      Array.from(b.querySelectorAll('span, mat-icon')).map((s) => s.textContent?.trim()).filter(Boolean),
+    );
+    expect(rangees).toEqual([['expand_more', 'roles/web/tasks'], ['M', 'main.yml', '+1', '−1'], ['A', 'site.yml', '+1']]);
+
+    // Le premier fichier s'affiche d'office, sans `index` ni `---`/`+++`.
+    expect(el.querySelectorAll('.w-diff-table tr.add')).toHaveLength(1);
+    expect(el.querySelectorAll('.w-diff-table tr.del')).toHaveLength(1);
+    expect(el.textContent).not.toContain('diff --git');
+    expect(el.textContent).not.toContain('index 1111111');
+
+    el.querySelectorAll<HTMLButtonElement>('.w-arbre-ligne')[2].click();
+    await TestBed.inject(ApplicationRef).whenStable();
+    expect(el.querySelector('.w-fichier-diff-tete')?.textContent).toContain('site.yml');
+    expect(el.querySelectorAll('.w-diff-table tr.del')).toHaveLength(0);
   });
 
   // Le motif vient de l'en-tête, jamais d'une analyse du corps.
