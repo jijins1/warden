@@ -45,10 +45,10 @@ const (
 //
 // Volontairement PETIT, et sans commune mesure avec MaxDiffBytes. Cet endpoint
 // existe pour lire des fichiers de métadonnées d'un commit — quelques dizaines
-// de lignes de YAML. Le doter d'une borne généreuse en ferait un service de
-// fichiers, ce qui n'est pas ce qu'on veut offrir au rôle `api`, et ferait
-// travailler le pod `git` — en instance unique (ADR-0006) — sur des contenus que
-// personne n'a demandés.
+// de lignes de YAML — sur le chemin d'un run. Le service de fichiers que
+// l'ADR-0055 assume (parcourir le code d'un run) vit sur une route DISTINCTE,
+// FilePath, avec sa propre borne : élargir celle-ci pour lui ferait accepter au
+// lecteur de configuration des contenus qu'il n'a aucune raison de lire.
 //
 // Elle doit rester ≥ au plafond du schéma de configuration, sans quoi un fichier
 // que `config.Parse` accepterait serait refusé une couche plus bas, avec un

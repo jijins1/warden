@@ -96,6 +96,9 @@ func TestBlobAtRefuseHorsBorne(t *testing.T) {
 	if !strings.Contains(err.Error(), "octets") {
 		t.Errorf("le message doit donner la taille et la borne : %v", err)
 	}
+	if !errors.Is(err, ErrBlobTooLarge) {
+		t.Errorf("le dépassement doit se reconnaître sans lire le message : %v", err)
+	}
 }
 
 // Les chemins refusés le sont SANS lancer git. Le saut de ligne est le cas

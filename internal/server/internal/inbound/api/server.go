@@ -135,6 +135,11 @@ type Deps struct {
 	// n'a pas le droit de faire (ADR-0006).
 	Repo core.RepoDiffer
 
+	// Files donne à lire le code d'un run au-delà de son diff (ADR-0055).
+	// Facultatif au même titre que Repo : sans lui, les deux routes répondent
+	// 501.
+	Files core.RepoBrowser
+
 	// Repos est facultatif au même titre : sans lui, la surface
 	// d'administration répond 501. Un déploiement qui ne sert que la consultation
 	// d'audit reste valide.
@@ -361,6 +366,8 @@ func (a *Server) Handler() http.Handler {
 	router.HandleFunc("GET /runs/{run_ref}/stream", a.HandleStream)
 	router.HandleFunc("GET /runs/{run_ref}/events/{seq}/diff", a.HandleGetDiff)
 	router.HandleFunc("GET /runs/{run_ref}/diff", a.HandleGetRunDiff)
+	router.HandleFunc("GET /runs/{run_ref}/tree", a.HandleGetRunTree)
+	router.HandleFunc("GET /runs/{run_ref}/file", a.HandleGetRunFile)
 	// GET /hosts : les machines que l'appelant peut voir (ADR-0052). Pas de
 	// conflit avec `/hosts/{host}/runs` : le motif sans segment ne capture que
 	// `/hosts` lui-même, pas ce qui est dessous.

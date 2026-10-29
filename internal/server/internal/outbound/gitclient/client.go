@@ -149,6 +149,11 @@ func (c *Client) diff(ctx context.Context, repo, from, to string) (string, error
 // inconnu » et « objet absent » partagent le 404 et se distinguent pourtant pour
 // l'audit. Le statut ne sert que de repli quand le corps est illisible.
 func (c *Client) erreur(resp *http.Response) error {
+	return c.traduire(resp.StatusCode, lireErreur(resp))
+}
+
+// lireErreur décode le corps d'un échec, avec le statut pour repli.
+func lireErreur(resp *http.Response) gitwire.Error {
 	brut, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 
 	var e gitwire.Error
@@ -156,7 +161,11 @@ func (c *Client) erreur(resp *http.Response) error {
 		e.Code = gitwire.CodeFromStatus(resp.StatusCode)
 		e.Message = "réponse illisible du rôle git"
 	}
+	return e
+}
 
+// traduire classe un échec décodé en erreur du cœur.
+func (c *Client) traduire(statut int, e gitwire.Error) error {
 	switch e.Code {
 	case gitwire.CodeUnknownRepo, gitwire.CodeUnknownObject:
 		// Les deux se présentent à l'audit comme « le code n'est plus là ».
@@ -178,7 +187,7 @@ func (c *Client) erreur(resp *http.Response) error {
 		return fmt.Errorf("%s: %w", e.Message, core.ErrAuditRefConflict)
 
 	default:
-		if resp.StatusCode == http.StatusUnauthorized {
+		if statut == http.StatusUnauthorized {
 			// Jamais le jeton dans le message, même tronqué.
 			return errors.New("rôle git: authentification refusée (jeton mal configuré ?)")
 		}

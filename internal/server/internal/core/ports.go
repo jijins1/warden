@@ -124,3 +124,35 @@ type RepoDiffer interface {
 	// change à chaque consultation : c'est précisément ce qu'on lui demande.
 	DiffAgainst(ctx context.Context, run Run, to string) (string, error)
 }
+
+// RepoFile est un fichier de l'arbre d'un commit.
+type RepoFile struct {
+	Path string
+	Size int64
+}
+
+// RepoTree est la liste des fichiers d'un commit.
+type RepoTree struct {
+	Files []RepoFile
+
+	// Truncated dit que la liste a été coupée par le rôle `git`. Une liste coupée
+	// présentée comme complète ferait conclure à l'absence des fichiers restants.
+	Truncated bool
+}
+
+// RepoBrowser donne à lire le code d'un run, au-delà de son diff (ADR-0055).
+//
+// Le commit lu est TOUJOURS l'audit_sha du run : le code qui a tourné. Le port
+// ne prend pas de SHA libre, pour que l'appelant ne puisse pas s'en servir à
+// lire un commit qu'aucun run autorisé ne désigne.
+//
+// Comme RepoDiffer, il ne prend aucun chemin de dépôt local (ADR-0006).
+type RepoBrowser interface {
+	// Tree liste les fichiers de l'arbre du commit audité.
+	Tree(ctx context.Context, run Run) (RepoTree, error)
+
+	// File lit un fichier de cet arbre. ErrPathMissing si le chemin n'y est
+	// pas, ErrFileTooLarge s'il dépasse la borne servie, ErrArtifactGone si le
+	// commit lui-même n'est plus là.
+	File(ctx context.Context, run Run, path string) ([]byte, error)
+}

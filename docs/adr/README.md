@@ -65,6 +65,7 @@ d'implémentation prises en cours de route.
 | [0052](0052-liste-des-machines-visibles.md) | La liste des machines visibles : bornée par les droits vivants, pas par l'administration | Proposed |
 | [0053](0053-connexion-active-directory-et-droits-par-groupe.md) | Connexion Active Directory et droits par groupe | Proposed |
 | [0054](0054-sauvegarde-de-la-base-par-le-plugin-barman-cloud.md) | Sauvegarde de la base par le plugin Barman Cloud de CNPG | Accepted |
+| [0055](0055-parcourir-les-fichiers-dun-run.md) | Parcourir les fichiers d'un run : le code audité se lit en entier, sur une route distincte | Proposed |
 
 ## Convention
 

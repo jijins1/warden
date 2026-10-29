@@ -15,6 +15,13 @@ import (
 // decides what it means — this package does not.
 var ErrPathMissing = errors.New("path missing from commit")
 
+// ErrBlobTooLarge reports that a blob exists but exceeds the caller's limit.
+//
+// A sentinel rather than an opaque message because two callers read it
+// differently: the configuration reader treats it as a malformed request, the
+// file browser of ADR-0055 tells the user the file is too large to show.
+var ErrBlobTooLarge = errors.New("blob exceeds the size limit")
+
 // BlobAt reads one blob addressed by commit and path, bounded by limit.
 //
 // The size is settled BEFORE the body is read. `cat-file --batch-check` answers
@@ -65,7 +72,7 @@ func (g *Git) BlobAt(ctx context.Context, commit SHA, path string, limit int64) 
 		return nil, fmt.Errorf("unreadable object size for %s", rev)
 	}
 	if taille > limit {
-		return nil, fmt.Errorf("%s: %d octets, %d au plus", path, taille, limit)
+		return nil, fmt.Errorf("%w: %s: %d octets, %d au plus", ErrBlobTooLarge, path, taille, limit)
 	}
 
 	corps, stderr, err := g.runLimited(ctx, limit, "cat-file", "blob", rev)

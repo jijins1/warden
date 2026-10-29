@@ -747,6 +747,7 @@ func runAPI(ctx context.Context) error {
 		consigne     core.SecretStash
 
 		repo    core.RepoDiffer
+		files   core.RepoBrowser
 		mirrors core.MirrorRefresher
 		refs    core.RefResolver
 		projet  core.ProjectConfigReader
@@ -768,6 +769,9 @@ func runAPI(ctx context.Context) error {
 			return fmt.Errorf("client du rôle git: %w", err)
 		}
 		repo, mirrors, refs, makers, audits = gc, gc, gc, gc, gc
+		// Le parcours du code d'un run (ADR-0055) passe par le même client et
+		// le même contrôle d'accès que le diff : il n'a de sens qu'avec lui.
+		files = gc
 		// La configuration de projet suit le MÊME client : elle est lue dans
 		// l'arbre du commit par le rôle `git` (ADR-0009). Sans rôle `git`
 		// configuré, elle reste nil et `core.ProjectConfigFor` rend une
@@ -980,6 +984,7 @@ func runAPI(ctx context.Context) error {
 		Diffs:         dr,
 		Events:        f,
 		Repo:          repo,
+		Files:         files,
 		Repos:         st,
 		RepoMaker:     makers,
 		Creator:       creator,

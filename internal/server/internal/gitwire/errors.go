@@ -56,6 +56,8 @@ func (c Code) HTTPStatus() int {
 		// identifiant de run réutilisé sur un commit différent de celui déjà
 		// enregistré. Une collision, pas une erreur.
 		return 409
+	case CodeTooLarge:
+		return 413
 	default:
 		return 500
 	}
@@ -74,6 +76,8 @@ func CodeFromStatus(status int) Code {
 		return CodeMirrorFailed
 	case 409:
 		return CodeRefExists
+	case 413:
+		return CodeTooLarge
 	default:
 		return CodeInternal
 	}

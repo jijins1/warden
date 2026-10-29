@@ -20,6 +20,17 @@ var ErrNotFound = errors.New("introuvable")
 // purge. Un run dont l'artefact a disparu a bel et bien existé.
 var ErrArtifactGone = errors.New("artefact git indisponible")
 
+// ErrPathMissing : le commit est là, le chemin demandé n'est pas dans son arbre.
+//
+// Distincte d'ErrArtifactGone — le code n'a pas disparu, c'est ce fichier qui
+// n'existe pas — et d'ErrNoProjectConfig, qui est la même absence lue par le
+// lecteur de configuration et qu'un appelant tolère comme un état ordinaire.
+var ErrPathMissing = errors.New("chemin absent de l'arbre du commit")
+
+// ErrFileTooLarge : le fichier existe mais dépasse ce que le parcours de
+// l'ADR-0055 accepte de servir. Un état du dépôt, pas une panne.
+var ErrFileTooLarge = errors.New("fichier trop volumineux pour être affiché")
+
 // Identity est ce qu'un fournisseur d'identité affirme d'un utilisateur qui
 // arrive.
 type Identity struct {
