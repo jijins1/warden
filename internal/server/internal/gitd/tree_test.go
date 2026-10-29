@@ -150,20 +150,24 @@ func TestFileEtBlobGardentLeursBornes(t *testing.T) {
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 
-	statut := func(chemin string, req any) (int, *http.Response) {
+	// Le statut seul : le corps est fermé ICI, là où l'appel est fait, pour
+	// que bodyclose le voie — fermé dans un t.Cleanup, il ne le suivait pas.
+	statut := func(chemin string, req any) int {
 		resp := appelerInterne(t, srv, chemin, req)
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		return resp.StatusCode, resp
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
 	}
 
-	if st, _ := statut(gitwire.FilePath, gitwire.FileRequest{Repo: "depot", SHA: commit, Path: "moyen.txt"}); st != http.StatusOK {
+	if st := statut(gitwire.FilePath, gitwire.FileRequest{Repo: "depot", SHA: commit, Path: "moyen.txt"}); st != http.StatusOK {
 		t.Errorf("FilePath sur 64 Ko + 1 : statut %d, veut 200", st)
 	}
-	if st, _ := statut(gitwire.BlobPath, gitwire.BlobRequest{Repo: "depot", SHA: commit, Path: "moyen.txt"}); st != http.StatusBadRequest {
+	if st := statut(gitwire.BlobPath, gitwire.BlobRequest{Repo: "depot", SHA: commit, Path: "moyen.txt"}); st != http.StatusBadRequest {
 		t.Errorf("BlobPath sur 64 Ko + 1 : statut %d, veut 400 comme avant l'ADR-0055", st)
 	}
-	st, resp := statut(gitwire.FilePath, gitwire.FileRequest{Repo: "depot", SHA: commit, Path: "gros.txt"})
-	if st != http.StatusRequestEntityTooLarge || lireCode(t, resp) != gitwire.CodeTooLarge {
-		t.Errorf("FilePath sur 1 Mo + 1 : statut %d, veut 413 too_large", st)
+
+	resp := appelerInterne(t, srv, gitwire.FilePath, gitwire.FileRequest{Repo: "depot", SHA: commit, Path: "gros.txt"})
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge || lireCode(t, resp) != gitwire.CodeTooLarge {
+		t.Errorf("FilePath sur 1 Mo + 1 : statut %d, veut 413 too_large", resp.StatusCode)
 	}
 }
