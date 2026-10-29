@@ -1085,7 +1085,7 @@ const (
 	EnvIngestAddr       = "WARDEN_INGEST_ADDR"        // ingestion des events, servie aux pods runner
 	EnvGitRunnerURL     = "WARDEN_GIT_RUNNER_URL"     // origine remise au runner : le port de LECTURE de `git`
 	EnvGitClientURL     = "WARDEN_GIT_CLIENT_URL"     // adresse ANNONCÉE à la CLI avec son jeton de push : le port d'ÉCRITURE
-	EnvExigerConfig     = "WARDEN_EXIGER_CONFIG"      // "1" refuse les commits sans .ansibleproxy.yml (ADR-0009)
+	EnvExigerConfig     = "WARDEN_EXIGER_CONFIG"      // "1" refuse les commits sans .warden.yml (ADR-0009)
 	// EnvHostKeyChecking : `strict` (défaut) ou `off`. Interrupteur de
 	// TRANSITION, le temps de déclarer les clés d'hôte d'une flotte : `off`
 	// coupe la vérification des empreintes des runs à clé, jamais celle d'un

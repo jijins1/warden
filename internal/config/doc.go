@@ -1,4 +1,4 @@
-// Package config porte le schéma strict de `.ansibleproxy.yml` (§5.4) : lecture,
+// Package config porte le schéma strict de `.warden.yml` (§5.4) : lecture,
 // plafond de taille, alias et ancres YAML désactivés, champs inconnus refusés
 // plutôt qu'ignorés.
 //

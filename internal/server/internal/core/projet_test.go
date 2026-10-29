@@ -125,7 +125,7 @@ func TestProjectConfigForRefuseLAbsenceQuandExigee(t *testing.T) {
 	if err == nil {
 		t.Fatal("l'absence doit être refusée quand la configuration est exigée")
 	}
-	if !strings.Contains(err.Error(), ".ansibleproxy.yml") {
+	if !strings.Contains(err.Error(), ".warden.yml") {
 		t.Errorf("le message doit nommer le fichier : %v", err)
 	}
 }

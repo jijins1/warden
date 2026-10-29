@@ -287,3 +287,27 @@ func TestUnExtraVarsReserveEchoue(t *testing.T) {
 		})
 	}
 }
+
+// La surcharge du playbook DEMANDÉ s'applique, et elle seule : une extra-var
+// déclarée pour un autre playbook du dépôt reste refusée.
+func TestComposerAppliqueLaSurchargeDuPlaybook(t *testing.T) {
+	projet := config.Project{
+		ExtraVars: []string{"version"},
+		Playbooks: map[string]config.PlaybookConfig{
+			"deploy.yml": {ExtraVars: []string{"other"}, RunnerImage: "registry/deploy:1"},
+		},
+	}
+	flags := []string{"--extra-vars=version=1.2.3", "--extra-vars=other=x"}
+
+	eff, err := core.Composer(projet, core.Requete{Playbook: "./deploy.yml", Flags: flags})
+	if err != nil {
+		t.Fatalf("deploy.yml déclare `other` : %v", err)
+	}
+	if eff.RunnerImage != "registry/deploy:1" {
+		t.Errorf("image = %q, celle du playbook est attendue", eff.RunnerImage)
+	}
+
+	if _, err := core.Composer(projet, core.Requete{Playbook: "backup.yml", Flags: flags}); err == nil {
+		t.Error("backup.yml ne déclare pas `other` : le run doit être refusé")
+	}
+}

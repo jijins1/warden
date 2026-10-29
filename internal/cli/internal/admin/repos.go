@@ -70,11 +70,11 @@ func DeclarerDepot(ctx context.Context, api *client.Client, o OptionsDepot, sort
 	_, _ = fmt.Fprintf(sortie, "\n%s est déclaré.\n", r.Name)
 
 	// La ligne à coller, et non le fichier écrit à la place de l'utilisateur :
-	// `.ansibleproxy.yml` est versionné et lu par le SERVEUR depuis l'arbre du
+	// `.warden.yml` est versionné et lu par le SERVEUR depuis l'arbre du
 	// commit. Le modifier d'autorité, dans le dos d'un `git status`, serait la
 	// mauvaise surprise exacte que ce produit existe pour éviter.
 	_, _ = fmt.Fprintf(sortie, "\nPour que `warden submit` n'ait plus besoin de --repo, ajoutez à\n"+
-		".ansibleproxy.yml :\n\n    repo: %s\n\n"+
+		".warden.yml :\n\n    repo: %s\n\n"+
 		"Attendez pour cela que le SERVEUR accepte ce champ : il relit ce fichier\n"+
 		"depuis l'arbre du commit et refuse les clés qu'il ne connaît pas.\n", r.Name)
 	return nil

@@ -292,3 +292,121 @@ func TestParseExtraVarsNoms(t *testing.T) {
 		t.Errorf("extra_vars = %v", p.ExtraVars)
 	}
 }
+
+// L'exemple de la demande d'origine : des variables communes à tout le dépôt,
+// et une de plus pour un seul playbook.
+const exemplePlaybooks = `extra_vars:
+  - version
+  - colour
+default_env: staging
+playbooks:
+  ./mon_playbook.yaml:
+    extra_vars:
+      - other
+    default_env: prod
+`
+
+func TestParsePlaybooks(t *testing.T) {
+	p, err := Parse([]byte(exemplePlaybooks))
+	if err != nil {
+		t.Fatalf("la configuration par playbook doit être acceptée : %v", err)
+	}
+	if _, ok := p.Playbooks["mon_playbook.yaml"]; !ok {
+		t.Errorf("la clé doit être normalisée, playbooks = %v", p.Playbooks)
+	}
+}
+
+func TestForPlaybookCumuleLesListesEtRemplaceLesValeurs(t *testing.T) {
+	p, err := Parse([]byte(exemplePlaybooks))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Le playbook se désigne comme il est passé à --playbook, `./` ou non.
+	for _, nom := range []string{"mon_playbook.yaml", "./mon_playbook.yaml"} {
+		eff := p.ForPlaybook(nom)
+		if got := strings.Join(eff.ExtraVars, ","); got != "version,colour,other" {
+			t.Errorf("%s : extra_vars = %s, attendu la racine puis le playbook", nom, got)
+		}
+		if eff.DefaultEnv != "prod" {
+			t.Errorf("%s : default_env = %q, le playbook doit l'emporter", nom, eff.DefaultEnv)
+		}
+		if eff.Playbooks != nil {
+			t.Errorf("%s : la configuration effective ne porte plus de surcharges", nom)
+		}
+	}
+
+	autre := p.ForPlaybook("autre.yml")
+	if got := strings.Join(autre.ExtraVars, ","); got != "version,colour" {
+		t.Errorf("un playbook non configuré reçoit la racine, extra_vars = %s", got)
+	}
+	if autre.DefaultEnv != "staging" {
+		t.Errorf("un playbook non configuré reçoit la racine, default_env = %q", autre.DefaultEnv)
+	}
+
+	// Le cumul ne doit pas fuir dans la racine, partagée par tous les playbooks.
+	if got := strings.Join(p.ExtraVars, ","); got != "version,colour" {
+		t.Errorf("la racine a été modifiée : extra_vars = %s", got)
+	}
+}
+
+func TestParsePlaybooksRefus(t *testing.T) {
+	cas := []struct {
+		nom     string
+		src     string
+		attendu string
+	}{
+		{
+			nom:     "champ client dans un playbook",
+			src:     "playbooks:\n  site.yml:\n    server: https://ailleurs\n",
+			attendu: "server",
+		},
+		{
+			nom:     "extra_var déjà déclarée à la racine",
+			src:     "extra_vars: [version]\nplaybooks:\n  site.yml:\n    extra_vars: [version]\n",
+			attendu: "version",
+		},
+		{
+			nom:     "forward_env déjà déclaré à la racine",
+			src:     "forward_env: [TOKEN]\nplaybooks:\n  site.yml:\n    forward_env: [TOKEN]\n",
+			attendu: "TOKEN",
+		},
+		{
+			nom:     "nom de variable invalide",
+			src:     "playbooks:\n  site.yml:\n    extra_vars: [\"a-b\"]\n",
+			attendu: "playbooks.site.yml",
+		},
+		{
+			nom:     "chemin absolu",
+			src:     "playbooks:\n  /srv/site.yml:\n    extra_vars: [a]\n",
+			attendu: "relatif",
+		},
+		{
+			nom:     "chemin qui sort du dépôt",
+			src:     "playbooks:\n  ../site.yml:\n    extra_vars: [a]\n",
+			attendu: "sort",
+		},
+		{
+			nom:     "deux écritures du même playbook",
+			src:     "playbooks:\n  site.yml:\n    extra_vars: [a]\n  ./site.yml:\n    extra_vars: [b]\n",
+			attendu: "déjà configuré",
+		},
+		{
+			nom:     "template d'inventaire invalide",
+			src:     "playbooks:\n  site.yml:\n    inventory: \"inv/{{ env | default('x') }}\"\n",
+			attendu: "filtre",
+		},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			_, err := Parse([]byte(c.src))
+			if err == nil {
+				t.Fatalf("%s doit être refusé", c.nom)
+			}
+			if !strings.Contains(err.Error(), c.attendu) {
+				t.Errorf("le message doit contenir %q, il vaut : %v", c.attendu, err)
+			}
+		})
+	}
+}

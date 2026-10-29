@@ -10,7 +10,7 @@ package gitwire
 // de portée que ce namespace achète.
 //
 // Il existe pour l'ADR-0009 : la configuration effective d'un run est résolue
-// depuis `<sha>:.ansibleproxy.yml`, et le rôle `api` n'a aucun accès au
+// depuis `<sha>:.warden.yml`, et le rôle `api` n'a aucun accès au
 // filesystem git (ADR-0006). Sans cet aller-retour, la CLI resterait la seule à
 // lire le fichier, et ce qui s'applique cesserait d'être ce qui est audité.
 const BlobPath = "/internal/v1/blob"
@@ -19,7 +19,7 @@ const BlobPath = "/internal/v1/blob"
 // chemin.
 //
 // Il ne nomme ni run ni configuration, et le chemin n'est pas implicite. Le rôle
-// `git` ignore que `.ansibleproxy.yml` existe — savoir QUEL fichier porte la
+// `git` ignore que `.warden.yml` existe — savoir QUEL fichier porte la
 // configuration d'un run est une règle de run, qui vit chez `api`. Câbler le nom
 // ici ferait de `gitd` un lecteur de configuration, et la prochaine règle
 // suivrait.

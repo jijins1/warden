@@ -4,32 +4,47 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/jijins1/warden/internal/config"
+	"github.com/jijins1/warden/internal/server/internal/core"
 	"github.com/jijins1/warden/internal/server/internal/gitwire"
 )
 
-// ReadProjectConfig lit `.ansibleproxy.yml` dans l'arbre du commit.
+// ReadProjectConfig lit `.warden.yml` dans l'arbre du commit, ou à défaut
+// l'ancien `.ansibleproxy.yml` (ADR-0056).
 //
 // Il satisfait core.ProjectConfigReader.
 //
 // Le NOM du fichier est composé ici, du côté qui connaît la règle de run, et
 // jamais par le rôle `git` : celui-ci reçoit un chemin et ignore ce qu'il porte
-// (voir gitwire.BlobRequest). Le nom vient de `config.File` plutôt que d'un
-// littéral, pour que la CLI qui lit le worktree et le serveur qui lit l'arbre ne
-// puissent pas diverger.
+// (voir gitwire.BlobRequest). Les noms viennent de `config.Files` plutôt que de
+// littéraux, pour que la CLI qui lit le worktree et le serveur qui lit l'arbre
+// ne puissent pas diverger — ni sur les noms, ni sur leur ordre.
 func (c *Client) ReadProjectConfig(ctx context.Context, repo, sha string) ([]byte, error) {
 	if repo == "" || sha == "" {
 		return nil, fmt.Errorf("lecture de configuration : dépôt et commit sont requis")
 	}
 
+	var err error
+	for _, nom := range config.Files {
+		var contenu []byte
+		contenu, err = c.lireBlob(ctx, repo, sha, nom)
+		if !errors.Is(err, core.ErrNoProjectConfig) {
+			return contenu, err
+		}
+	}
+	return nil, err
+}
+
+func (c *Client) lireBlob(ctx context.Context, repo, sha, chemin string) ([]byte, error) {
 	ctx, annuler := context.WithTimeout(ctx, c.timeout)
 	defer annuler()
 
-	corps, err := json.Marshal(gitwire.BlobRequest{Repo: repo, SHA: sha, Path: config.File})
+	corps, err := json.Marshal(gitwire.BlobRequest{Repo: repo, SHA: sha, Path: chemin})
 	if err != nil {
 		return nil, fmt.Errorf("encodage de la requête: %w", err)
 	}

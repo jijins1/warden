@@ -13,7 +13,7 @@ import (
 func ecrireConfig(t *testing.T, contenu string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".ansibleproxy.yml"), []byte(contenu), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".warden.yml"), []byte(contenu), 0o600); err != nil {
 		t.Fatalf("écriture : %v", err)
 	}
 	return dir
@@ -110,5 +110,45 @@ func TestValeursTransmetUneValeurVideExplicite(t *testing.T) {
 func TestValeursSansNomsRendNil(t *testing.T) {
 	if got := projet.Valeurs(nil, os.LookupEnv); got != nil {
 		t.Errorf("aucun nom déclaré doit rendre nil, rend %v", got)
+	}
+}
+
+// L'ancien nom est encore lu (ADR-0056), et les messages le nomment : c'est le
+// fichier que l'utilisateur a sous les yeux.
+func TestLireReplieSurLAncienNom(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".ansibleproxy.yml"), []byte("repo: ancien\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := projet.Lire(dir)
+	if err != nil {
+		t.Fatalf("Lire : %v", err)
+	}
+	if p.Repo != "ancien" {
+		t.Errorf("repo = %q, l'ancien fichier doit être lu", p.Repo)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".ansibleproxy.yml"), []byte("inconnu: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projet.Lire(dir); err == nil || !strings.Contains(err.Error(), ".ansibleproxy.yml") {
+		t.Errorf("l'erreur doit nommer le fichier lu : %v", err)
+	}
+}
+
+// Les deux présents : le nouveau fait foi, l'ancien n'est pas ouvert.
+func TestLirePrefereLeNouveauNom(t *testing.T) {
+	dir := ecrireConfig(t, "repo: nouveau\n")
+	if err := os.WriteFile(filepath.Join(dir, ".ansibleproxy.yml"), []byte("inconnu: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := projet.Lire(dir)
+	if err != nil {
+		t.Fatalf("Lire : %v", err)
+	}
+	if p.Repo != "nouveau" {
+		t.Errorf("repo = %q, .warden.yml doit l'emporter", p.Repo)
 	}
 }

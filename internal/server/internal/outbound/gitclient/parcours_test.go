@@ -5,6 +5,7 @@ package gitclient_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -118,5 +119,51 @@ func TestParcoursSansDepot(t *testing.T) {
 	}
 	if _, err := c.File(t.Context(), run, "x"); !errors.Is(err, core.ErrArtifactGone) {
 		t.Errorf("File = %v", err)
+	}
+}
+
+// `.warden.yml` d'abord, `.ansibleproxy.yml` seulement s'il manque (ADR-0056).
+func TestReadProjectConfigReplieSurLAncienNom(t *testing.T) {
+	cas := []struct {
+		nom        string
+		presents   map[string]string
+		attendu    string
+		demandes   []string
+		sansConfig bool
+	}{
+		{"nouveau seul", map[string]string{".warden.yml": "n"}, "n", []string{".warden.yml"}, false},
+		{"ancien seul", map[string]string{".ansibleproxy.yml": "a"}, "a",
+			[]string{".warden.yml", ".ansibleproxy.yml"}, false},
+		{"les deux", map[string]string{".warden.yml": "n", ".ansibleproxy.yml": "a"}, "n",
+			[]string{".warden.yml"}, false},
+		{"aucun", nil, "", []string{".warden.yml", ".ansibleproxy.yml"}, true},
+	}
+
+	for _, k := range cas {
+		t.Run(k.nom, func(t *testing.T) {
+			var demandes []string
+			c := monterRoute(t, gitwire.BlobPath, func(w http.ResponseWriter, r *http.Request) {
+				var req gitwire.BlobRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				demandes = append(demandes, req.Path)
+				contenu, ok := k.presents[req.Path]
+				if !ok {
+					echec(gitwire.CodeUnknownPath)(w, r)
+					return
+				}
+				_, _ = w.Write([]byte(contenu))
+			})
+
+			brut, err := c.ReadProjectConfig(t.Context(), "depot", "1111111111111111111111111111111111111111")
+			if got := errors.Is(err, core.ErrNoProjectConfig); got != k.sansConfig {
+				t.Fatalf("errors.Is(ErrNoProjectConfig) = %v (%v)", got, err)
+			}
+			if string(brut) != k.attendu {
+				t.Errorf("contenu = %q, attendu %q", brut, k.attendu)
+			}
+			if fmt.Sprint(demandes) != fmt.Sprint(k.demandes) {
+				t.Errorf("chemins demandés = %v, attendu %v", demandes, k.demandes)
+			}
+		})
 	}
 }

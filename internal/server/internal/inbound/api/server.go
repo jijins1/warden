@@ -48,7 +48,7 @@ type Config struct {
 	//
 	// La racine reste servie : c'est par elle que la CLI travaille, et la
 	// déplacer imposerait de rééditer chaque `WARDEN_SERVER` et chaque
-	// `.ansibleproxy.yml`.
+	// `.warden.yml`.
 	//
 	// Le retrait du préfixe est fait ICI et non par un middleware du contrôleur
 	// d'ingress : le serveur sait où il est monté, et la chart n'a pas à
@@ -63,7 +63,7 @@ type Config struct {
 // DEUX chemins pour la même API, et c'est le point :
 //
 //   - la CLI garde la RACINE de l'hôte de l'API. Aucun client à migrer, aucun
-//     `.ansibleproxy.yml` à rééditer, aucune session à rouvrir ;
+//     `.warden.yml` à rééditer, aucune session à rouvrir ;
 //
 //   - le navigateur joint la même API sous `/api` de l'hôte de l'INTERFACE. Elle
 //     est alors en MÊME ORIGINE que la SPA, ce qui retire le CORS, le
@@ -230,7 +230,7 @@ type Deps struct {
 	// Kubernetes répond 501 sur ces trois routes et le reste fonctionne.
 	Vault core.VaultStore
 
-	// ProjectConfig lit `.ansibleproxy.yml` dans l'arbre du commit (ADR-0009).
+	// ProjectConfig lit `.warden.yml` dans l'arbre du commit (ADR-0009).
 	//
 	// Facultatif, et son absence est TOLÉRANTE plutôt qu'interdisante —
 	// contrairement à `Access`, et la différence se justifie : un droit qui
@@ -244,7 +244,7 @@ type Deps struct {
 	// dépôts en auront un.
 	ProjectConfig core.ProjectConfigReader
 
-	// ExigenceConfig décide si un commit sans `.ansibleproxy.yml` est refusé
+	// ExigenceConfig décide si un commit sans `.warden.yml` est refusé
 	// (ADR-0009). Le zéro vaut ConfigFacultative, donc un déploiement qui ne se
 	// prononce pas continue de tolérer — c'est le défaut voulu pendant la
 	// migration, et il est destiné à disparaître avec elle.

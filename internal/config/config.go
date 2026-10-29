@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -16,7 +18,20 @@ import (
 // rôle `git` l'extrait de l'arbre du commit. Deux littéraux jumeaux finissent
 // par diverger, et la panne ne se voit alors qu'à l'exécution — c'est la leçon
 // que ce dépôt a déjà payée avec `WARDEN_DISPATCH_URL`.
-const File = ".ansibleproxy.yml"
+const File = ".warden.yml"
+
+// LegacyFile est l'ancien nom de File, encore lu quand File est absent
+// (ADR-0056).
+//
+// Repli et non alternative : quand les deux existent, File fait foi et
+// LegacyFile n'est pas ouvert. Un dépôt peut ainsi garder l'ancien fichier le
+// temps que ses serveurs soient mis à jour, sans que la question « lequel
+// s'applique » ait deux réponses.
+const LegacyFile = ".ansibleproxy.yml"
+
+// Files liste les noms lus, dans l'ordre de préférence. Un tableau et non une
+// tranche : il se copie, personne ne peut le modifier pour tout le processus.
+var Files = [...]string{File, LegacyFile}
 
 // MaxSize plafonne le document.
 //
@@ -118,6 +133,66 @@ type Project struct {
 	// est dans l'arbre, un auditeur compare ce qu'il réclamait à ce que l'arbre
 	// contient — elle n'est simplement pas empêchable à la source.
 	AuditInclude []string `yaml:"audit_include"`
+
+	// Playbooks complète la configuration pour un playbook donné, désigné par
+	// son chemin RELATIF à la racine du dépôt — celui que reçoit
+	// `warden submit --playbook`. Un dépôt porte rarement un seul playbook, et
+	// ce que `deploy.yml` attend en `-e` n'est pas ce qu'attend `backup.yml`.
+	//
+	// Les clés sont normalisées à la lecture (`./site.yml` et `site.yml` sont
+	// le même playbook) : voir ForPlaybook pour la manière dont la surcharge se
+	// combine avec la racine.
+	Playbooks map[string]PlaybookConfig `yaml:"playbooks"`
+}
+
+// PlaybookConfig est ce qu'un playbook peut surcharger.
+//
+// La configuration de RUN, et elle seule. `server`, `repo` et `audit_include`
+// en sont absents parce qu'ils sont lus par la CLI AVANT qu'un playbook soit en
+// jeu côté serveur — de l'adressage et le périmètre du commit, pas ce qui
+// s'exécute. Ils y sont donc refusés comme champs inconnus, au lieu d'être
+// acceptés puis ignorés.
+type PlaybookConfig struct {
+	DefaultEnv  string   `yaml:"default_env"`
+	Inventory   string   `yaml:"inventory"`
+	RunnerImage string   `yaml:"runner_image"`
+	ForwardEnv  []string `yaml:"forward_env"`
+	ExtraVars   []string `yaml:"extra_vars"`
+}
+
+// ForPlaybook rend la configuration qui s'applique à ce playbook.
+//
+// Les valeurs seules (`default_env`, `inventory`, `runner_image`) sont
+// REMPLACÉES par celles du playbook quand il en donne. Les listes
+// (`forward_env`, `extra_vars`) sont CUMULÉES : la racine déclare ce que tous
+// les playbooks du dépôt partagent, le playbook ajoute ce qui n'est qu'à lui.
+// Un nom présent des deux côtés est refusé par Parse, donc le cumul n'a jamais
+// à arbitrer.
+//
+// Un playbook absent de `playbooks:` — ou un run ad-hoc, qui n'en a pas —
+// reçoit la racine telle quelle.
+func (p Project) ForPlaybook(playbook string) Project {
+	eff := p
+	eff.Playbooks = nil
+
+	surcharge, ok := p.Playbooks[path.Clean(playbook)]
+	if !ok {
+		return eff
+	}
+	if surcharge.DefaultEnv != "" {
+		eff.DefaultEnv = surcharge.DefaultEnv
+	}
+	if surcharge.Inventory != "" {
+		eff.Inventory = surcharge.Inventory
+	}
+	if surcharge.RunnerImage != "" {
+		eff.RunnerImage = surcharge.RunnerImage
+	}
+	// Clonés avant l'ajout : sans ça, `append` pourrait écrire dans le tableau
+	// sous-jacent de la racine, partagé avec tous les autres playbooks.
+	eff.ForwardEnv = append(slices.Clone(p.ForwardEnv), surcharge.ForwardEnv...)
+	eff.ExtraVars = append(slices.Clone(p.ExtraVars), surcharge.ExtraVars...)
+	return eff
 }
 
 // Parse lit le document et refuse tout ce qui n'est pas strictement conforme.
@@ -131,9 +206,16 @@ type Project struct {
 // Un document vide rend une configuration nulle sans erreur : un projet qui ne
 // demande rien est un état légitime.
 func Parse(raw []byte) (Project, error) {
+	return ParseNamed(File, raw)
+}
+
+// ParseNamed est Parse pour un document lu sous un autre nom que File : les
+// messages nomment alors le fichier que l'utilisateur a réellement sous les
+// yeux, et non un `.warden.yml` qu'il n'a pas.
+func ParseNamed(nom string, raw []byte) (Project, error) {
 	if len(raw) > MaxSize {
 		return Project{}, fmt.Errorf("%s : taille de %d octets, %d au plus",
-			File, len(raw), MaxSize)
+			nom, len(raw), MaxSize)
 	}
 
 	// L'arbre AVANT le décodage, et c'est l'ordre qui compte : `KnownFields` ne
@@ -142,13 +224,13 @@ func Parse(raw []byte) (Project, error) {
 	// pas déduit d'une lecture de la documentation.
 	var arbre yaml.Node
 	if err := yaml.Unmarshal(raw, &arbre); err != nil {
-		return Project{}, fmt.Errorf("%s : YAML illisible : %w", File, err)
+		return Project{}, fmt.Errorf("%s : YAML illisible : %w", nom, err)
 	}
 	if err := refuserAncres(&arbre); err != nil {
-		return Project{}, fmt.Errorf("%s : %w", File, err)
+		return Project{}, fmt.Errorf("%s : %w", nom, err)
 	}
 	if err := racineMapping(&arbre); err != nil {
-		return Project{}, fmt.Errorf("%s : %w", File, err)
+		return Project{}, fmt.Errorf("%s : %w", nom, err)
 	}
 
 	var p Project
@@ -160,24 +242,105 @@ func Parse(raw []byte) (Project, error) {
 		if errors.Is(err, io.EOF) {
 			return Project{}, nil
 		}
-		return Project{}, fmt.Errorf("%s : %w", File, err)
+		return Project{}, fmt.Errorf("%s : %w", nom, err)
 	}
 
 	if err := validerForwardEnv(p.ForwardEnv); err != nil {
-		return Project{}, fmt.Errorf("%s : %w", File, err)
+		return Project{}, fmt.Errorf("%s : %w", nom, err)
 	}
 	if err := validerExtraVars(p.ExtraVars); err != nil {
-		return Project{}, fmt.Errorf("%s : %w", File, err)
+		return Project{}, fmt.Errorf("%s : %w", nom, err)
 	}
 
 	// Le template est validé À LA LECTURE et pas seulement à la résolution :
 	// une faute de frappe doit se voir quand on lit le fichier, pas quand un run
 	// part. L'environnement témoin ne sert qu'à exercer la syntaxe.
 	if _, err := ResolveInventory(p.Inventory, "temoin"); err != nil {
-		return Project{}, fmt.Errorf("%s : champ inventory : %w", File, err)
+		return Project{}, fmt.Errorf("%s : champ inventory : %w", nom, err)
 	}
 
+	playbooks, err := validerPlaybooks(p)
+	if err != nil {
+		return Project{}, fmt.Errorf("%s : %w", nom, err)
+	}
+	p.Playbooks = playbooks
+
 	return p, nil
+}
+
+// validerPlaybooks contrôle chaque surcharge comme la racine, et rend la table
+// aux clés normalisées.
+//
+// Un nom déjà déclaré à la racine est REFUSÉ et non toléré : le déclarer deux
+// fois ne change rien aujourd'hui, mais le jour où une déclaration portera plus
+// qu'un nom (ADR-0054), il faudra décider laquelle l'emporte. Relâcher cette
+// règle ce jour-là est facile ; la resserrer une fois des dépôts écrits ne
+// l'est pas.
+func validerPlaybooks(p Project) (map[string]PlaybookConfig, error) {
+	if len(p.Playbooks) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]PlaybookConfig, len(p.Playbooks))
+	for brut, pb := range p.Playbooks {
+		nom, err := cheminDePlaybook(brut)
+		if err != nil {
+			return nil, fmt.Errorf("playbooks : %w", err)
+		}
+		if _, deja := out[nom]; deja {
+			return nil, fmt.Errorf("playbooks : %q désigne un playbook déjà configuré sous une autre écriture", brut)
+		}
+
+		if err := validerForwardEnv(pb.ForwardEnv); err != nil {
+			return nil, fmt.Errorf("playbooks.%s : %w", brut, err)
+		}
+		if err := validerExtraVars(pb.ExtraVars); err != nil {
+			return nil, fmt.Errorf("playbooks.%s : %w", brut, err)
+		}
+		if n, ok := enCommun(p.ForwardEnv, pb.ForwardEnv); ok {
+			return nil, fmt.Errorf("playbooks.%s : forward_env : %q est déjà déclaré à la racine, "+
+				"qui s'applique à tous les playbooks", brut, n)
+		}
+		if n, ok := enCommun(p.ExtraVars, pb.ExtraVars); ok {
+			return nil, fmt.Errorf("playbooks.%s : extra_vars : %q est déjà déclarée à la racine, "+
+				"qui s'applique à tous les playbooks", brut, n)
+		}
+		if _, err := ResolveInventory(pb.Inventory, "temoin"); err != nil {
+			return nil, fmt.Errorf("playbooks.%s : champ inventory : %w", brut, err)
+		}
+
+		out[nom] = pb
+	}
+	return out, nil
+}
+
+// cheminDePlaybook normalise une clé de `playbooks:` et refuse ce qui ne peut
+// pas désigner un fichier de l'arbre audité.
+//
+// Refuser plutôt qu'accepter une clé qui ne correspondra jamais : une surcharge
+// écrite sous `/srv/site.yml` ne s'appliquerait à aucun run, et rien ne le
+// signalerait — la déclaration serait simplement ignorée, ce que ce paquet
+// s'interdit partout.
+func cheminDePlaybook(brut string) (string, error) {
+	nom := path.Clean(brut)
+	switch {
+	case strings.TrimSpace(brut) == "" || nom == ".":
+		return "", errors.New("un nom de playbook vide ne désigne aucun fichier")
+	case path.IsAbs(nom):
+		return "", fmt.Errorf("%q : le chemin doit être relatif à la racine du dépôt", brut)
+	case nom == ".." || strings.HasPrefix(nom, "../"):
+		return "", fmt.Errorf("%q : le chemin sort de la racine du dépôt", brut)
+	}
+	return nom, nil
+}
+
+func enCommun(a, b []string) (string, bool) {
+	for _, n := range b {
+		if slices.Contains(a, n) {
+			return n, true
+		}
+	}
+	return "", false
 }
 
 // racineMapping refuse un document dont la racine n'est pas un mapping.

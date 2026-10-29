@@ -57,7 +57,7 @@ func TestTreeListeLesFichiers(t *testing.T) {
 		t.Error("une liste complète ne doit pas se dire coupée")
 	}
 	veut := []gitwire.TreeFile{
-		{Path: ".ansibleproxy.yml", Size: int64(len(contenuConfig))},
+		{Path: ".warden.yml", Size: int64(len(contenuConfig))},
 		{Path: "inventories/hosts", Size: int64(len("[web]\n"))},
 	}
 	if len(rep.Files) != len(veut) || rep.Files[0] != veut[0] || rep.Files[1] != veut[1] {

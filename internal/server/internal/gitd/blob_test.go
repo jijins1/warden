@@ -27,7 +27,7 @@ func monterAvecConfig(t *testing.T) (*httptest.Server, string) {
 	lancer(t, travail, "config", "user.email", "test@example.com")
 	lancer(t, travail, "config", "user.name", "Test")
 
-	ecrire(t, travail, ".ansibleproxy.yml", contenuConfig)
+	ecrire(t, travail, ".warden.yml", contenuConfig)
 	if err := mkdirTest(filepath.Join(travail, "inventories")); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestBlobRendLeContenu(t *testing.T) {
 	srv, commit := monterAvecConfig(t)
 
 	resp := appelerBlob(t, srv, gitwire.BlobRequest{
-		Repo: "depot", SHA: commit, Path: ".ansibleproxy.yml",
+		Repo: "depot", SHA: commit, Path: ".warden.yml",
 	})
 	defer func() { _ = resp.Body.Close() }()
 
@@ -105,17 +105,17 @@ func TestBlobDistingueCommitEtCheminAbsents(t *testing.T) {
 		},
 		{
 			nom:  "commit absent",
-			req:  gitwire.BlobRequest{Repo: "depot", SHA: shaBidon, Path: ".ansibleproxy.yml"},
+			req:  gitwire.BlobRequest{Repo: "depot", SHA: shaBidon, Path: ".warden.yml"},
 			veut: gitwire.CodeUnknownObject,
 		},
 		{
 			nom:  "dépôt inconnu",
-			req:  gitwire.BlobRequest{Repo: "inexistant", SHA: commit, Path: ".ansibleproxy.yml"},
+			req:  gitwire.BlobRequest{Repo: "inexistant", SHA: commit, Path: ".warden.yml"},
 			veut: gitwire.CodeUnknownRepo,
 		},
 		{
 			nom:  "SHA malformé",
-			req:  gitwire.BlobRequest{Repo: "depot", SHA: "pas-un-sha", Path: ".ansibleproxy.yml"},
+			req:  gitwire.BlobRequest{Repo: "depot", SHA: "pas-un-sha", Path: ".warden.yml"},
 			veut: gitwire.CodeBadRequest,
 		},
 		{

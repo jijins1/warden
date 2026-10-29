@@ -136,7 +136,7 @@ spec:
               value: {{ . | quote }}
             {{- end }}
 
-            # Refuse les commits sans `.ansibleproxy.yml` (ADR-0009, ADR-0034).
+            # Refuse les commits sans `.warden.yml` (ADR-0009, ADR-0034).
             #
             # OPT-IN, et le défaut tolère : l'activer arrête les runs de tout
             # dépôt qui n'a pas encore committé son fichier. C'est un geste

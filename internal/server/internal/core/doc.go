@@ -26,7 +26,7 @@
 //
 // Ordre de composition, strictement (ADR-0009) :
 //  1. politique serveur de l'environnement (allowed_overrides, allowlists) ;
-//  2. `.ansibleproxy.yml` LU DEPUIS LE COMMIT, filtré par 1 ;
+//  2. `.warden.yml` LU DEPUIS LE COMMIT, filtré par 1 ;
 //  3. flags explicites de la requête, filtrés par 1.
 //
 // Le fichier du client est une requête, jamais une politique (leçon Atlantis).

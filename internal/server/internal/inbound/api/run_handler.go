@@ -260,6 +260,7 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 	// (ADR-0042), et dupliquer cette décision est la manière dont les deux
 	// finiraient par diverger.
 	effectif, ok := a.resoudreEffectif(w, r, user, repo.Name, auditSHA, payload.RunRef, core.Requete{
+		Playbook:    payload.Playbook,
 		Environment: payload.Environment,
 		Inventory:   payload.Inventory,
 		ForwardEnv:  payload.ForwardEnv,

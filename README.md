@@ -243,7 +243,7 @@ every run of that repository.
 The server only knows how to clone over http(s); if your `origin` is an SSH URL,
 pass the http form with `--remote-url`.
 
-Adding `repo: <name>` to `.ansibleproxy.yml` then makes `warden submit --repo`
+Adding `repo: <name>` to `.warden.yml` then makes `warden submit --repo`
 unnecessary. Wait until the server accepts that key before committing it: the
 server re-reads this file from the commit tree and rejects unknown fields.
 
@@ -290,11 +290,22 @@ way `forward_env` works for shell variables
 ([ADR-0039](docs/adr/0039-extra-vars-declarees-par-le-commit.md)):
 
 ```yaml
-# .ansibleproxy.yml
-extra_vars:
+# .warden.yml
+extra_vars:            # for every playbook of the repository
   - version
   - colour
+playbooks:
+  deploy.yml:          # path relative to the repository root, as given to --playbook
+    extra_vars:        # added for deploy.yml only
+      - other
 ```
+
+A `playbooks:` entry accepts `default_env`, `inventory`, `runner_image`,
+`forward_env` and `extra_vars`: single values replace the root ones, lists are
+added to them. A playbook without an entry — and any ad-hoc run — gets the root
+as is ([ADR-0056](docs/adr/0056-configuration-par-playbook.md)).
+The former name, `.ansibleproxy.yml`, is still read when `.warden.yml` is
+absent.
 
 > ⚠ **`extra_vars` values are audited** — recorded on the run, served by the API,
 > visible in diffs. That is the point: "which version was deployed" is what an
@@ -326,7 +337,7 @@ A run needs an SSH key on the target. warden offers two ways, converging on the
 same inventory entry:
 
 **From your Ansible inventory** — the path to prefer when the repository already
-has one. warden reads the inventory declared by `.ansibleproxy.yml`, compares it
+has one. warden reads the inventory declared by `.warden.yml`, compares it
 to what it already knows, and only handles what is missing:
 
 ```sh

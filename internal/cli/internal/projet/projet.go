@@ -42,24 +42,24 @@ import (
 // le refuserait de toute façon en relisant le commit — mais après que
 // l'utilisateur a capturé et poussé son arbre, ce qui lui fait payer un
 // aller-retour pour une faute de frappe qu'on savait détecter ici.
+//
+// `.warden.yml` est cherché d'abord, puis l'ancien `.ansibleproxy.yml` : le même
+// ordre que le serveur, pour que la CLI lise le fichier qui fera foi.
 func Lire(repoDir string) (config.Project, error) {
-	chemin := filepath.Join(repoDir, config.File)
+	for _, nom := range config.Files {
+		brut, err := os.ReadFile(filepath.Join(repoDir, nom)) // #nosec G304 -- chemin composé du dépôt de l'appelant
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return config.Project{}, fmt.Errorf("lecture de %s : %w", nom, err)
+		}
 
-	brut, err := os.ReadFile(chemin) // #nosec G304 -- chemin composé du dépôt de l'appelant
-	if errors.Is(err, fs.ErrNotExist) {
-		return config.Project{}, nil
-	}
-	if err != nil {
-		return config.Project{}, fmt.Errorf("lecture de %s : %w", config.File, err)
-	}
-
-	p, err := config.Parse(brut)
-	if err != nil {
-		// `config.Parse` nomme déjà la clé ou la construction refusée : le
+		// `config.ParseNamed` nomme déjà la clé ou la construction refusée : le
 		// reformuler la noierait.
-		return config.Project{}, err
+		return config.ParseNamed(nom, brut)
 	}
-	return p, nil
+	return config.Project{}, nil
 }
 
 // Valeurs collecte dans le shell les valeurs des noms déclarés.

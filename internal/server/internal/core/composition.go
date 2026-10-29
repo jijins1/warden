@@ -49,6 +49,11 @@ var NomsReserves = []string{
 // d'autre : l'ADR-0009 interdit qu'un champ de configuration transite par la
 // requête. Ce qui vient du commit arrive par `config.Project`.
 type Requete struct {
+	// Playbook est le chemin du playbook demandé, vide pour un run ad-hoc. Il
+	// ne décide de rien par lui-même : il désigne laquelle des surcharges
+	// `playbooks:` du commit s'applique.
+	Playbook string
+
 	// Environment et Inventory sont les flags explicites, vides quand
 	// l'utilisateur ne les a pas donnés.
 	Environment string
@@ -93,7 +98,8 @@ type Effectif struct {
 //  1. politique serveur de l'environnement — ÉCARTÉE en v1 (ADR-0021), donc
 //     neutre ici. La couche existe dans l'ordre du code pour n'avoir pas à être
 //     rétro-ajoutée ;
-//  2. `.ansibleproxy.yml` lu depuis le commit ;
+//  2. `.warden.yml` lu depuis le commit, racine puis surcharge du playbook
+//     demandé ;
 //  3. flags explicites de la requête.
 //
 // L'ordre 2 puis 3 est ce qui se voit dans le code : la configuration pose la
@@ -105,6 +111,8 @@ type Effectif struct {
 // l'utilisateur en a demandé un autre — un run qui viserait la production avec
 // l'inventaire de recette, sans que rien ne le signale.
 func Composer(projet config.Project, req Requete) (Effectif, error) {
+	projet = projet.ForPlaybook(req.Playbook)
+
 	eff := Effectif{
 		Environment: projet.DefaultEnv,
 		RunnerImage: projet.RunnerImage,

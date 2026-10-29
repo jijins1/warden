@@ -40,7 +40,7 @@ const (
 
 	// configFichier n'est cité que dans les messages : le nom qui fait autorité
 	// est `config.File`, et la CLI le lit à travers le paquet `projet`.
-	configFichier = ".ansibleproxy.yml"
+	configFichier = ".warden.yml"
 )
 
 // Run exécute la commande demandée.
@@ -216,7 +216,9 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 		// Les VALEURS des variables déclarées, lues dans le shell. Seuls les noms
 		// déclarés sont consultés : l'environnement n'est jamais parcouru en
 		// entier.
-		ForwardEnv:   projet.Valeurs(config.ForwardEnv, os.LookupEnv),
+		// La surcharge du playbook compte : un nom qu'il est seul à déclarer
+		// doit être cherché dans le shell aussi.
+		ForwardEnv:   projet.Valeurs(config.ForPlaybook(*playbook).ForwardEnv, os.LookupEnv),
 		AuditInclude: config.AuditInclude,
 	})
 	if err != nil {

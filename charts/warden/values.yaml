@@ -141,7 +141,7 @@ api:
   # WARDEN_GIT_URL lui-même.
   gitClientURL: ""
 
-  # Refuser les runs dont le commit ne porte pas `.ansibleproxy.yml`
+  # Refuser les runs dont le commit ne porte pas `.warden.yml`
   # (ADR-0009, ADR-0034).
   #
   # NE PAS ACTIVER avant que tous les dépôts servis aient committé leur fichier :
@@ -367,7 +367,7 @@ ingress:
     # L'API est alors jointe DEUX FOIS, et c'est voulu :
     #
     #   - à la racine de son propre hôte, par la CLI. Rien ne bouge de ce
-    #     côté : aucun `WARDEN_SERVER` à rééditer, aucun `.ansibleproxy.yml`,
+    #     côté : aucun `WARDEN_SERVER` à rééditer, aucun `.warden.yml`,
     #     aucune session à rouvrir ;
     #
     #   - sous ce chemin, sur l'hôte de l'INTERFACE, par le navigateur. L'API

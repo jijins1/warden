@@ -109,7 +109,7 @@ func forge(t *testing.T) (urlHote string, port int, mainSHA string) {
 	src := t.TempDir()
 	run(t, src, "init", "--initial-branch=main", ".")
 	ecrire(t, src, "site.yml", "- hosts: all\n  tasks: []\n")
-	ecrire(t, src, ".ansibleproxy.yml", configProjet)
+	ecrire(t, src, ".warden.yml", configProjet)
 	run(t, src, "add", ".")
 	run(t, src, "commit", "-m", "branche protégée")
 	mainSHA = strings.TrimSpace(run(t, src, "rev-parse", "HEAD"))
@@ -550,7 +550,7 @@ func TestLaChaineComplete(t *testing.T) {
 	ecrire(t, poste, "site.yml", "- hosts: all\n  tasks: []\n")
 	// C'est CE fichier-là que le serveur lira, dans l'arbre du commit d'audit
 	// (ADR-0009) : ce qui s'applique et ce qui est audité sont le même octet.
-	ecrire(t, poste, ".ansibleproxy.yml", configProjet)
+	ecrire(t, poste, ".warden.yml", configProjet)
 	run(t, poste, "add", ".")
 	run(t, poste, "commit", "-m", "état local")
 	ecrire(t, poste, "inventory.ini", "[prod]\nweb-01\n")
@@ -680,12 +680,12 @@ func TestLancementDepuisLeNavigateur(t *testing.T) {
 	configurerDepot(t, "http://"+adresseAPI, urlForgePourGitd)
 
 	// AUCUN dépôt local, AUCUN push : la branche protégée porte déjà `site.yml`
-	// et `.ansibleproxy.yml` depuis `forge(t)`. C'est tout ce dont ce chemin a
+	// et `.warden.yml` depuis `forge(t)`. C'est tout ce dont ce chemin a
 	// besoin — il lance la principale telle quelle.
 	out := lancerRun(t, "http://"+adresseAPI, launchRunRequest{
 		Environment: "prod",
 		Playbook:    "site.yml",
-		// Non résolue par `.ansibleproxy.yml` de ce test (pas d'`inventory:`
+		// Non résolue par `.warden.yml` de ce test (pas d'`inventory:`
 		// gabarit) : le champ est donc OBLIGATOIRE ici, comme `--inventory`
 		// l'est pour `warden submit` sans gabarit. `run_playbook_complet`
 		// (migration 00009) exige `inventory IS NOT NULL` pour ce genre de run.

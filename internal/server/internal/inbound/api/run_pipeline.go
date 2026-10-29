@@ -21,7 +21,7 @@ import (
 // composition, forme de l'environnement, autorisation de l'environnement
 // EFFECTIF.
 //
-// `configSHA` est le commit dont on lit `.ansibleproxy.yml`. C'est le commit
+// `configSHA` est le commit dont on lit `.warden.yml`. C'est le commit
 // d'audit sur le chemin CLI. Sur le chemin navigateur, c'est la principale — et
 // c'est le même octet, par construction : le commit d'audit d'un run lancé
 // depuis l'UI a EXACTEMENT l'arbre de sa base (ADR-0042). L'ADR-0009 est tenue,

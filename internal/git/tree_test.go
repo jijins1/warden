@@ -17,7 +17,7 @@ func TestTreeAtListeLesFichiers(t *testing.T) {
 	}
 	// Le répertoire `inventories` n'est pas une entrée : il se lit dans les chemins.
 	veut := []TreeFile{
-		{Path: ".ansibleproxy.yml", Size: int64(len("server: https://exemple\n"))},
+		{Path: ".warden.yml", Size: int64(len("server: https://exemple\n"))},
 		{Path: "inventories/hosts", Size: int64(len("[web]\nweb-01\n"))},
 	}
 	if len(fichiers) != len(veut) {

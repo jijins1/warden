@@ -160,6 +160,7 @@ func (a *Server) HandleLaunchRun(w http.ResponseWriter, r *http.Request) {
 	// run aura exactement cet arbre, par construction (ADR-0042), donc les lire
 	// depuis `mainlineSHA` ne contourne pas ADR-0009, il l'anticipe d'un pas.
 	effectif, ok := a.resoudreEffectif(w, r, user, repo.Name, mainlineSHA, runRef, core.Requete{
+		Playbook:    payload.Playbook,
 		Environment: payload.Environment,
 		Inventory:   payload.Inventory,
 		ForwardEnv:  payload.ForwardEnv,

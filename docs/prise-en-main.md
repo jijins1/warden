@@ -163,7 +163,7 @@ warden enroll --all --env prod --dry-run   # voir avant de faire
 warden enroll --all --env prod
 ```
 
-warden lit le chemin déclaré par `inventory` dans `.ansibleproxy.yml`, résout
+warden lit le chemin déclaré par `inventory` dans `.warden.yml`, résout
 `{{ env }}`, en tire les machines, les compare à `warden host list`, et **ne
 traite que celles qui manquent**. Il affiche le plan, demande une fois
 confirmation, puis enrôle machine par machine avec **un seul mot de passe**.
@@ -313,7 +313,7 @@ Une fois le dépôt déclaré, la commande affiche la ligne à ajouter au fichie
 projet :
 
 ```yaml
-# .ansibleproxy.yml
+# .warden.yml
 repo: mon-depot
 ```
 
@@ -321,7 +321,7 @@ repo: mon-depot
 quand il est donné.
 
 > ⚠ **Attendez que le serveur accepte ce champ avant de le commiter.** Le serveur
-> relit `.ansibleproxy.yml` depuis l'arbre du commit et **refuse les clés qu'il
+> relit `.warden.yml` depuis l'arbre du commit et **refuse les clés qu'il
 > ne connaît pas** : contre un serveur plus ancien, cette ligne fait échouer
 > *tous* les runs du dépôt.
 
@@ -385,7 +385,7 @@ déclare. C'est le même mécanisme que `forward_env` : le fichier versionné di
 noms, la ligne de commande n'apporte que les valeurs.
 
 ```yaml
-# .ansibleproxy.yml
+# .warden.yml
 extra_vars:
   - version
   - couleur
@@ -440,8 +440,9 @@ L'inventaire et le playbook sont des chemins **relatifs au dépôt**.
 
 ### Le fichier de projet
 
-Un dépôt peut déclarer ses conventions dans un `.ansibleproxy.yml` **commité à sa
-racine**, ce qui évite de retaper les mêmes drapeaux à chaque run :
+Un dépôt peut déclarer ses conventions dans un `.warden.yml` **commité à sa
+racine**, ce qui évite de retaper les mêmes drapeaux à chaque run. L'ancien nom,
+`.ansibleproxy.yml`, est encore lu quand `.warden.yml` est absent :
 
 ```yaml
 server: https://warden.example.com     # où joindre le control plane
@@ -468,6 +469,31 @@ variables lire dans votre shell, et savoir quoi mettre dans le commit.
 
 Un drapeau explicite prime toujours sur le fichier — et l'inventaire templatisé
 **suit** le drapeau : `--env prod` donne `inventories/prod`.
+
+### Une configuration par playbook
+
+Un dépôt porte rarement un seul playbook. La clé `playbooks:` complète la
+configuration pour l'un d'eux, désigné par son chemin **relatif à la racine du
+dépôt** — celui que vous passez à `--playbook` :
+
+```yaml
+# .warden.yml
+extra_vars:            # valables pour tous les playbooks du dépôt
+  - version
+  - couleur
+playbooks:
+  deploy.yml:
+    extra_vars:        # en plus, pour deploy.yml seulement
+      - other
+    runner_image: registry.example.com/mon-equipe/runner:3.0.0
+```
+
+Une surcharge accepte `default_env`, `inventory`, `runner_image`, `forward_env`
+et `extra_vars`. Les valeurs seules **remplacent** celles de la racine ; les
+listes **s'y ajoutent**. Un nom déjà déclaré à la racine est refusé, comme
+`server`, `repo` ou `audit_include` dans une surcharge : ils ne dépendent pas du
+playbook. Un playbook absent de `playbooks:`, et tout run ad-hoc, reçoivent la
+racine telle quelle.
 
 **`forward_env` déclare des NOMS, jamais des valeurs.** Les valeurs sont lues
 dans votre shell au moment de l'appel, ne sont jamais journalisées, et sont

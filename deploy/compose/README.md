@@ -106,7 +106,7 @@ docker compose -f deploy/compose/compose.yaml exec cible ssh-keygen -lf /etc/ssh
 ```
 
 Puis, avec un inventaire qui nomme `cible` (`ansible_host: cible`,
-`ansible_user: ansible`) et `inventory:` dans `.ansibleproxy.yml` :
+`ansible_user: ansible`) et `inventory:` dans `.warden.yml` :
 
 ```sh
 warden submit --playbook site.yml --env prod

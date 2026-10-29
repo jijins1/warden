@@ -20,7 +20,7 @@ func depotAvecArbre(t *testing.T) (string, SHA) {
 	lancer(t, travail, "config", "user.email", "test@example.com")
 	lancer(t, travail, "config", "user.name", "Test")
 
-	ecrire(t, travail, ".ansibleproxy.yml", "server: https://exemple\n")
+	ecrire(t, travail, ".warden.yml", "server: https://exemple\n")
 	if err := os.MkdirAll(filepath.Join(travail, "inventories"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestBlobAtLitLeContenu(t *testing.T) {
 		chemin string
 		veut   string
 	}{
-		{".ansibleproxy.yml", "server: https://exemple\n"},
+		{".warden.yml", "server: https://exemple\n"},
 		{"inventories/hosts", "[web]\nweb-01\n"},
 	}
 	for _, c := range cas {
@@ -89,7 +89,7 @@ func TestBlobAtRefuseUnArbre(t *testing.T) {
 func TestBlobAtRefuseHorsBorne(t *testing.T) {
 	bare, commit := depotAvecArbre(t)
 
-	_, err := New(bare).BlobAt(t.Context(), commit, ".ansibleproxy.yml", 4)
+	_, err := New(bare).BlobAt(t.Context(), commit, ".warden.yml", 4)
 	if err == nil {
 		t.Fatal("un blob plus gros que la borne doit être refusé")
 	}

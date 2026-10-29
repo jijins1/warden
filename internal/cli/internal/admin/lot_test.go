@@ -24,7 +24,7 @@ import (
 func projet(t *testing.T, inventaire string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".ansibleproxy.yml"),
+	if err := os.WriteFile(filepath.Join(dir, ".warden.yml"),
 		[]byte("inventory: inventories/{{ env }}\ndefault_env: prod\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
