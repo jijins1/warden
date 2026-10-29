@@ -13,7 +13,7 @@
 # de l'architecture cible. La construire native (jamais sous QEMU) évite
 # d'émuler tout un build Angular — ce qui compte pour un build multi-plateforme,
 # où cette étape tournerait sinon deux fois.
-FROM --platform=$BUILDPLATFORM node:24.20.0-alpine AS build
+FROM --platform=$BUILDPLATFORM node:24.22.2-alpine AS build
 
 WORKDIR /src
 
