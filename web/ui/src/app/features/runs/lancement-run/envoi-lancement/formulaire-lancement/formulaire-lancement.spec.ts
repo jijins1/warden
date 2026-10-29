@@ -64,6 +64,8 @@ describe('FormulaireLancement', () => {
         becomeUser: '',
         becomePassword: '',
         limit: '',
+        tags: '',
+        skipTags: '',
         verbosity: 0,
         extraVars: [],
       },

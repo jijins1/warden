@@ -244,6 +244,34 @@ func TestUnAdhocSansModuleEstRefuse(t *testing.T) {
 	}
 }
 
+// TestDesTagsSurUnAdhocSontRefuses : `ansible` n'a pas de `--tags`, et le
+// découvrir dans le pod coûterait une composition et un démarrage.
+func TestDesTagsSurUnAdhocSontRefuses(t *testing.T) {
+	s, g, c, _ := monterEcriture(t)
+
+	w := posterRun(t, s, administrateur(), `{
+		"run_ref":"`+runAlice+`",
+		"repo":"depot",
+		"kind":"adhoc",
+		"module":"ping",
+		"host_pattern":"web",
+		"flags":["--tags=deploy"],
+		"base_sha":"`+shaMain+`"
+	}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "--tags") {
+		t.Errorf("le refus ne nomme pas --tags : %s", w.Body.String())
+	}
+	if len(c.recus) != 0 {
+		t.Error("un run ad-hoc a été créé avec des tags")
+	}
+	if len(g.refsDemandees) != 0 {
+		t.Error("des tags refusés ne doivent pas coûter une résolution de ref")
+	}
+}
+
 // TestUnGenreInconnuEstRefuse : l'enrôlement a son propre endpoint et ne
 // passe jamais par celui-ci.
 func TestUnGenreInconnuEstRefuse(t *testing.T) {

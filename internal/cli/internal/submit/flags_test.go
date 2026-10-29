@@ -28,6 +28,10 @@ func TestComposerRendUnOrdreStable(t *testing.T) {
 		{"quatre v", FlagsAnsible{Verbosite: VerbositeMax}, "-vvvv"},
 		{"verbosité et le reste", FlagsAnsible{Check: true, Verbosite: 2, Limit: "web"},
 			"--check -vv --limit=web"},
+		{"tags", FlagsAnsible{Tags: "deploy,config"}, "--tags=deploy,config"},
+		{"skip-tags", FlagsAnsible{SkipTags: "slow"}, "--skip-tags=slow"},
+		{"tags après limit", FlagsAnsible{SkipTags: "slow", Tags: "deploy", Limit: "web"},
+			"--limit=web --tags=deploy --skip-tags=slow"},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
@@ -56,6 +60,21 @@ func TestComposerRefuseUnLimitMalForme(t *testing.T) {
 		t.Run(limit, func(t *testing.T) {
 			if _, err := (FlagsAnsible{Limit: limit}).Composer(); err == nil {
 				t.Fatal("accepté")
+			}
+		})
+	}
+}
+
+// Un espace fabriquerait un argument une fois la ligne découpée par
+// `ansible-runner` : le serveur refuse, le poste le dit avant le push.
+func TestComposerRefuseDesTagsMalFormes(t *testing.T) {
+	for _, tags := range []string{"a b", "a,", ",a", "@liste", "a\n--become", "$(id)"} {
+		t.Run(tags, func(t *testing.T) {
+			if _, err := (FlagsAnsible{Tags: tags}).Composer(); err == nil {
+				t.Fatal("--tags accepté")
+			}
+			if _, err := (FlagsAnsible{SkipTags: tags}).Composer(); err == nil {
+				t.Fatal("--skip-tags accepté")
 			}
 		})
 	}

@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // `flag` ne sait pas répéter : `-v -v` réaffecterait le même booléen au lieu
 // d'en compter deux. Les quatre noms sont donc déclarés séparément, comme chez
@@ -80,5 +83,22 @@ func TestParserEntremeleRespecteLeSeparateur(t *testing.T) {
 	}
 	if len(positionnels) != 2 || positionnels[1] != "-vv" || f.verbeux.niveau() != 0 {
 		t.Errorf("positionnels = %v, niveau = %d", positionnels, f.verbeux.niveau())
+	}
+}
+
+// Le câblage de `--tags` et `--skip-tags` jusqu'à `FlagsAnsible` : `Composer`
+// est testé seul, et une inversion des deux champs ne se verrait nulle part
+// ailleurs.
+func TestSubmitTransmetLesTags(t *testing.T) {
+	fs, f := fsSubmit()
+	if err := fs.Parse([]string{"--playbook", "p.yml", "--tags=a,b", "--skip-tags=c"}); err != nil {
+		t.Fatalf("Parse : %v", err)
+	}
+	flags, err := flagsAnsibleDeSubmit(f).Composer()
+	if err != nil {
+		t.Fatalf("Composer : %v", err)
+	}
+	if got := strings.Join(flags, " "); got != "--tags=a,b --skip-tags=c" {
+		t.Errorf("flags = %q", got)
 	}
 }

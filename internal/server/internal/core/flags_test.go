@@ -41,6 +41,11 @@ func TestValiderFlagsAccepteLesTrois(t *testing.T) {
 		{"-vvvv"},
 		{"--check", "--diff", "-vv"},
 		{"-vvv", "--limit=web-01", "--extra-vars=version=1"},
+		{"--tags=deploy"},
+		{"--tags=deploy,config", "--skip-tags=slow"},
+		{"--skip-tags=never"},
+		{"--tags=role.web_01-x"},
+		{"--check", "--limit=web-01", "--tags=deploy"},
 	}
 	for _, flags := range cas {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
@@ -106,6 +111,21 @@ func TestValiderFlagsRefuse(t *testing.T) {
 		// `run.flags` en garderait deux.
 		{"deux niveaux", []string{"-v", "-vvv"}, "s'excluent"},
 		{"deux fois le même niveau", []string{"-vv", "-vv"}, "deux fois"},
+
+		// Un espace fabriquerait un argument une fois la ligne découpée par
+		// `ansible-runner`.
+		{"tags avec espace", []string{"--tags=a b"}, "noms de tag"},
+		{"tags avec saut de ligne", []string{"--tags=a\n--become"}, "noms de tag"},
+		// Les quatre suivants rejouent des règles génériques de `ValiderFlags`
+		// (valeur requise, unicité), déjà prouvées sur `--limit`. Gardés
+		// exprès : ils tiennent si `--tags` sort un jour de la table pour une
+		// validation à lui, ce qui ferait perdre ces règles sans bruit.
+		{"tags vides", []string{"--tags="}, "attend une valeur"},
+		{"tags sans valeur", []string{"--skip-tags"}, "attend une valeur"},
+		{"virgule en trop", []string{"--tags=a,"}, "noms de tag"},
+		{"tags depuis un fichier", []string{"--tags=@liste"}, "noms de tag"},
+		{"deux tags", []string{"--tags=a", "--tags=b"}, "deux fois"},
+		{"deux skip-tags", []string{"--skip-tags=a", "--skip-tags=b"}, "deux fois"},
 	}
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
@@ -123,11 +143,11 @@ func TestValiderFlagsRefuse(t *testing.T) {
 // Le message d'un drapeau inconnu NOMME ce qui est accepté : une liste fermée
 // dont on ne publie pas le contenu envoie chercher dans un code source.
 func TestUnRefusNommeLaListeAcceptee(t *testing.T) {
-	err := ValiderFlags([]string{"--tags=deploy"})
+	err := ValiderFlags([]string{"--forks=50"})
 	if err == nil {
-		t.Fatal("--tags accepté")
+		t.Fatal("--forks accepté")
 	}
-	for _, attendu := range []string{"--check", "--diff", "--limit=<valeur>"} {
+	for _, attendu := range []string{"--check", "--diff", "--limit=<valeur>", "--tags=<valeur>"} {
 		if !strings.Contains(err.Error(), attendu) {
 			t.Errorf("le refus ne nomme pas %s : %v", attendu, err)
 		}
@@ -260,5 +280,23 @@ func TestAdhocTargetValidateAppliqueLesTroisControles(t *testing.T) {
 				t.Fatal("cible invalide acceptée à tort")
 			}
 		})
+	}
+}
+
+// Un run ad-hoc n'a pas de playbook, donc pas de tags : `ansible` refuserait
+// l'argument dans le pod.
+func TestValiderFlagsAdhoc(t *testing.T) {
+	if err := ValiderFlagsAdhoc([]string{"--check", "--limit=web", "-vv"}); err != nil {
+		t.Fatalf("refusé : %v", err)
+	}
+	for _, f := range []string{"--tags=deploy", "--skip-tags=slow"} {
+		err := ValiderFlagsAdhoc([]string{"--check", f})
+		if err == nil {
+			t.Fatalf("%s accepté sur un run ad-hoc", f)
+		}
+		nom, _, _ := strings.Cut(f, "=")
+		if !strings.Contains(err.Error(), nom) {
+			t.Errorf("le refus ne nomme pas %s : %v", nom, err)
+		}
 	}
 }

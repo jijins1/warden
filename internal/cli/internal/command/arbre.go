@@ -118,6 +118,7 @@ func submit() Commande {
 		Usage: []string{
 			"submit --playbook <fichier> [--repo <nom>] [--env <nom>] [--inventory <chemin>]",
 			"submit --playbook <fichier> [--check] [--diff] [--limit <motif>] [-v|-vv|-vvv|-vvvv]",
+			"submit --playbook <fichier> [--tags <t1,t2>] [--skip-tags <t1,t2>]",
 			"submit --playbook <fichier> [-b] [--become-user <compte>] [-K]",
 			"submit --playbook <fichier> -u <compte> -k   # machines sans enrôlement (annuaire LDAP)",
 			"submit --playbook <fichier> [-e <nom>=<valeur>]...",
@@ -134,9 +135,13 @@ func submit() Commande {
 			"Ctrl-C DÉTACHE la sortie, il n'annule pas le run : celui-ci continue\n" +
 			"côté serveur. L'annulation demande un endpoint que le serveur n'expose\n" +
 			"pas encore.\n\n" +
-			"--check, --diff, --limit, -v, -e et -b portent le nom qu'ansible-playbook\n" +
-			"leur donne et font la même chose. Ce sont les SEULS acceptés : le\n" +
-			"serveur refuse tout autre drapeau, en nommant ceux qu'il prend.\n\n" +
+			"--check, --diff, --limit, --tags, --skip-tags, -v, -e et -b portent le\n" +
+			"nom qu'ansible-playbook leur donne et font la même chose. Ce sont les\n" +
+			"SEULS acceptés : le serveur refuse tout autre drapeau, en nommant ceux\n" +
+			"qu'il prend.\n\n" +
+			"--tags et --skip-tags prennent des noms de tag séparés par des virgules,\n" +
+			"sans espace. Ils sont enregistrés sur le run et la page du run les met\n" +
+			"en avant : ce qui ne s'est pas exécuté se lit autant que ce qui l'a été.\n\n" +
 			"-v à -vvvv règlent la verbosité, et ils s'écrivent comme chez\n" +
 			"ansible-playbook : les `v` se répètent dans UN drapeau, `-v -v` ne fait\n" +
 			"pas -vv. Donnés plusieurs fois, le niveau le plus élevé l'emporte. Ce\n" +
@@ -157,7 +162,7 @@ func submit() Commande {
 			"enregistrées sur le run et servies par l'API. N'y mettez pas de secret ;\n" +
 			"`forward_env` est le chemin dont les valeurs ne sont jamais journalisées.",
 		Flags: []string{"repo", "playbook", "env", "inventory", "run-ref",
-			"check", "diff", "limit", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
+			"check", "diff", "limit", "tags", "skip-tags", "v", "vv", "vvv", "vvvv", "e", "extra-vars",
 			"b", "become", "become-user", "no-follow",
 			"K", "ask-become-pass", "become-pass-file", "become-pass-stdin",
 			"k", "ask-pass", "pass-file", "pass-stdin", "u", "user"},
@@ -167,6 +172,8 @@ func submit() Commande {
 				Ligne: "warden submit --playbook play.yml --env prod --check --diff"},
 			{Pourquoi: "n'agir que sur une machine, ou un groupe de l'inventaire",
 				Ligne: "warden submit --playbook play.yml --env prod --limit web-01"},
+			{Pourquoi: "ne jouer que les tâches de déploiement, sans les plus lentes",
+				Ligne: "warden submit --playbook play.yml --env prod --tags deploy,config --skip-tags slow"},
 			{Pourquoi: "comprendre ce qu'une tâche a réellement fait",
 				Ligne: "warden submit --playbook play.yml --env prod -vv"},
 			{Pourquoi: "poser des variables, déclarées par `extra_vars:` dans le projet",

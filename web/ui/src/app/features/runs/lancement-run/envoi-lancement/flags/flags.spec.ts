@@ -7,11 +7,24 @@ const videForm: OptionsLancement = {
   become: false,
   becomeUser: '',
   limit: '',
+  tags: '',
+  skipTags: '',
   verbosity: 0,
   extraVars: [],
 };
 
 describe('composerFlags', () => {
+  it('--tags et --skip-tags, une chaîne chacun, sans les espaces autour des virgules', () => {
+    expect(composerFlags({ ...videForm, tags: ' deploy, config ,', skipTags: 'slow' })).toEqual([
+      '--tags=deploy,config',
+      '--skip-tags=slow',
+    ]);
+  });
+
+  it('des tags blancs ne produisent rien', () => {
+    expect(composerFlags({ ...videForm, tags: ' , ', skipTags: '  ' })).toEqual([]);
+  });
+
   it('ne produit rien sans option cochée', () => {
     expect(composerFlags(videForm)).toEqual([]);
   });

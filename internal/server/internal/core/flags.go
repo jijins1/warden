@@ -46,6 +46,15 @@ import (
 // de nom, et un nom de machine porte points et tirets.
 var motifLimit = regexp.MustCompile(`^[A-Za-z0-9_.:!&*,~\[\]-]+$`)
 
+// motifTags borne la valeur de `--tags` et `--skip-tags` : des noms de tag
+// séparés par des virgules.
+//
+// Plus étroit qu'Ansible, qui admet un espace dans un nom de tag : la valeur
+// descend sur une ligne de commande qu'`ansible-runner` découpe à la façon d'un
+// shell, et un espace y fabriquerait un argument. `@` en tête, qui ne veut rien
+// dire ici, est refusé du même coup.
+var motifTags = regexp.MustCompile(`^[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*$`)
+
 // longueurMaxValeur borne une valeur de drapeau.
 //
 // Généreux pour un `--limit` — qui tient en une poignée de noms — et sans
@@ -56,9 +65,9 @@ const longueurMaxValeur = 1024
 // drapeau décrit une forme acceptée sur la ligne de commande d'ansible-playbook.
 //
 // Une table et non une suite de `if` : `-v` s'y est ajouté par quatre lignes et
-// un champ, et les deux derniers du §5.5 — `--tags`, `--skip-tags` — s'y
-// ajouteront par une ligne. C'est la seule façon de rendre l'ajout suivant assez
-// peu coûteux pour être fait.
+// un champ, et les deux derniers du §5.5 — `--tags`, `--skip-tags` — par une
+// ligne chacun. C'est la seule façon de rendre l'ajout suivant assez peu coûteux
+// pour être fait.
 type drapeau struct {
 	nom string
 
@@ -88,6 +97,11 @@ type drapeau struct {
 	// false` refuse déjà pour deux `--limit`, à ceci près que la collision porte
 	// ici sur des noms DIFFÉRENTS.
 	famille string
+
+	// playbookSeulement range le drapeau parmi ceux qu'`ansible` — l'ad-hoc —
+	// ne connaît pas. `ValiderFlagsAdhoc` lit ce champ plutôt que de nommer les
+	// drapeaux, pour que l'ajout suivant reste une ligne dans la table.
+	playbookSeulement bool
 }
 
 // familleVerbosite est la clé d'unicité partagée par `-v`…`-vvvv`.
@@ -114,6 +128,15 @@ var drapeauxAcceptes = []drapeau{
 	// n'apparaît dans aucun résultat de module.
 	{nom: "--diff"},
 	{nom: "--limit", verifier: verifierLimit},
+	// Les tags du playbook : ce qui s'exécute DANS le playbook, comme `--limit`
+	// borne SUR QUOI. Ils changent la portée d'un run autant qu'un `--limit`, et
+	// c'est pourquoi la fiche du run les montre à part des autres drapeaux.
+	//
+	// Les deux coexistent, et c'est Ansible qui tranche : une tâche portant un
+	// tag de chaque liste est sautée. Rien à refuser ici, la règle est la sienne
+	// et elle se lit dans `run.flags`.
+	{nom: "--tags", verifier: verifierTags, playbookSeulement: true},
+	{nom: "--skip-tags", verifier: verifierTags, playbookSeulement: true},
 	// Le compte distant, le `-u` d'Ansible (ADR-0048). De priorité INFÉRIEURE
 	// à `ansible_user` : il ne change rien aux machines dont l'inventaire nomme
 	// le compte, et donne le sien à l'utilisateur sur celles — annuaire LDAP —
@@ -327,6 +350,35 @@ func verifierCompte(valeur string) error {
 func verifierLimit(valeur string) error {
 	if !motifLimit.MatchString(valeur) {
 		return fmt.Errorf("motif refusé : %q", valeur)
+	}
+	return nil
+}
+
+// verifierTags contrôle une liste de tags.
+func verifierTags(valeur string) error {
+	if !motifTags.MatchString(valeur) {
+		return fmt.Errorf("%q : des noms de tag séparés par des virgules sont attendus "+
+			"(lettres, chiffres, `_`, `.` et `-`)", valeur)
+	}
+	return nil
+}
+
+// ValiderFlagsAdhoc refuse ce qu'`ansible` ne connaît pas, là où
+// `ansible-playbook` le connaît.
+//
+// Les tags appartiennent aux tâches d'un playbook, et un run ad-hoc n'en a pas :
+// `ansible` refuserait l'argument, et le run échouerait dans le pod après avoir
+// coûté une composition et un démarrage. Le dire à la création coûte moins cher.
+//
+// Ce qui est refusé est ce que la table marque `playbookSeulement`, et rien
+// n'est nommé ici. Les flags sont supposés DÉJÀ passés par `ValiderFlags`.
+func ValiderFlagsAdhoc(flags []string) error {
+	for _, f := range flags {
+		nom, _, _ := strings.Cut(f, "=")
+		if d := accepte(nom); d != nil && d.playbookSeulement {
+			return fmt.Errorf("flag %s refusé : un run ad-hoc n'a pas de playbook, "+
+				"donc pas de tâches à sélectionner", nom)
+		}
 	}
 	return nil
 }

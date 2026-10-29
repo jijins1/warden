@@ -10,7 +10,7 @@ import (
 // FlagsAnsible porte les drapeaux d'`ansible-playbook` qu'un run peut demander
 // (§5.5).
 //
-// Trois sur les sept du §5.5, et c'est un choix de PÉRIMÈTRE plutôt qu'une
+// Trois sur les sept du §5.5 au départ, et c'est un choix de PÉRIMÈTRE plutôt qu'une
 // étape : l'ADR-0034 a déjà tranché que la compatibilité exhaustive avec
 // `ansible-playbook` est un gouffre, et l'ADR-0038 retient ceux dont l'absence
 // se paie tous les jours — le dry-run, ce qu'il aurait changé, et sur quoi.
@@ -49,6 +49,12 @@ type FlagsAnsible struct {
 
 	// Limit est la valeur de `--limit`, vide quand il n'a pas été demandé.
 	Limit string
+
+	// Tags et SkipTags sont les valeurs de `--tags` et `--skip-tags` : des noms
+	// de tag séparés par des virgules, vides quand rien n'a été demandé. Ils
+	// bornent CE QUI s'exécute dans le playbook, comme Limit borne SUR QUOI.
+	Tags     string
+	SkipTags string
 
 	// Verbosite est le NOMBRE de `v` demandés — 0 quand rien ne l'a été, 4 au
 	// plus, comme `-v` à `-vvvv` chez `ansible-playbook`.
@@ -95,6 +101,11 @@ const VerbositeMax = 4
 var motifCompte = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$`)
 
 var motifLimit = regexp.MustCompile(`^[A-Za-z0-9_.:!&*,~\[\]-]+$`)
+
+// motifTags est le jumeau de `core.motifTags`, même duplication assumée. Plus
+// étroit qu'Ansible, qui admet un espace dans un nom de tag : le serveur le
+// refuserait, autant le dire avant la capture et le push.
+var motifTags = regexp.MustCompile(`^[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*$`)
 
 // Composer rend la liste à envoyer, dans un ordre stable.
 //
@@ -143,6 +154,18 @@ func (f FlagsAnsible) Composer() ([]string, error) {
 				"(noms, groupes, `!` `&` `~` `*` et `,` ou `:` pour séparer)", f.Limit)
 		}
 		flags = append(flags, "--limit="+f.Limit)
+	}
+	for _, t := range []struct{ nom, valeur string }{
+		{"--tags", f.Tags}, {"--skip-tags", f.SkipTags},
+	} {
+		if t.valeur == "" {
+			continue
+		}
+		if !motifTags.MatchString(t.valeur) {
+			return nil, fmt.Errorf("%s %q : des noms de tag séparés par des virgules "+
+				"sont attendus (lettres, chiffres, `_`, `.` et `-`)", t.nom, t.valeur)
+		}
+		flags = append(flags, t.nom+"="+t.valeur)
 	}
 
 	// Les extra-vars EN DERNIER, et dans l'ordre de saisie : c'est celui dans

@@ -33,6 +33,7 @@
         </p>
       }
       <w-encarts-run [run]="r" />
+      <w-tags-run [flags]="r.flags ?? []" />
       <w-faits-run [run]="r" />
       <w-run-parametres [flags]="r.flags ?? []" />
       @if (refFlux(); as ref) {

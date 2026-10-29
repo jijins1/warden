@@ -356,6 +356,9 @@ warden submit --repo mon-depot --playbook play.yml --env prod --check --diff
 # N'agir que sur une machine, ou sur un groupe de l'inventaire.
 warden submit --repo mon-depot --playbook play.yml --env prod --limit web-01
 
+# Ne jouer que les tâches portant ces tags, ou sauter celles-ci.
+warden submit --repo mon-depot --playbook play.yml --env prod --tags deploy,config --skip-tags slow
+
 # Détailler la sortie d'Ansible : -v, -vv, -vvv, -vvvv.
 warden submit --repo mon-depot --playbook play.yml --env prod -vv
 ```
@@ -564,7 +567,7 @@ de le respecter, module par module, et un `command` ou un `shell` sans
 `check_mode:` s'exécute quand même.
 
 Les flags passés à `submit` sont en revanche **filtrés** depuis l'ADR-0038 : le
-serveur n'accepte que `--check`, `--diff`, `--limit`, `-b/--become`,
+serveur n'accepte que `--check`, `--diff`, `--limit`, `--tags`, `--skip-tags`, `-b/--become`,
 `--become-user`, `-e/--extra-vars` et `-v` à `-vvvv`, et refuse le reste en
 nommant la liste. Ce filtre protège l'audit — un `-e @/chemin` ferait exécuter autre chose
 que ce que le commit dit — et non les machines cibles, sur lesquelles le playbook

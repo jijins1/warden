@@ -1,0 +1,39 @@
+@if (avecTags()) {
+  <section class="w-card w-scope" aria-labelledby="tags-run-titre">
+    <h2 id="tags-run-titre" class="w-scope-title">
+      <mat-icon aria-hidden="true">sell</mat-icon><span>Tags</span>
+    </h2>
+
+    @if (lus().tags.length) {
+      <div class="w-scope-row">
+        <span class="w-scope-label">Only</span>
+        <ul class="w-tags" aria-label="Only tasks with these tags ran">
+          @for (tag of lus().tags; track tag) {
+            <li class="w-tag w-tag--fixe">{{ tag }}</li>
+          }
+        </ul>
+      </div>
+    }
+
+    @if (lus().skipTags.length) {
+      <div class="w-scope-row">
+        <span class="w-scope-label">Skipped</span>
+        <ul class="w-tags" aria-label="Tasks with these tags were skipped">
+          @for (tag of lus().skipTags; track tag) {
+            <li class="w-tag w-tag--fixe w-tag--saute">{{ tag }}</li>
+          }
+        </ul>
+      </div>
+    }
+
+    <p class="w-hint">
+      This run played only part of the playbook.
+      @if (lus().tags.length) {
+        Tasks without one of the <em>only</em> tags did not run.
+      }
+      @if (lus().skipTags.length) {
+        Tasks with a <em>skipped</em> tag did not run.
+      }
+    </p>
+  </section>
+}

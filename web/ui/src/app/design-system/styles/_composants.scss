@@ -140,6 +140,16 @@ a.w-tr:hover { background: var(--w-surface-3); }
 .w-detail-head h1 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; }
 .w-on { color: var(--w-text-dim); font-size: 13px; }
 .w-params { display: flex; flex-wrap: wrap; gap: var(--w-gap-2); }
+/* Portée d'un run : les tags, à part des autres drapeaux parce qu'ils disent ce
+   qui ne s'est PAS exécuté. Le liseré les détache des cartes de faits. */
+.w-scope { display: flex; flex-direction: column; gap: var(--w-gap-2); border-left: 3px solid var(--w-primary); }
+.w-scope-title { display: flex; align-items: center; gap: var(--w-gap-1); margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--w-primary); }
+.w-scope-title .mat-icon { width: 16px; height: 16px; font-size: 16px; }
+.w-scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--w-gap-2); }
+.w-scope-label { min-width: 64px; font-size: 12px; font-weight: 600; color: var(--w-text-dim); }
+.w-scope .w-tags { margin: 0; padding: 0; list-style: none; }
+.w-tag--fixe { padding: 0 8px; font-weight: 600; }
+.w-tag--saute { border-color: var(--w-changed-br); background: var(--w-changed-bg); color: var(--w-changed); text-decoration: line-through; }
 .w-param { padding: 2px 8px; border: 1px solid var(--w-border); border-radius: var(--w-radius-sm); background: var(--w-surface-2); font-family: var(--w-mono); font-size: 11.5px; color: var(--w-text); }
 .w-diff { margin: 0; padding: var(--w-gap-3); border: 1px solid var(--w-border); border-radius: var(--w-radius-lg); background: var(--w-surface); font-family: var(--w-mono); font-size: 12px; line-height: 20px; overflow-x: auto; }
 .w-diff .add { display: block; color: var(--w-ok); background: var(--w-ok-bg); }

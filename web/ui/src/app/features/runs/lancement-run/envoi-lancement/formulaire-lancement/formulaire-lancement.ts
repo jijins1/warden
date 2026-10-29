@@ -76,6 +76,8 @@ export class FormulaireLancement {
     become: new FormControl(false, { nonNullable: true }),
     becomeUser: texte(),
     limit: texte(),
+    tags: texte(),
+    skipTags: texte(),
     verbosity: new FormControl(0, { nonNullable: true }),
     becomePassword: texte(),
     extraVars: new FormArray<LigneVariable>([]),

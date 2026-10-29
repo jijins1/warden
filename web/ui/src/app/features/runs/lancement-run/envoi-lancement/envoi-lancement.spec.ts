@@ -16,6 +16,8 @@ const valeurs: ValeursLancement = {
   becomeUser: '',
   becomePassword: '',
   limit: '',
+  tags: '',
+  skipTags: '',
   verbosity: 0,
   extraVars: [],
 };

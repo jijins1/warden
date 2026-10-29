@@ -256,6 +256,7 @@ These flags reach `ansible-playbook`, under the name it gives them:
 ```sh
 warden submit --playbook play.yml --env prod --check --diff
 warden submit --playbook play.yml --env prod --limit web-01
+warden submit --playbook play.yml --env prod --tags deploy,config --skip-tags slow
 warden submit --playbook play.yml --env prod -vv           # -v to -vvvv, as in Ansible
 warden submit --playbook play.yml --env prod -e version=1.2.3 -e colour=blue
 warden submit --playbook play.yml --env prod -b -K          # escalate, and supply the password

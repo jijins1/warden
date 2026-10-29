@@ -1,7 +1,9 @@
 <section class="w-section">
   <h2 class="w-section-title">Parameters</h2>
 
-  @if (sansDrapeau()) {
+  @if (seulementDesTags()) {
+    <p class="w-nothing">No other flags or extra vars.</p>
+  } @else if (sansDrapeau()) {
     <p class="w-nothing">Ran without flags or extra vars.</p>
   }
 

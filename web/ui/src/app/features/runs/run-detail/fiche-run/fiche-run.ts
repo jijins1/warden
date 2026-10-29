@@ -20,6 +20,7 @@ import { RunDiff } from '../../../run-diff/run-diff';
 import { EncartsRun } from './encarts-run/encarts-run';
 import { FaitsRun } from './faits-run/faits-run';
 import { RunParametres } from './run-parametres/run-parametres';
+import { TagsRun } from './tags-run/tags-run';
 import { FluxRun } from './flux-run/flux-run';
 
 /**
@@ -40,6 +41,7 @@ import { FluxRun } from './flux-run/flux-run';
     EncartsRun,
     FaitsRun,
     RunParametres,
+    TagsRun,
     FluxRun,
     RunDiff,
   ],

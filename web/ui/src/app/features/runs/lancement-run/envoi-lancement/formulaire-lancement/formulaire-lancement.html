@@ -27,6 +27,19 @@
     <p class="w-hint">Same pattern syntax as <code>--limit</code> on the command line.</p>
   </div>
 
+  <div class="w-grid-2">
+    <div class="w-field">
+      <label for="lancement-tags">Tags <span class="w-opt">(optional)</span></label>
+      <input id="lancement-tags" class="w-input w-mono" formControlName="tags" placeholder="deploy,config" />
+      <p class="w-hint">Only tasks with one of these tags run, as <code>--tags</code>.</p>
+    </div>
+    <div class="w-field">
+      <label for="lancement-skip-tags">Skip tags <span class="w-opt">(optional)</span></label>
+      <input id="lancement-skip-tags" class="w-input w-mono" formControlName="skipTags" placeholder="slow" />
+      <p class="w-hint">Tasks with one of these tags are skipped, as <code>--skip-tags</code>.</p>
+    </div>
+  </div>
+
   <!-- Le <select> natif est le seul contrôle de choix du produit. [ngValue] et
        non [value] pour que la valeur reste un NOMBRE — `composerFlags` compte
        des `v`, il ne concatène pas une chaîne. -->

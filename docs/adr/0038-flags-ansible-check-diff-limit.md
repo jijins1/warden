@@ -85,6 +85,9 @@ pour que l'ajout suivant soit assez peu coûteux pour être fait.
 > **Suite (2026-09-19)** : la demande est venue pour `-v`, et l'amendement plus
 > bas l'ajoute. Il a coûté quatre lignes et un champ, pas une — voir pourquoi.
 > `--tags` et `--skip-tags` restent en attente d'une demande.
+>
+> **Suite (2026-10-29)** : la demande est venue pour `--tags` et `--skip-tags`,
+> voir l'amendement en fin de document.
 
 `-e/--extra-vars` est différent, et son absence est une **décision** : il
 déplacerait la source de vérité hors du commit d'audit, ce que le produit vend
@@ -231,3 +234,34 @@ qu'Ansible fait, pas ce que le pod peut joindre.
 `--check` **n'est pas une garantie d'innocuité** : c'est Ansible qui décide de le
 respecter, module par module, et un `command` ou un `shell` sans `check_mode:`
 s'exécute quand même. Warden le transmet, il ne le fait pas appliquer.
+
+## Amendement (2026-10-29) : `--tags` et `--skip-tags`
+
+Ils sont ouverts parce qu'ils ont un rôle majeur dans l'usage : un playbook
+d'envergure se joue rarement en entier, et faute de tags l'opérateur retombait
+sur `ansible-playbook` hors de warden, donc hors de l'audit.
+
+**Une ligne chacun dans `drapeauxAcceptes`**, cette fois sans surprise : chacun
+est un réglage sous un seul nom, donc l'unicité par nom suffit. Les deux
+coexistent sur un même run, et c'est Ansible qui tranche (une tâche portant un
+tag de chaque liste est sautée) : la règle est la sienne, elle n'a pas à être
+reproduite ici.
+
+**La valeur est bornée** à des noms `[A-Za-z0-9_.-]` séparés par des virgules.
+C'est plus étroit qu'Ansible, qui admet un espace dans un nom de tag, mais la
+valeur descend sur une ligne de commande qu'`ansible-runner` découpe à la façon
+d'un shell, et un espace y fabriquerait un argument.
+
+**Refusés sur un run ad-hoc** (`core.ValiderFlagsAdhoc`) : `ansible` n'a pas de
+`--tags`, et le découvrir dans le pod coûterait une composition et un
+démarrage. Le refus lit le champ `playbookSeulement` de la table plutôt que de
+nommer les drapeaux, pour qu'un prochain drapeau propre aux playbooks reste une
+ligne. Absents pour la même raison de `warden run`.
+
+**Mis en avant sur la fiche du run**, au-dessus des faits, et non dans la
+rangée des drapeaux : ils disent ce qui ne s'est PAS exécuté. Un run lancé
+avec `--tags deploy` n'a joué qu'une partie du playbook, et le lire au milieu de
+`--check` et `--diff` laisserait croire qu'il l'a joué en entier.
+
+Ouverts des trois côtés à la fois : allowlist serveur, `warden submit` et le
+formulaire du navigateur.

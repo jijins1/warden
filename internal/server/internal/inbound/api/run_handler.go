@@ -195,6 +195,12 @@ func (a *Server) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if adhocTarget != nil {
+		if err := core.ValiderFlagsAdhoc(flags); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	// L'AUTORISATION EN DEUX TEMPS, et le découpage n'est pas une commodité.
 	//

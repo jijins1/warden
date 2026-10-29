@@ -157,9 +157,12 @@ est le PÉRIMÈTRE de la liste, plus son absence.
   partait, arrivait dans `env/extravars`, et ne servait à rien tant que le
   playbook ne déclarait pas `become: true` lui-même.
 
-- [ ] **Les deux derniers flags du §5.5.** `--tags` et `--skip-tags` s'ajoutent
-  par une ligne dans `drapeauxAcceptes` — c'est la forme retenue pour ça — et
-  attendent une demande.
+- [x] ~~**Les deux derniers flags du §5.5.**~~ Résolu le 2026-10-29
+  (amendement de l'[ADR-0038](adr/0038-flags-ansible-check-diff-limit.md)).
+  `--tags` et `--skip-tags` sont ouverts côté serveur, dans `warden submit` et
+  dans le formulaire du navigateur, et la fiche du run les met en avant. Pas
+  dans `warden run` : un module ad-hoc n'a pas de tâches à étiqueter, et le
+  serveur les refuse sur un run ad-hoc.
 
 - [x] ~~**`-v` n'était disponible nulle part.**~~ Résolu le 2026-09-19
   (amendement de l'[ADR-0038](adr/0038-flags-ansible-check-diff-limit.md)).

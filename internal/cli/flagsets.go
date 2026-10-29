@@ -113,6 +113,10 @@ type drapeauxSubmit struct {
 	extraVars   *submit.Repetable
 	verbeux     verbosite
 
+	// tags et sansTags sont `--tags` et `--skip-tags`. Absents de `warden run` :
+	// un module ad-hoc n'a pas de tâches à étiqueter.
+	tags, sansTags *string
+
 	// elever et eleverVers sont `--become` et `--become-user`, à ne pas confondre
 	// avec `become` ci-dessus, qui est la SAISIE du mot de passe d'élévation.
 	// Les deux se combinent : l'un demande l'élévation, l'autre en fournit le
@@ -141,6 +145,9 @@ func fsSubmit() (*flag.FlagSet, drapeauxSubmit) {
 		check: fs.Bool("check", false, "simuler : Ansible annonce ce qu'il ferait sans le faire"),
 		diff:  fs.Bool("diff", false, "montrer le contenu de ce qui change, tâche par tâche"),
 		limit: fs.String("limit", "", "restreindre aux machines ou groupes de ce motif Ansible"),
+
+		tags:     fs.String("tags", "", "n'exécuter que les tâches portant ces tags, séparés par des virgules"),
+		sansTags: fs.String("skip-tags", "", "sauter les tâches portant ces tags, séparés par des virgules"),
 
 		eleverVers: fs.String("become-user", "", "compte visé par l'élévation ; root par défaut"),
 

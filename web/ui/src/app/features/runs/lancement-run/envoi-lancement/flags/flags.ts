@@ -10,6 +10,9 @@ export interface OptionsLancement {
   become: boolean;
   becomeUser: string;
   limit: string;
+  /** `--tags` et `--skip-tags` : des noms séparés par des virgules, tels que tapés. */
+  tags: string;
+  skipTags: string;
   /** Le NOMBRE de `v` demandés — 0 à VERBOSITE_MAX, comme `-v` à `-vvvv`. */
   verbosity: number;
   extraVars: { cle: string; valeur: string }[];
@@ -56,10 +59,28 @@ export function composerFlags(v: OptionsLancement): string[] {
   if (v.limit.trim()) {
     flags.push(`--limit=${v.limit.trim()}`);
   }
+  // Les espaces autour des virgules sont retirés : `deploy, config` se tape
+  // naturellement, et le serveur refuse un espace dans la valeur.
+  const tags = normaliserTags(v.tags);
+  if (tags) {
+    flags.push(`--tags=${tags}`);
+  }
+  const skipTags = normaliserTags(v.skipTags);
+  if (skipTags) {
+    flags.push(`--skip-tags=${skipTags}`);
+  }
   for (const { cle, valeur } of v.extraVars) {
     if (cle.trim()) {
       flags.push(`--extra-vars=${cle.trim()}=${valeur}`);
     }
   }
   return flags;
+}
+
+function normaliserTags(valeur: string): string {
+  return valeur
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t !== '')
+    .join(',');
 }

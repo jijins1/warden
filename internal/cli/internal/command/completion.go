@@ -113,6 +113,8 @@ var exemplesDeValeur = map[string]string{
 	"inventory":             "inventories/prod/hosts",
 	"run-ref":               "01JZQ8XKPT9V2H3M4N5P6Q7R8S",
 	"limit":                 "web-01",
+	"tags":                  "deploy,config",
+	"skip-tags":             "slow",
 	"e":                     "version=1.2.3",
 	"extra-vars":            "version=1.2.3",
 	"become-user":           "postgres",

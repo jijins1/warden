@@ -140,11 +140,7 @@ func commandeSubmit(ctx context.Context, args []string, sortie io.Writer) error 
 	// `--limit` mal formé après ce travail donnerait un message exact sur une
 	// cause que personne ne relierait (§5.7). Le serveur reste l'autorité et les
 	// revalide (ADR-0038).
-	flagsAnsible, err := submit.FlagsAnsible{
-		Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
-		Become: *f.elever, BecomeUser: *f.eleverVers, User: *f.compte,
-		Verbosite: f.verbeux.niveau(),
-	}.Composer()
+	flagsAnsible, err := flagsAnsibleDeSubmit(f).Composer()
 	if err != nil {
 		return err
 	}
@@ -982,4 +978,17 @@ func lireLesMotsDePasse(ctx context.Context, become, connexion *prompt.Source) (
 		c = v
 	}
 	return b, c, nil
+}
+
+// flagsAnsibleDeSubmit reprend les drapeaux Ansible de `warden submit`.
+//
+// Une fonction à part pour que le CÂBLAGE soit testable : `Composer` l'est
+// seul, et une inversion entre deux champs ne se verrait pas autrement.
+func flagsAnsibleDeSubmit(f drapeauxSubmit) submit.FlagsAnsible {
+	return submit.FlagsAnsible{
+		Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
+		Tags: *f.tags, SkipTags: *f.sansTags,
+		Become: *f.elever, BecomeUser: *f.eleverVers, User: *f.compte,
+		Verbosite: f.verbeux.niveau(),
+	}
 }
