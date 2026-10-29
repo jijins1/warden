@@ -31,7 +31,7 @@ RUN npx ng build
 # L'image non privilégiée : elle écoute sur 8080 et tourne en uid 101, sans
 # qu'il faille défaire quoi que ce soit. Un serveur de fichiers statiques n'a
 # aucune raison de démarrer en root, même pour redescendre ensuite.
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 # La configuration par défaut de l'image sert `/usr/share/nginx/html` en écoutant
 # 8080. On la remplace : il faut le repli SPA et les en-têtes de sécurité.
