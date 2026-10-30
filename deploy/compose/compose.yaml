@@ -67,7 +67,7 @@ services:
         condition: service_healthy
 
   vault:
-    image: hashicorp/vault:1.18.3
+    image: hashicorp/vault:1.21.4
     restart: unless-stopped
     command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
     environment:
@@ -81,7 +81,7 @@ services:
   # Configure Vault comme un exploitant le ferait : montages KV v2, policy
   # sans `list`, rôle AppRole. Dépose le secret_id dans un volume partagé.
   vault-init:
-    image: hashicorp/vault:1.18.3
+    image: hashicorp/vault:1.21.4
     entrypoint: ["sh", "/vault-init.sh"]
     environment:
       VAULT_ADDR: http://vault:8200
