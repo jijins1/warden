@@ -21,7 +21,7 @@ func Arbre() *Commande {
 		Resume: "warden — exécution auditée de playbooks Ansible",
 		Sous: []Commande{
 			login(), logout(), whoami(), passwd(),
-			completion(), upgrade(),
+			completion(), versionCLI(), upgrade(),
 			submit(), run(),
 			logs(),
 			repo(), utilisateur(), droit(), cle(), vault(), hote(), enroler(),
@@ -91,6 +91,21 @@ func completion() Commande {
 			{Pourquoi: "bash, une fois pour toutes", Ligne: "echo 'source <(warden completion bash)' >> ~/.bashrc"},
 			{Pourquoi: "zsh, une fois pour toutes", Ligne: "echo 'source <(warden completion zsh)' >> ~/.zshrc"},
 		},
+	}
+}
+
+func versionCLI() Commande {
+	return Commande{
+		Nom: "version", Rubrique: RubriqueSession,
+		Resume: "affiche la version de la CLI et celle du serveur",
+		Usage:  []string{"version"},
+		Details: "La version de la CLI s'affiche toujours, même sans serveur joignable.\n" +
+			"Celle du serveur est demandée sans session : la commande répond aussi\n" +
+			"sur un poste qui n'est pas connecté.\n\n" +
+			"Un écart entre les deux bloque « warden submit » et « warden run » ;\n" +
+			"« warden upgrade » aligne la CLI sur le serveur.",
+		Exemples: []Exemple{{Ligne: "warden version"}},
+		Voir:     []string{"warden upgrade"},
 	}
 }
 

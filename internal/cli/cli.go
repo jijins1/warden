@@ -102,6 +102,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeCompletion(args[1:], os.Stdout)
 	case "upgrade":
 		return commandeUpgrade(ctx, args[1:], os.Stdout)
+	case "version":
+		return commandeVersion(ctx, args[1:], os.Stdout)
 	default:
 		return command.Inconnue(nil, args[0])
 	}

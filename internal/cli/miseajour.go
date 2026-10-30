@@ -174,3 +174,48 @@ func affichee(v string) string {
 	}
 	return "v" + v
 }
+
+// commandeVersion affiche la version de la CLI, puis celle du serveur.
+//
+// La CLI d'abord, et sans condition : c'est la seule réponse qui ne dépend pas
+// du réseau, et un serveur injoignable ne doit pas la cacher. L'échec à joindre
+// le serveur vient ensuite, en erreur, pour que le code de sortie le dise.
+//
+// Sans session, comme `upgrade` : la version est anonyme côté serveur.
+func commandeVersion(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) > 0 {
+		return errors.New("warden version ne prend pas d'argument")
+	}
+	locale := version.Version
+	_, _ = fmt.Fprintf(sortie, "CLI      %s\n", affichee(locale))
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+	adresse, err := adresseServeurDans(cwd)
+	if err != nil {
+		return err
+	}
+	api, err := client.New(client.Config{BaseURL: adresse})
+	if err != nil {
+		return err
+	}
+	serveur, err := api.VersionServeur(ctx)
+	if err != nil {
+		return fmt.Errorf("version du serveur %s : %w", adresse, err)
+	}
+
+	// Un serveur antérieur à l'ADR-0049 répond sans version : le dire, plutôt
+	// que de l'afficher comme un build de développement qu'il n'est peut-être pas.
+	annoncee := affichee(serveur)
+	if serveur == "" {
+		annoncee = "non annoncée"
+	}
+	_, _ = fmt.Fprintf(sortie, "serveur  %s (%s)\n", annoncee, adresse)
+
+	if ecart(locale, serveur) {
+		_, _ = fmt.Fprintln(sortie, "\nLa CLI ne correspond pas au serveur : « warden upgrade » l'aligne.")
+	}
+	return nil
+}

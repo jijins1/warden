@@ -156,3 +156,57 @@ func TestUpgradeRefuseUnArgument(t *testing.T) {
 		t.Error("un argument a été accepté : la version visée est celle du serveur, pas un choix")
 	}
 }
+
+func versions(t *testing.T, serveur string, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv(EnvServeur, serveur)
+	var sortie bytes.Buffer
+	err := commandeVersion(t.Context(), args, &sortie)
+	return sortie.String(), err
+}
+
+func TestVersionAfficheLaCLIEtLeServeur(t *testing.T) {
+	enVersion(t, "0.0.42")
+
+	sortie, err := versions(t, serveurEn(t, "0.0.42"))
+	if err != nil || !strings.Contains(sortie, "CLI      v0.0.42") || !strings.Contains(sortie, "serveur  v0.0.42") {
+		t.Errorf("sortie = %q, err = %v", sortie, err)
+	}
+	if strings.Contains(sortie, "warden upgrade") {
+		t.Errorf("un écart a été signalé entre deux versions égales : %q", sortie)
+	}
+}
+
+func TestVersionSignaleUnEcartEtNommeUpgrade(t *testing.T) {
+	enVersion(t, "0.0.41")
+
+	sortie, err := versions(t, serveurEn(t, "0.0.42"))
+	if err != nil || !strings.Contains(sortie, "warden upgrade") {
+		t.Errorf("sortie = %q, err = %v", sortie, err)
+	}
+}
+
+func TestVersionDUnServeurQuiNAnnonceRien(t *testing.T) {
+	enVersion(t, "0.0.42")
+	h := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(h.Close)
+
+	sortie, err := versions(t, h.URL)
+	if err != nil || !strings.Contains(sortie, "serveur  non annoncée") {
+		t.Errorf("sortie = %q, err = %v", sortie, err)
+	}
+}
+
+// Le serveur injoignable n'efface pas la version de la CLI, et le code de sortie
+// le dit.
+func TestVersionDeLaCLISurvitAUnServeurInjoignable(t *testing.T) {
+	enVersion(t, "0.0.42")
+	h := httptest.NewServer(http.NotFoundHandler())
+	adresse := h.URL
+	h.Close()
+
+	sortie, err := versions(t, adresse)
+	if err == nil || !strings.Contains(sortie, "CLI      v0.0.42") {
+		t.Errorf("sortie = %q, err = %v", sortie, err)
+	}
+}
