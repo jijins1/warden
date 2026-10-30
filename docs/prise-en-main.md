@@ -6,6 +6,9 @@ Le chemin complet, de rien du tout à un playbook qui tourne sur une machine.
 chaque étape a été exécutée. Ce qui n'a pas de commande est signalé comme tel ;
 à ce jour, seule la pose du premier administrateur en est là.
 
+Ce document suppose un serveur déjà installé. Pour l'installer, et pour le
+chemin court : [`demarrage.md`](demarrage.md).
+
 ---
 
 ## 0. Ce qu'un « environnement » est, et n'est pas

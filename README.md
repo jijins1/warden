@@ -539,6 +539,10 @@ Each came from a real component with opinions of its own.
 
 ## Running it
 
+**Start with [`docs/demarrage.md`](docs/demarrage.md)** (in French): choosing a
+deployment mode — Docker Compose to try it, Kubernetes with the published chart,
+or from source — installing the CLI, and the first actions up to a first run.
+
 Requires Go 1.26, git ≥ 2.45, Docker, and a Kubernetes cluster.
 
 ```sh
