@@ -10,7 +10,7 @@
 # QEMU) et croiser via GOARCH est bien plus rapide qu'émuler tout le compilateur
 # — ce qui compte pour un build multi-plateforme, où cette étape tourne deux
 # fois (ADR multi-arch).
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 
 WORKDIR /src
 
