@@ -86,7 +86,7 @@ jobs:
       # branches qui n'ont pas bougé, à chaque publication d'un linter.
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12.2
+          version: v2.15.0
 
   test:
     name: Tests — étage 1 (unitaire)
