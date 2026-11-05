@@ -33,7 +33,7 @@
     "@angular/cli": "^22.1.6",
     "@angular/compiler-cli": "^22.1.0",
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "1.64.0",
+    "@playwright/test": "1.65.0",
     "@types/node": "24.19.2",
     "@types/prismjs": "^1.26.6",
     "angular-eslint": "22.1.0",
