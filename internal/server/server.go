@@ -331,6 +331,35 @@ func boucleDesDroits(ctx context.Context, source *grantfile.Source, st *store.St
 	}
 }
 
+// boucleDuPlanificateur déclenche les crons échus, jusqu'à l'annulation
+// (ADR-0057).
+//
+// Une erreur de tour est JOURNALISÉE et la boucle continue : une base
+// momentanément injoignable ne doit pas faire tomber l'API entière, et le tour
+// suivant reprendra là où celui-ci s'est arrêté.
+func boucleDuPlanificateur(ctx context.Context, p core.Planificateur, intervalle time.Duration) error {
+	t := time.NewTicker(intervalle)
+	defer t.Stop()
+
+	slog.Info("planificateur démarré", slog.Duration("intervalle", intervalle),
+		slog.Duration("grace", p.Grace))
+	for {
+		n, err := p.Tour(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			slog.Error("tour du planificateur en échec", slog.String("error", err.Error()))
+		case n > 0:
+			slog.Info("tour du planificateur", slog.Int("crons", n))
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
 // journaliserBilan rend un passage lisible sans le noyer.
 //
 // Le passage à vide est le cas NORMAL et il est journalisé en debug : à trente
@@ -976,7 +1005,7 @@ func runAPI(ctx context.Context) error {
 		return err
 	}
 
-	server, err := api.New(cfg, api.Deps{
+	deps := api.Deps{
 		Runs:          st,
 		Users:         st,
 		Auth:          auth,
@@ -1023,13 +1052,37 @@ func runAPI(ctx context.Context) error {
 		// cluster, donc `Vault` suit la même condition que `KeyStore`.
 		Vault: vaultStore,
 		Stash: consigne,
-	})
+		// Les runs planifiés ne demandent que PostgreSQL (ADR-0057).
+		Schedules: st,
+	}
+	server, err := api.New(cfg, deps)
 	if err != nil {
 		return fmt.Errorf("creating API server: %w", err)
 	}
 	defer func() { _ = server.Close() }()
 
 	services := []func(context.Context) error{server.Run}
+
+	// Le planificateur tourne sur CHAQUE réplica d'`api` : l'exclusion vient
+	// de PostgreSQL (SKIP LOCKED), pas d'une élection (ADR-0057). Il lance par
+	// le MÊME Lanceur que les handlers — mêmes ports, donc mêmes contrôles —
+	// et seulement quand le chemin d'écriture est monté : sans rôle `git`, un
+	// cron ne pourrait que consigner des refus à chaque échéance.
+	if creator != nil && mirrors != nil && audits != nil {
+		planificateur := core.Planificateur{
+			Store:            st,
+			Comptes:          st,
+			Lanceur:          deps.Lanceur(),
+			Grace:            secondesOuDefaut(EnvScheduleGraceSeconds, time.Hour),
+			DelaiDeLancement: 2 * time.Minute,
+		}
+		tick := secondesOuDefaut(EnvScheduleTickSeconds, 30*time.Second)
+		services = append(services, func(ctx context.Context) error {
+			return boucleDuPlanificateur(ctx, planificateur, tick)
+		})
+	} else {
+		slog.Warn("planificateur inactif : le chemin d'écriture vers le rôle git n'est pas monté")
+	}
 
 	if dispatcher != nil {
 		services = append(services, func(ctx context.Context) error {
@@ -1180,6 +1233,13 @@ const (
 	// qui n'est pas forcément celui auquel cette base d'audit correspond.
 	EnvInsecureKubeconfig = "WARDEN_INSECURE_KUBECONFIG"
 	EnvForgeToken         = "WARDEN_FORGE_TOKEN" // lecture sur la forge, pour le miroir de la principale
+
+	// EnvScheduleTickSeconds est l'intervalle de scrutation des crons échus,
+	// 30 s par défaut : la précision d'un cron est de cet ordre (ADR-0057).
+	EnvScheduleTickSeconds = "WARDEN_SCHEDULE_TICK_SECONDS"
+	// EnvScheduleGraceSeconds borne le retard toléré d'un déclenchement, une
+	// heure par défaut. Au-delà, l'échéance est consignée comme manquée.
+	EnvScheduleGraceSeconds = "WARDEN_SCHEDULE_GRACE_SECONDS"
 )
 
 // HookName est le nom sous lequel git invoque ce binaire comme hook.

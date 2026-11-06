@@ -313,6 +313,50 @@ func fsDepot() (*flag.FlagSet, drapeauxDepot) {
 	}
 }
 
+// drapeauxPlanif sert `warden schedule` (ADR-0057).
+//
+// Les drapeaux Ansible portent les noms de `warden submit` : un cron est un
+// submit différé, et la commande se recopie d'une forme à l'autre. Ni `-K` ni
+// `-k` : un cron n'a personne pour taper un mot de passe, et le serveur ne
+// stocke aucun secret.
+type drapeauxPlanif struct {
+	nom, expression, fuseau, environnement, playbook, inventaire, repo *string
+
+	check, diff    *bool
+	limit          *string
+	tags, sansTags *string
+	extraVars      *submit.Repetable
+	elever         *bool
+	eleverVers     *string
+}
+
+func fsPlanif() (*flag.FlagSet, drapeauxPlanif) {
+	fs := neuf("schedule")
+	f := drapeauxPlanif{
+		nom:           fs.String("name", "", "nom du cron, unique parmi les vôtres"),
+		expression:    fs.String("cron", "", "expression cron à cinq champs, ou @daily, @hourly…"),
+		fuseau:        fs.String("tz", "", "fuseau d'interprétation, par exemple Europe/Paris"),
+		environnement: fs.String("env", "", "environnement cible"),
+		playbook:      fs.String("playbook", "", "playbook à exécuter, relatif à la racine du dépôt"),
+		inventaire:    fs.String("inventory", "", "inventaire, relatif à la racine du dépôt"),
+		repo:          fs.String("repo", "", "nom du dépôt côté serveur ; inutile si le fichier de projet déclare `repo:`"),
+
+		check:    fs.Bool("check", false, "simuler à chaque déclenchement"),
+		diff:     fs.Bool("diff", false, "montrer le contenu de ce qui change"),
+		limit:    fs.String("limit", "", "restreindre aux machines ou groupes de ce motif Ansible"),
+		tags:     fs.String("tags", "", "n'exécuter que les tâches portant ces tags"),
+		sansTags: fs.String("skip-tags", "", "sauter les tâches portant ces tags"),
+
+		eleverVers: fs.String("become-user", "", "compte visé par l'élévation ; root par défaut"),
+	}
+	f.elever = fs.Bool("become", false, "élever sur toutes les tâches, sans mot de passe")
+	fs.BoolVar(f.elever, "b", false, "abréviation d'--become")
+	f.extraVars = &submit.Repetable{}
+	fs.Var(f.extraVars, "e", "poser une variable, sous la forme nom=valeur ; répétable")
+	fs.Var(f.extraVars, "extra-vars", "identique à -e")
+	return fs, f
+}
+
 type drapeauxCle struct {
 	env *string
 	cle *prompt.Source
@@ -412,6 +456,8 @@ func flagsPour(chemin []string) *flag.FlagSet {
 		fs, _ = fsHote()
 	case "repo":
 		fs, _ = fsDepot()
+	case "schedule":
+		fs, _ = fsPlanif()
 	case "key":
 		fs, _ = fsCle()
 	case "vault":

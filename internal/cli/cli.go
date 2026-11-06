@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/jijins1/warden/internal/cli/internal/admin"
 	"github.com/jijins1/warden/internal/cli/internal/auth"
 	"github.com/jijins1/warden/internal/cli/internal/client"
 	"github.com/jijins1/warden/internal/cli/internal/command"
+	"github.com/jijins1/warden/internal/cli/internal/planif"
 	"github.com/jijins1/warden/internal/cli/internal/projet"
 	"github.com/jijins1/warden/internal/cli/internal/prompt"
 	"github.com/jijins1/warden/internal/cli/internal/render"
@@ -94,6 +96,8 @@ func Run(ctx context.Context, args []string) error {
 		return commandeVault(ctx, args[1:], os.Stdout)
 	case "repo":
 		return commandeDepot(ctx, args[1:], os.Stdout)
+	case "schedule":
+		return commandePlanif(ctx, args[1:], os.Stdout)
 	case "host":
 		return commandeHote(ctx, args[1:], os.Stdout)
 	case "enroll":
@@ -675,6 +679,96 @@ func commandeDepot(ctx context.Context, args []string, sortie io.Writer) error {
 		return admin.ListerDepots(ctx, api, sortie)
 	default:
 		return command.Inconnue([]string{"repo"}, args[0])
+	}
+}
+
+// commandePlanif gère les runs planifiés (ADR-0057).
+//
+// Comme `repo` et `logs`, elle lit `server:` et `repo:` du fichier de projet
+// courant : on planifie le plus souvent le dépôt où l'on se trouve.
+func commandePlanif(ctx context.Context, args []string, sortie io.Writer) error {
+	if len(args) == 0 {
+		return command.Manquante([]string{"schedule"})
+	}
+
+	fs, f := fsPlanif()
+	positionnels, err := parserEntremele(fs, args[1:])
+	if err != nil {
+		return erreurDrapeaux("schedule", err)
+	}
+	if err := command.VerifierVerbe([]string{"schedule"}, args[0]); err != nil {
+		return err
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant illisible : %w", err)
+	}
+	config, err := projet.Lire(cwd)
+	if err != nil {
+		return err
+	}
+	adresse, err := adresseServeurDe(config)
+	if err != nil {
+		return err
+	}
+	api, err := clientPour(adresse)
+	if err != nil {
+		return err
+	}
+
+	// L'identifiant des verbes qui visent UN cron, en position comme pour
+	// `warden logs` : c'est la chose qu'on recopie de `warden schedule list`.
+	identifiant := func() (int64, error) {
+		if len(positionnels) != 1 {
+			return 0, fmt.Errorf("warden schedule %s attend l'identifiant d'un cron, lu dans "+
+				"« warden schedule list »", args[0])
+		}
+		id, err := strconv.ParseInt(positionnels[0], 10, 64)
+		if err != nil || id <= 0 {
+			return 0, fmt.Errorf("%q n'est pas un identifiant de cron", positionnels[0])
+		}
+		return id, nil
+	}
+
+	switch args[0] {
+	case "list":
+		return planif.Lister(ctx, api, sortie)
+	case "create":
+		nomDuDepot := *f.repo
+		if nomDuDepot == "" {
+			nomDuDepot = config.Repo
+		}
+		if nomDuDepot == "" {
+			return fmt.Errorf("dépôt inconnu : donnez --repo, ou déclarez `repo:` dans %s", configFichier)
+		}
+		flagsAnsible, err := submit.FlagsAnsible{
+			Check: *f.check, Diff: *f.diff, Limit: *f.limit, ExtraVars: *f.extraVars,
+			Tags: *f.tags, SkipTags: *f.sansTags,
+			Become: *f.elever, BecomeUser: *f.eleverVers,
+		}.Composer()
+		if err != nil {
+			return err
+		}
+		return planif.Creer(ctx, api, nomDuDepot, client.NewSchedule{
+			Name: *f.nom, Cron: *f.expression, Timezone: *f.fuseau,
+			Environment: *f.environnement, Inventory: *f.inventaire,
+			Playbook: *f.playbook, Flags: flagsAnsible,
+		}, sortie)
+	case "enable", "disable":
+		id, err := identifiant()
+		if err != nil {
+			return err
+		}
+		return planif.Basculer(ctx, api, id, args[0] == "enable", sortie)
+	case "delete":
+		id, err := identifiant()
+		if err != nil {
+			return err
+		}
+		return planif.Supprimer(ctx, api, id, sortie)
+	default:
+		return command.Inconnue([]string{"schedule"}, args[0])
 	}
 }
 

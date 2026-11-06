@@ -65,6 +65,11 @@ type NewRun struct {
 
 	RunnerImage       string // ADR-0014
 	RunnerImageDigest string
+
+	// ScheduleID désigne le cron qui a déclenché le run (ADR-0057), nil pour un
+	// run lancé par une personne. C'est ce qui répond à « qui a lancé ce run à
+	// 3 h du matin » : le propriétaire, PAR ce cron.
+	ScheduleID *int64
 }
 
 // ulid borne l'identifiant public d'un run : Crockford base32 sur 26 caractères,

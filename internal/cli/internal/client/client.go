@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -258,6 +259,11 @@ func (c *Client) appeler(ctx context.Context, methode, chemin string, corps, sor
 		// `/admin`, il ne dit RIEN de plus que « pas pour vous, ou pas là ».
 		if strings.HasPrefix(cheminSeul, "/admin/") {
 			return fmt.Errorf("%w", ErrIntrouvable)
+		}
+		// Le cron d'autrui est introuvable comme un cron inexistant
+		// (ADR-0057) : ce n'est pas un dépôt à configurer.
+		if strings.HasPrefix(cheminSeul, "/schedules/") {
+			return fmt.Errorf("%w : %s", ErrIntrouvable, strings.TrimSpace(string(brut)))
 		}
 		return fmt.Errorf("%w : %s", ErrRepoNonConfigure, strings.TrimSpace(string(brut)))
 	case resp.StatusCode >= 400:
@@ -689,4 +695,73 @@ func (c *Client) ListerDroits(ctx context.Context, subject string) ([]Droit, err
 	var out []Droit
 	err := c.appeler(ctx, http.MethodGet, chemin, nil, &out)
 	return out, err
+}
+
+// Schedule est un cron tel que le serveur le rend (ADR-0057).
+type Schedule struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Repo        string     `json:"repo"`
+	Playbook    string     `json:"playbook"`
+	Environment string     `json:"environment"`
+	Inventory   string     `json:"inventory,omitempty"`
+	Flags       []string   `json:"flags"`
+	Cron        string     `json:"cron"`
+	Timezone    string     `json:"timezone"`
+	Owner       string     `json:"owner"`
+	Enabled     bool       `json:"enabled"`
+	CreatedAt   time.Time  `json:"created_at"`
+	NextFireAt  *time.Time `json:"next_fire_at,omitempty"`
+	LastFiredAt *time.Time `json:"last_fired_at,omitempty"`
+	LastRunRef  string     `json:"last_run_ref,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+}
+
+// NewSchedule est ce que `warden schedule create` envoie.
+//
+// Aucun champ ne désigne le propriétaire : c'est la session de l'appelant, et
+// le serveur refuse un corps qui en nommerait un autre.
+type NewSchedule struct {
+	Name        string   `json:"name"`
+	Cron        string   `json:"cron"`
+	Timezone    string   `json:"timezone"`
+	Environment string   `json:"environment"`
+	Inventory   string   `json:"inventory,omitempty"`
+	Playbook    string   `json:"playbook"`
+	Flags       []string `json:"flags,omitempty"`
+}
+
+// ListSchedules rend ses crons, tous pour un administrateur.
+func (c *Client) ListSchedules(ctx context.Context) ([]Schedule, error) {
+	var out struct {
+		Schedules []Schedule `json:"schedules"`
+	}
+	err := c.appeler(ctx, http.MethodGet, "/schedules", nil, &out)
+	return out.Schedules, err
+}
+
+// CreateSchedule crée un cron sur un dépôt.
+func (c *Client) CreateSchedule(ctx context.Context, repo string, n NewSchedule) (Schedule, error) {
+	if repo == "" {
+		return Schedule{}, errors.New("le nom du dépôt est requis")
+	}
+	var out Schedule
+	err := c.appeler(ctx, http.MethodPost, "/repos/"+url.PathEscape(repo)+"/schedules", n, &out)
+	return out, err
+}
+
+// SetScheduleEnabled active ou désactive un cron.
+func (c *Client) SetScheduleEnabled(ctx context.Context, id int64, enabled bool) (Schedule, error) {
+	verbe := "disable"
+	if enabled {
+		verbe = "enable"
+	}
+	var out Schedule
+	err := c.appeler(ctx, http.MethodPost, "/schedules/"+strconv.FormatInt(id, 10)+"/"+verbe, nil, &out)
+	return out, err
+}
+
+// DeleteSchedule supprime un cron.
+func (c *Client) DeleteSchedule(ctx context.Context, id int64) error {
+	return c.appeler(ctx, http.MethodDelete, "/schedules/"+strconv.FormatInt(id, 10), nil, nil)
 }

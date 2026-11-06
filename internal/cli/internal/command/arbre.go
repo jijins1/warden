@@ -23,7 +23,7 @@ func Arbre() *Commande {
 			login(), logout(), whoami(), passwd(),
 			completion(), versionCLI(), upgrade(),
 			submit(), run(),
-			logs(),
+			logs(), planification(),
 			repo(), utilisateur(), droit(), cle(), vault(), hote(), enroler(),
 		},
 	}
@@ -261,6 +261,69 @@ func logs() Commande {
 			{Ligne: "warden logs 01JZQ8XKPT9V2H3M4N5P6Q7R8S"},
 		},
 		Voir: []string{"warden submit"},
+	}
+}
+
+func planification() Commande {
+	return Commande{
+		Nom: "schedule", Rubrique: RubriqueRuns,
+		Resume: "planifie un playbook à heure fixe (cron)",
+		Details: "Un cron lance la branche protégée TELLE QU'ELLE EST à l'heure dite —\n" +
+			"jamais l'arbre de travail de votre poste. Il part à VOTRE nom et sous\n" +
+			"vos droits du moment, revérifiés à chaque déclenchement : un droit retiré,\n" +
+			"un compte désactivé ou un environnement gelé l'arrêtent sans autre geste.\n\n" +
+			"Un droit porté par un groupe de l'annuaire n'existe que pendant une\n" +
+			"session : pour un cron, il faut un droit nominatif sur l'environnement.\n\n" +
+			"Aucun secret n'est stocké : ni -K, ni -k, ni forward_env. Un playbook qui\n" +
+			"en a besoin les tire d'Ansible Vault.",
+		Sous: []Commande{
+			{
+				Nom:    "create",
+				Resume: "crée un cron au nom de la session courante",
+				Usage: []string{
+					"schedule create --name <nom> --cron <expression> --tz <fuseau> --env <env> --playbook <chemin>",
+					"schedule create ... [--inventory <chemin>] [--repo <dépôt>] [-e nom=valeur]",
+				},
+				Details: "L'expression a cinq champs — minute heure jour mois jour-de-semaine — ou\n" +
+					"un raccourci : @hourly, @daily, @weekly, @monthly, @yearly. Le fuseau est\n" +
+					"obligatoire : « 3 h » ne veut rien dire sans lui.\n\n" +
+					"Les `-e` sont vérifiés contre l'`extra_vars:` du projet AU DÉCLENCHEMENT,\n" +
+					"sur la principale du moment, et leurs valeurs sont auditées en clair.\n\n" +
+					"Un déclenchement manqué de plus d'une heure (API arrêtée) n'est pas\n" +
+					"rattrapé : il est consigné, et le cron reprend à l'échéance suivante.",
+				Flags: []string{"name", "cron", "tz", "env", "playbook", "inventory", "repo",
+					"check", "diff", "limit", "tags", "skip-tags", "e", "extra-vars",
+					"b", "become", "become-user"},
+				Valeurs: map[string]string{"name": "sauvegarde-nocturne", "cron": "0 3 * * *", "tz": "Europe/Paris"},
+				Exemples: []Exemple{
+					{Pourquoi: "tous les jours à 3 h, heure de Paris",
+						Ligne: "warden schedule create --name sauvegarde --cron \"0 3 * * *\" --tz Europe/Paris --env prod --playbook backup.yml"},
+					{Pourquoi: "les jours ouvrés à 8 h 30, en simulation",
+						Ligne: "warden schedule create --name conformite --cron \"30 8 * * 1-5\" --tz Europe/Paris --env prod --playbook audit.yml --check"},
+				},
+			},
+			{
+				Nom:     "list",
+				Resume:  "affiche vos crons et l'issue de leur dernier déclenchement",
+				Usage:   []string{"schedule list"},
+				Details: "Un administrateur voit les crons de tout le monde.",
+			},
+			{
+				Nom: "disable", Resume: "suspend un cron",
+				Usage:   []string{"schedule disable <id>"},
+				Details: "Le propriétaire, ou un administrateur.",
+			},
+			{
+				Nom: "enable", Resume: "réactive un cron, sans rattraper les échéances passées",
+				Usage: []string{"schedule enable <id>"},
+			},
+			{
+				Nom: "delete", Resume: "supprime un cron",
+				Usage:   []string{"schedule delete <id>"},
+				Details: "Les runs qu'il a lancés en gardent la trace.",
+			},
+		},
+		Voir: []string{"warden submit", "warden logs"},
 	}
 }
 

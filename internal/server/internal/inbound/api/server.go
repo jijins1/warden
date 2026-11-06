@@ -263,6 +263,10 @@ type Deps struct {
 	// 501 et la CLI continue de fonctionner — c'est un déploiement où l'on
 	// soumet depuis un poste, pas depuis une page.
 	Audits core.AuditRecorder
+
+	// Schedules porte les runs planifiés (ADR-0057). Facultatif : sans lui,
+	// les routes `/schedules` répondent 501 et rien d'autre ne change.
+	Schedules core.PlanificationStore
 }
 
 // Server serves the HTTP API and WebSocket stream.
@@ -382,6 +386,16 @@ func (a *Server) Handler() http.Handler {
 	// `warden submit` par un autre transport, autorisée par les mêmes droits
 	// par environnement (ADR-0033) — jamais a.adminOuRien.
 	router.HandleFunc("POST /repos/{repo}/runs", a.HandleLaunchRun)
+
+	// Les runs planifiés (ADR-0057). Même règle que le lancement : planifier
+	// est lancer en différé, donc les droits par environnement et jamais
+	// a.adminOuRien. Un administrateur peut couper ou supprimer le cron d'un
+	// autre — c'est le cœur qui le décide —, pas en créer en son nom.
+	router.HandleFunc("GET /schedules", a.HandleListSchedules)
+	router.HandleFunc("POST /repos/{repo}/schedules", a.HandleCreateSchedule)
+	router.HandleFunc("POST /schedules/{id}/enable", a.HandleEnableSchedule)
+	router.HandleFunc("POST /schedules/{id}/disable", a.HandleDisableSchedule)
+	router.HandleFunc("DELETE /schedules/{id}", a.HandleDeleteSchedule)
 
 	// Les environnements PROTÉGÉS (ADR-0044), en lecture seule et ouverts à
 	// TOUT compte authentifié — pas sous `/admin`, et jamais `adminOuRien`.

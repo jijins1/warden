@@ -67,6 +67,7 @@ d'implémentation prises en cours de route.
 | [0054](0054-sauvegarde-de-la-base-par-le-plugin-barman-cloud.md) | Sauvegarde de la base par le plugin Barman Cloud de CNPG | Accepted |
 | [0055](0055-parcourir-les-fichiers-dun-run.md) | Parcourir les fichiers d'un run : le code audité se lit en entier, sur une route distincte | Proposed |
 | [0056](0056-configuration-par-playbook.md) | Configuration par playbook, et `.ansibleproxy.yml` devient `.warden.yml` | Proposed |
+| [0057](0057-runs-planifies.md) | Runs planifiés : une expression cron, un propriétaire, la principale telle qu'elle est | Proposed |
 
 ## Convention
 

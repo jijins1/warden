@@ -15,6 +15,12 @@ import (
 	"path/filepath"
 	"syscall"
 
+	// Les données de fuseau sont EMBARQUÉES : un cron « 3 h Europe/Paris » ne
+	// doit pas dépendre de la présence de /usr/share/zoneinfo dans l'image
+	// (ADR-0057). Quelques centaines de Ko, contre un cron qui refuserait de se
+	// créer sur une image distroless.
+	_ "time/tzdata"
+
 	"github.com/jijins1/warden/internal/server"
 )
 

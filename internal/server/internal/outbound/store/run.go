@@ -110,11 +110,11 @@ func (s *Store) CreateRun(ctx context.Context, n NewRun) (int64, error) {
 INSERT INTO run (run_ref, user_id, repo, environment, inventory, playbook,
                  audit_sha, base_sha, mainline_ref, mainline_sha, flags,
                  runner_image, runner_image_digest, state, termination_cause,
-                 kind, enroll_target, adhoc_target)
+                 kind, enroll_target, adhoc_target, schedule_id)
 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''),
         NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11,
         NULLIF($12, ''), NULLIF($13, ''), $14, $15,
-        $16, $17, $18)
+        $16, $17, $18, $19)
 RETURNING id`
 
 	var id int64
@@ -123,7 +123,7 @@ RETURNING id`
 		n.AuditSHA, n.BaseSHA, n.MainlineRef, n.MainlineSHA, flags,
 		n.RunnerImage, n.RunnerImageDigest,
 		string(core.RunInterrupted), string(core.CauseUnknown),
-		string(genre), cible, cibleAdhoc,
+		string(genre), cible, cibleAdhoc, n.ScheduleID,
 	).Scan(&id)
 	if err != nil {
 		// Une violation d'unicité ici ne peut porter que sur `run_ref` : c'est la

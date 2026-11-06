@@ -79,3 +79,25 @@ SELECT id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT 
 	}
 	return u, nil
 }
+
+// UserByID relit un compte par son identifiant interne.
+//
+// Le planificateur n'a pas de requête authentifiée : c'est par ici qu'il
+// apprend qu'un propriétaire de cron a été désactivé (ADR-0057).
+func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
+	const q = `
+SELECT id, type, subject, display_name, coalesce(email, ''), disabled_at IS NOT NULL, is_admin
+  FROM users
+ WHERE id = $1`
+
+	var u User
+	err := s.pool.QueryRow(ctx, q, id).
+		Scan(&u.ID, &u.Type, &u.Subject, &u.DisplayName, &u.Email, &u.Disabled, &u.IsAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, fmt.Errorf("utilisateur %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("lecture de l'utilisateur %d: %w", id, err)
+	}
+	return u, nil
+}
